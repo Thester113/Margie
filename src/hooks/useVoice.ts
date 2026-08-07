@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getTtsConfig, synthCloud, type TtsConfig } from "../lib/tts";
 
 export type VoiceStatus = "idle" | "listening" | "thinking" | "speaking";
@@ -48,6 +49,9 @@ export function useVoice() {
   const rafRef = useRef<number>(0);
   const ttsCfgRef = useRef<TtsConfig | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Latest status, read by the announcement poller without re-subscribing it.
+  const statusRef = useRef<VoiceStatus>(status);
+  statusRef.current = status;
 
   useEffect(() => {
     getTtsConfig()
@@ -98,6 +102,26 @@ export function useVoice() {
     },
     [speakSystem],
   );
+
+  // Poll for voice announcements queued by background jobs (the Slack watcher)
+  // and speak them aloud when she's idle, so mentions are announced out loud —
+  // not just via macOS notifications.
+  useEffect(() => {
+    const id = window.setInterval(async () => {
+      if (statusRef.current !== "idle") return;
+      let items: string[] = [];
+      try {
+        items = await invoke<string[]>("take_announcements");
+      } catch {
+        return;
+      }
+      for (const text of items) {
+        if (statusRef.current !== "idle") break;
+        await speak(text);
+      }
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [speak]);
 
   const startListening = useCallback(async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

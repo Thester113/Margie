@@ -15,6 +15,17 @@ set -euo pipefail
 
 DIR="${1:-$HOME}"
 shift || true
+
+# Optional first flag: --continue (resume most recent session in this dir) or
+# --resume (same). Anything else is treated as the start of the prompt.
+CLAUDE_FLAG=""
+case "${1:-}" in
+  --continue | -c | --resume | -r)
+    CLAUDE_FLAG="--continue"
+    shift
+    ;;
+esac
+
 PROMPT="$*"
 
 # Resolve to an absolute directory, falling back to $HOME.
@@ -32,9 +43,9 @@ NAME="margie-claude-$STAMP"
 if [ -n "$PROMPT" ]; then
   PROMPT_FILE="$TASK_DIR/prompt-$STAMP.txt"
   printf '%s' "$PROMPT" > "$PROMPT_FILE"
-  EXEC="claude \"\$(cat $PROMPT_FILE)\""
+  EXEC="claude${CLAUDE_FLAG:+ $CLAUDE_FLAG} \"\$(cat $PROMPT_FILE)\""
 else
-  EXEC="claude"
+  EXEC="claude${CLAUDE_FLAG:+ $CLAUDE_FLAG}"
 fi
 
 # MARGIE_TEST_CMD lets tests substitute a harmless command for `claude`.

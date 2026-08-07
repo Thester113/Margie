@@ -151,6 +151,37 @@ fn dbg_log(line: String) {
     }
 }
 
+/// Drain queued voice announcements written by background jobs (e.g. the Slack
+/// watcher) to ~/.margie/announce/*.txt. Each file's text is returned once and
+/// then deleted, so the frontend can speak them aloud.
+#[tauri::command]
+fn take_announcements() -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(home) = std::env::var("HOME") else {
+        return out;
+    };
+    let dir = std::path::Path::new(&home).join(".margie/announce");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return out;
+    };
+    let mut paths: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "txt"))
+        .collect();
+    paths.sort(); // oldest first (filenames are timestamps)
+    for p in paths {
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            let text = text.trim().to_string();
+            if !text.is_empty() {
+                out.push(text);
+            }
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+    out
+}
+
 #[tauri::command]
 fn set_form(window: tauri::WebviewWindow, form: Form) -> Result<(), String> {
     window.set_size(form.size()).map_err(|e| e.to_string())?;
@@ -172,6 +203,7 @@ pub fn run() {
             write_settings,
             dbg_log,
             save_wav,
+            take_announcements,
             brain::ask_brain,
             stt::stt_status,
             stt::start_stt,

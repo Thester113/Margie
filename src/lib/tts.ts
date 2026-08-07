@@ -28,8 +28,11 @@ export async function synthCloud(text: string, cfg: TtsConfig): Promise<Blob> {
           "content-type": "application/json",
         },
         body: JSON.stringify({
+          // Flash is ElevenLabs' lowest-latency model (~75ms) — snappier
+          // spoken replies. Swap back to eleven_turbo_v2_5 for a touch more
+          // quality at higher latency.
           text,
-          model_id: "eleven_turbo_v2_5",
+          model_id: "eleven_flash_v2_5",
           voice_settings: { stability: 0.4, similarity_boost: 0.8 },
         }),
       },
