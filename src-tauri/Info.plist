@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSCameraUsageDescription</key>
+    <string>Margie uses the camera so she can see you and respond to what's happening.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Margie listens for the wake word and your voice commands.</string>
+</dict>
+</plist>
