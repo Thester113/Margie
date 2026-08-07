@@ -74,11 +74,16 @@ API key.
 
 Two tiers:
 
-- **Agent SDK (headless)** — the sidecar runs `query()` for research, quick
-  answers, and small tasks with read-only tools.
-- **PTY sessions (interactive)** — for real coding tasks, Rust spawns
-  `claude` in a PTY (`portable-pty`), Margie writes prompts to it and parses
-  output; the panel gains a "sessions" view so Tom can watch or take over.
+- **Interactive Warp session (primary)** — Margie's brain runs
+  `scripts/kickoff-claude.sh <dir> <prompt>`, which writes a Warp Launch
+  Configuration and opens it via the `warp://launch/<name>` URI. This starts
+  an interactive `claude "<prompt>"` session in a new Warp tab that Tom can
+  watch and take over. Deterministic — no AppleScript keystroke automation,
+  no Accessibility permission. The prompt is passed through a file to avoid
+  YAML/shell quoting issues.
+- **Headless task** — for background work, the brain runs
+  `claude -p "<task>" &` and logs to `~/.margie/tasks/`, then reports status
+  by reading those logs and `~/.claude/projects/` transcripts.
 
 ## Security notes
 
