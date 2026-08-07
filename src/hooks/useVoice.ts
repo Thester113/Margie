@@ -1,15 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getTtsConfig, synthCloud, type TtsConfig } from "../lib/tts";
 
 export type VoiceStatus = "idle" | "listening" | "thinking" | "speaking";
 
 /**
- * Margie's voice pipeline (v0).
+ * Rank installed voices by how human they sound. macOS Premium voices
+ * (e.g. "Ava (Premium)") score highest, then Enhanced, then the least
+ * robotic defaults. Download better voices in System Settings →
+ * Accessibility → Spoken Content → System Voice → Manage Voices.
+ */
+// British-first for the Jarvis register; swap "serena"/"kate" for
+// "daniel"/"jamie" if you want a male voice.
+const PREFERRED_NAMES = ["serena", "kate", "stephanie", "ava", "zoe", "samantha"];
+
+function pickMargieVoice(): SpeechSynthesisVoice | undefined {
+  const voices = speechSynthesis
+    .getVoices()
+    .filter((v) => v.lang.toLowerCase().startsWith("en"));
+
+  const score = (v: SpeechSynthesisVoice): number => {
+    const id = `${v.name} ${v.voiceURI}`.toLowerCase();
+    let s = 0;
+    if (id.includes("premium")) s += 400;
+    if (id.includes("enhanced")) s += 300;
+    const rank = PREFERRED_NAMES.findIndex((n) => id.includes(n));
+    if (rank !== -1) s += 100 - rank;
+    if (v.lang.toLowerCase().startsWith("en-gb")) s += 10;
+    return s;
+  };
+
+  return voices.sort((a, b) => score(b) - score(a))[0];
+}
+
+/**
+ * Margie's voice pipeline.
  *
- * - TTS: browser speechSynthesis as a stand-in until cloud TTS
- *   (ElevenLabs/OpenAI) is wired through the sidecar.
- * - STT: microphone capture with a live level meter. Transcription is a
- *   TODO — audio will be streamed to whisper.cpp on the Rust side, with a
- *   local wake word ("Margie") gating it.
+ * - TTS: cloud provider (ElevenLabs or OpenAI) when a key is configured in
+ *   the environment; otherwise falls back to the best installed
+ *   speechSynthesis voice. See lib/tts.ts.
+ * - Mic level metering for the orb; wake-word STT lives in useWakeWord.
  */
 export function useVoice() {
   const [status, setStatus] = useState<VoiceStatus>("idle");
@@ -17,14 +46,22 @@ export function useVoice() {
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number>(0);
+  const ttsCfgRef = useRef<TtsConfig | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const speak = useCallback((text: string) => {
+  useEffect(() => {
+    getTtsConfig()
+      .then((cfg) => (ttsCfgRef.current = cfg))
+      .catch(() => (ttsCfgRef.current = null));
+  }, []);
+
+  const speakSystem = useCallback((text: string) => {
     return new Promise<void>((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
-      const voice = speechSynthesis
-        .getVoices()
-        .find((v) => v.name.includes("Samantha"));
+      const voice = pickMargieVoice();
       if (voice) utterance.voice = voice;
+      utterance.rate = 0.98;
+      utterance.pitch = 1.02;
       utterance.onstart = () => setStatus("speaking");
       utterance.onend = () => {
         setStatus("idle");
@@ -33,6 +70,34 @@ export function useVoice() {
       speechSynthesis.speak(utterance);
     });
   }, []);
+
+  const speak = useCallback(
+    async (text: string) => {
+      const cfg = ttsCfgRef.current;
+      if (cfg && cfg.provider !== "system" && cfg.key) {
+        try {
+          setStatus("speaking");
+          const blob = await synthCloud(text, cfg);
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          await new Promise<void>((resolve) => {
+            audio.onended = () => resolve();
+            audio.onerror = () => resolve();
+            void audio.play();
+          });
+          URL.revokeObjectURL(url);
+          audioRef.current = null;
+          setStatus("idle");
+          return;
+        } catch {
+          // Cloud failed (bad key, offline, quota) — fall back to system voice.
+        }
+      }
+      await speakSystem(text);
+    },
+    [speakSystem],
+  );
 
   const startListening = useCallback(async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

@@ -1,11 +1,11 @@
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro", Inter, sans-serif;
   font-size: 14px;
-  color: #ece9f5;
-  --accent: #a78bfa;
-  --accent-2: #f0abfc;
-  --glass: rgba(22, 19, 32, 0.92);
-  --glass-border: rgba(255, 255, 255, 0.08);
+  color: #e6f6fd;
+  --accent: #22d3ee;
+  --accent-2: #7dd3fc;
+  --glass: rgba(8, 15, 24, 0.92);
+  --glass-border: rgba(125, 211, 252, 0.14);
 }
 
 html,
@@ -42,15 +42,26 @@ body,
   border-radius: 50%;
   cursor: pointer;
   position: relative;
-  background: radial-gradient(
-    circle at 32% 30%,
-    var(--accent-2),
-    var(--accent) 55%,
-    #4c1d95
-  );
+  /* Layered sphere: specular highlight up-left, lit body, dark limb. */
+  background:
+    radial-gradient(
+      circle at 31% 24%,
+      rgba(255, 255, 255, 0.95),
+      rgba(255, 255, 255, 0) 32%
+    ),
+    radial-gradient(
+      circle at 46% 42%,
+      #cffafe 0%,
+      #38bdf8 34%,
+      #0369a1 62%,
+      #0b2a45 86%,
+      #05121f 100%
+    );
   box-shadow:
-    0 0 24px rgba(167, 139, 250, 0.55),
-    0 0 60px rgba(240, 171, 252, 0.25);
+    inset -12px -16px 30px rgba(2, 10, 24, 0.85),
+    inset 5px 7px 14px rgba(255, 255, 255, 0.3),
+    0 0 26px rgba(34, 211, 238, 0.55),
+    0 10px 26px rgba(2, 10, 24, 0.55);
   transition: transform 0.15s ease;
   animation: breathe 4s ease-in-out infinite;
 }
@@ -61,18 +72,49 @@ body,
 
 .orb__core {
   position: absolute;
-  inset: 22%;
+  inset: 28%;
   border-radius: 50%;
-  background: radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.05) 65%);
+  background: radial-gradient(
+    circle,
+    rgba(240, 253, 255, 0.95),
+    rgba(103, 232, 249, 0.5) 45%,
+    transparent 72%
+  );
+  filter: blur(1px);
+  animation: core-pulse 3.2s ease-in-out infinite;
   pointer-events: none;
+}
+
+/* Holographic ring orbiting the sphere. */
+.orb::after {
+  content: "";
+  position: absolute;
+  inset: -11%;
+  border-radius: 50%;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-top-color: rgba(224, 250, 255, 0.85);
+  border-right-color: rgba(165, 243, 252, 0.45);
+  animation: ring-spin 7s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes core-pulse {
+  0%, 100% { opacity: 0.8; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
+@keyframes ring-spin {
+  to { transform: rotate(360deg); }
 }
 
 .orb--listening {
   animation: none;
   transform: scale(calc(1 + var(--level, 0) * 0.35));
   box-shadow:
-    0 0 calc(24px + var(--level, 0) * 40px) rgba(167, 139, 250, 0.8),
-    0 0 70px rgba(240, 171, 252, 0.35);
+    inset -12px -16px 30px rgba(2, 10, 24, 0.85),
+    inset 5px 7px 14px rgba(255, 255, 255, 0.3),
+    0 0 calc(24px + var(--level, 0) * 40px) rgba(34, 211, 238, 0.85),
+    0 0 70px rgba(125, 211, 252, 0.4);
 }
 
 .orb--thinking {
@@ -223,7 +265,7 @@ body,
 
 .msg--user {
   align-self: flex-end;
-  background: linear-gradient(135deg, #6d28d9, #7c3aed);
+  background: linear-gradient(135deg, #0369a1, #0284c7);
 }
 
 .msg--margie {
@@ -273,6 +315,68 @@ body,
 }
 
 .icon-btn--active {
-  background: rgba(167, 139, 250, 0.25);
-  box-shadow: 0 0 12px rgba(167, 139, 250, 0.4);
+  background: rgba(34, 211, 238, 0.22);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.45);
+}
+
+/* ---------- Wake-word indicator ---------- */
+
+.wake-chip {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 88%;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(8, 15, 24, 0.85);
+  border: 1px solid var(--glass-border);
+  font-size: 12px;
+  color: #cbeefb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+.wake-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #64748b;
+  flex: none;
+}
+
+.wake-chip--asleep .wake-dot {
+  background: #38bdf8;
+  animation: wake-breathe 2.6s ease-in-out infinite;
+}
+
+.wake-chip--awake {
+  color: #e6f6fd;
+  border-color: rgba(34, 211, 238, 0.5);
+}
+
+.wake-chip--awake .wake-dot {
+  background: #22d3ee;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.9);
+  animation: wake-pulse 0.9s ease-in-out infinite;
+}
+
+.wake-chip--error .wake-dot {
+  background: #f87171;
+}
+
+@keyframes wake-breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes wake-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.4); opacity: 1; }
 }

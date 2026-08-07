@@ -45,15 +45,30 @@ matching component. Sizes live in `src-tauri/src/lib.rs`.
 | `bar` | 560×72 | One-line quick commands, mic toggle |
 | `panel` | 440×640 | Conversation, camera preview, full input |
 
-## Voice pipeline (target)
+## Voice pipeline (implemented)
 
-1. Rust captures mic audio continuously; a local wake-word model gates on
-   "Margie".
-2. On wake, audio is transcribed by whisper.cpp locally; the transcript is
-   emitted to the UI and sent to the brain.
-3. The brain's reply is synthesized by cloud TTS (Margie's voice) and played
-   by the UI. `useVoice` drives orb animation from state
-   (idle/listening/thinking/speaking).
+STT runs entirely on-device via whisper.cpp:
+
+1. **Rust** (`stt.rs`) owns the process lifecycle only: it spawns
+   `whisper-server` (Homebrew `whisper-cpp`) once, loading
+   `~/.margie/models/ggml-base.en.bin`, and kills it on app exit.
+2. **Webview** (`useWakeWord.ts`) captures the mic, runs an energy-based VAD
+   to segment speech into whole phrases, downsamples each to 16 kHz, WAV-encodes
+   it, and POSTs to `http://127.0.0.1:8178/inference`. Audio never leaves the
+   machine.
+3. **Wake FSM**: transcripts are scanned for "Margie". "Margie, open Safari"
+   in one breath dispatches immediately; a bare "Margie" wakes her and the next
+   phrase becomes the command. Non-speech tokens (`[BLANK_AUDIO]`, etc.) are
+   stripped. VAD/timeout constants live at the top of `useWakeWord.ts`.
+4. Commands render as text (a user message) and go to the brain. Capture is
+   muted while `voice.status === "speaking"` so she doesn't hear herself.
+
+TTS is still `speechSynthesis` (best installed voice); cloud TTS is the swap
+point in `useVoice.speak()`.
+
+A separate wake-word engine (Porcupine etc.) was intentionally avoided —
+continuous whisper transcription + a regex trigger needs no extra model or
+API key.
 
 ## Claude Code control (target)
 

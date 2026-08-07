@@ -32,8 +32,15 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture.
 
 ## Getting started
 
-Prereqs: Rust (`rustup`), Node 20+, and the `claude` CLI logged in (the Agent
-SDK uses your existing Claude Code credentials).
+Prereqs: Rust (`rustup`), Node 20+, the `claude` CLI logged in (the Agent SDK
+uses your existing Claude Code credentials), and for the wake word:
+
+```bash
+brew install whisper-cpp                 # provides whisper-server
+mkdir -p ~/.margie/models
+curl -L -o ~/.margie/models/ggml-base.en.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+```
 
 ```bash
 # Shell + UI
@@ -49,6 +56,21 @@ npm run build
 On first camera/mic use, macOS will prompt for permission (usage strings are in
 `src-tauri/Info.plist`).
 
+### Give Margie a human voice (optional)
+
+By default she uses the best installed macOS voice. For a genuinely human voice,
+set a cloud TTS key in the shell before launching — she picks it up automatically:
+
+```bash
+export ELEVENLABS_API_KEY=sk_...        # preferred; free tier available
+# or: export OPENAI_API_KEY=sk-...
+# optional voice override (ElevenLabs voice id, or OpenAI voice name):
+# export MARGIE_TTS_VOICE=Xb7hH8MSUJpSbSDYk0k2
+npm run tauri dev
+```
+
+No key → she falls back to the system voice, so nothing breaks.
+
 ## Project layout
 
 ```
@@ -63,9 +85,11 @@ sidecar/             Node brain — Claude Agent SDK, stdin/stdout JSON protocol
 - [x] Text command loop → Agent SDK sidecar
 - [x] Camera preview + snapshot plumbing
 - [x] TTS (speechSynthesis placeholder)
+- [x] Full Mac access: apps, AppleScript, terminals, files, web
+- [x] Dispatch & resume Claude Code sessions headlessly (`claude -p`, `--continue`, `--resume`)
+- [x] Wake word: say "Margie", she listens and shows your command as text (local whisper.cpp)
 - [ ] Long-lived sidecar with streaming protocol
-- [ ] Wake-word + whisper.cpp STT (Rust)
 - [ ] Cloud TTS voice for Margie
-- [ ] Spawn/drive `claude` CLI sessions via PTY
+- [ ] Interactive `claude` PTY sessions with a live view in the panel
 - [ ] Vision: periodic camera snapshots to the brain
 - [ ] Global hotkey + menu bar presence

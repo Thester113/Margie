@@ -5,8 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
  * Until the sidecar is built, the Rust side answers with an echo so the
  * whole loop is testable.
  */
-export async function askBrain(text: string): Promise<string> {
-  return invoke<string>("ask_brain", { text });
+export async function askBrain(text: string, resume = false): Promise<string> {
+  return invoke<string>("ask_brain", { text, resume });
 }
 
 export type Form = "orb" | "bar" | "panel";

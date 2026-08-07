@@ -45,3 +45,10 @@ npm run tauri dev              # run the app
   `capabilities/default.json`.
 - Margie's replies are spoken aloud — keep the sidecar system prompt tuned
   for short conversational output, never markdown.
+- **The sidecar runs with `permissionMode: "bypassPermissions"`** — Margie
+  has full machine access by design (Tom's explicit choice). The only guard
+  is the confirm-first rule for destructive actions in her system prompt.
+  To restrict her, switch to `permissionMode: "default"` and restore an
+  `allowedTools` whitelist in `sidecar/src/index.ts`.
+- Dispatched Claude Code tasks log to `~/.margie/tasks/*.log`; Margie reads
+  these for status reports.
