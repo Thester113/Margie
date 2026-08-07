@@ -9,7 +9,7 @@ export async function askBrain(text: string, resume = false): Promise<string> {
   return invoke<string>("ask_brain", { text, resume });
 }
 
-export type Form = "orb" | "bar" | "panel";
+export type Form = "orb" | "bar" | "panel" | "settings";
 
 export async function setForm(form: Form): Promise<void> {
   await invoke("set_form", { form });

@@ -8,6 +8,7 @@ import { useWakeWord } from "./hooks/useWakeWord";
 import { Orb } from "./components/Orb";
 import { CommandBar } from "./components/CommandBar";
 import { Panel } from "./components/Panel";
+import { Settings } from "./components/Settings";
 
 export interface Message {
   role: "user" | "margie";
@@ -91,11 +92,13 @@ function App() {
     else wake.stop();
   }, [wake]);
 
-  // Escape steps back down a form: panel -> bar -> orb.
+  // Escape steps back down a form: settings -> panel -> bar -> orb.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      void changeForm(form === "panel" ? "bar" : "orb");
+      const back: Form =
+        form === "settings" ? "panel" : form === "panel" ? "bar" : "orb";
+      void changeForm(back);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -138,7 +141,11 @@ function App() {
           onSend={sendCommand}
           onToggleMic={toggleWake}
           onCollapse={() => void changeForm("bar")}
+          onSettings={() => void changeForm("settings")}
         />
+      )}
+      {form === "settings" && (
+        <Settings onCollapse={() => void changeForm("panel")} />
       )}
 
       {form !== "orb" && wakeHint && (

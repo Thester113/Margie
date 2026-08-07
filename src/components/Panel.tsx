@@ -11,6 +11,7 @@ interface PanelProps {
   onSend: (text: string) => void;
   onToggleMic: () => void;
   onCollapse: () => void;
+  onSettings: () => void;
 }
 
 /** Full conversation form: message history, camera preview, input. */
@@ -21,6 +22,7 @@ export function Panel({
   onSend,
   onToggleMic,
   onCollapse,
+  onSettings,
 }: PanelProps) {
   const [text, setText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -48,6 +50,14 @@ export function Panel({
           title={camera.active ? "Stop camera" : "Let Margie see you"}
         >
           {camera.active ? "📷✓" : "📷"}
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={onSettings}
+          title="Settings"
+        >
+          ⚙
         </button>
         <button
           type="button"

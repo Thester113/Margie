@@ -11,6 +11,7 @@ enum Form {
     Orb,
     Bar,
     Panel,
+    Settings,
 }
 
 impl Form {
@@ -19,6 +20,7 @@ impl Form {
             Form::Orb => LogicalSize::new(120.0, 120.0),
             Form::Bar => LogicalSize::new(560.0, 72.0),
             Form::Panel => LogicalSize::new(440.0, 640.0),
+            Form::Settings => LogicalSize::new(440.0, 560.0),
         }
     }
 }
@@ -33,15 +35,62 @@ struct TtsConfig {
     voice: String,
 }
 
-/// Read a field from ~/.margie/config.json (keys kept out of the repo).
+/// Path to the persisted config file (keys kept out of the repo).
+fn config_path() -> Option<std::path::PathBuf> {
+    Some(std::path::Path::new(&std::env::var("HOME").ok()?).join(".margie/config.json"))
+}
+
+/// Read a field from ~/.margie/config.json.
 fn config_field(field: &str) -> Option<String> {
-    let path = std::path::Path::new(&std::env::var("HOME").ok()?).join(".margie/config.json");
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = std::fs::read_to_string(config_path()?).ok()?;
     let json: serde_json::Value = serde_json::from_str(&text).ok()?;
     json.get(field)?
         .as_str()
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// User-editable settings persisted to ~/.margie/config.json. Note that the
+/// matching env vars (ELEVENLABS_API_KEY, OPENAI_API_KEY, MARGIE_TTS_VOICE)
+/// still take precedence at read time — see `tts_config`.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Settings {
+    #[serde(default)]
+    elevenlabs_api_key: String,
+    #[serde(default)]
+    openai_api_key: String,
+    #[serde(default)]
+    voice: String,
+}
+
+/// Load the persisted settings; missing file or fields yield empty strings.
+#[tauri::command]
+fn read_settings() -> Settings {
+    config_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// Persist settings, merging into any existing config so unrelated fields
+/// (e.g. hand-added keys) are preserved.
+#[tauri::command]
+fn write_settings(settings: Settings) -> Result<(), String> {
+    let path = config_path().ok_or("HOME not set")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut json: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert("elevenlabs_api_key".into(), settings.elevenlabs_api_key.into());
+        obj.insert("openai_api_key".into(), settings.openai_api_key.into());
+        obj.insert("voice".into(), settings.voice.into());
+    }
+    let text = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -119,6 +168,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_form,
             tts_config,
+            read_settings,
+            write_settings,
             dbg_log,
             save_wav,
             brain::ask_brain,

@@ -297,6 +297,82 @@ body,
   border-color: var(--accent);
 }
 
+/* ---------- Settings ---------- */
+
+.settings__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+}
+
+.settings__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.55;
+}
+
+.settings__note code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--accent-2);
+}
+
+.settings__footer {
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.settings__msg {
+  flex: 1;
+  font-size: 12px;
+  user-select: text;
+}
+
+.settings__msg--ok {
+  color: var(--accent-2);
+}
+
+.settings__msg--error {
+  color: #fca5a5;
+}
+
+.settings__save {
+  background: linear-gradient(135deg, var(--accent-2), var(--accent));
+  border: none;
+  color: #04121d;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 8px 18px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.settings__save:hover:not(:disabled) {
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.55);
+}
+
+.settings__save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ---------- Shared ---------- */
 
 .icon-btn {
