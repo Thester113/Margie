@@ -1,23 +1,17 @@
 #!/bin/bash
-# kickoff-claude.sh — open an interactive Claude Code session in a new Warp tab.
+# kickoff-claude.sh — start an interactive Claude Code session in a new Warp
+# tab, running inside a tmux session named "margie" so Margie can inject
+# follow-ups into the SAME running session later (via claude-followup.sh).
 #
-# Usage: kickoff-claude.sh <project_dir> [prompt words...]
-#   <project_dir>  directory to start the session in (defaults to $HOME)
-#   [prompt]       optional; everything after the dir is the seed prompt.
-#                  `claude "<prompt>"` starts an interactive session with the
-#                  prompt already submitted, so Tom can watch and take over.
+# Usage: kickoff-claude.sh <dir> [--continue] [prompt words...]
+#   --continue  resume the most recent Claude session in <dir>
 #
-# Uses a Warp Launch Configuration + the warp:// URI — deterministic, no
-# keystroke automation and no Accessibility permission required.
-#
-# Set DRY_RUN=1 to write the config and print it without launching Warp.
+# Set DRY_RUN=1 to write the files and print them without launching Warp.
 set -euo pipefail
 
 DIR="${1:-$HOME}"
 shift || true
 
-# Optional first flag: --continue (resume most recent session in this dir) or
-# --resume (same). Anything else is treated as the start of the prompt.
 CLAUDE_FLAG=""
 case "${1:-}" in
   --continue | -c | --resume | -r)
@@ -27,8 +21,6 @@ case "${1:-}" in
 esac
 
 PROMPT="$*"
-
-# Resolve to an absolute directory, falling back to $HOME.
 DIR_ABS="$(cd "$DIR" 2>/dev/null && pwd || echo "$HOME")"
 
 CFG_DIR="$HOME/.warp/launch_configurations"
@@ -37,21 +29,37 @@ mkdir -p "$CFG_DIR" "$TASK_DIR"
 
 STAMP="$(date +%s)"
 NAME="margie-claude-$STAMP"
+SESSION="margie" # canonical tmux session name Margie sends follow-ups to
+TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
 
-# Prompt goes in a file so it never has to be escaped through YAML or shell
-# quoting — the exec just cats it back as a single argument to claude.
-if [ -n "$PROMPT" ]; then
+# Inner script: cd + run claude (or a test command). Written as plain bash so
+# quoting is clean; the prompt is read from a file to avoid all escaping.
+INNER="$TASK_DIR/inner-$STAMP.sh"
+if [ -n "${MARGIE_TEST_CMD:-}" ]; then
+  CLAUDE_LINE="$MARGIE_TEST_CMD"
+elif [ -n "$PROMPT" ]; then
   PROMPT_FILE="$TASK_DIR/prompt-$STAMP.txt"
   printf '%s' "$PROMPT" > "$PROMPT_FILE"
-  EXEC="claude${CLAUDE_FLAG:+ $CLAUDE_FLAG} \"\$(cat $PROMPT_FILE)\""
+  CLAUDE_LINE="claude ${CLAUDE_FLAG:+$CLAUDE_FLAG }\"\$(cat '$PROMPT_FILE')\""
 else
-  EXEC="claude${CLAUDE_FLAG:+ $CLAUDE_FLAG}"
+  CLAUDE_LINE="claude ${CLAUDE_FLAG}"
 fi
+cat > "$INNER" <<INNEREOF
+#!/bin/bash
+cd "$DIR_ABS" || cd "\$HOME"
+$CLAUDE_LINE
+INNEREOF
+chmod +x "$INNER"
 
-# MARGIE_TEST_CMD lets tests substitute a harmless command for `claude`.
-if [ -n "${MARGIE_TEST_CMD:-}" ]; then
-  EXEC="$MARGIE_TEST_CMD"
-fi
+# Run script: (re)create the tmux session running the inner script, and attach
+# to it in this tab so Tom watches it live.
+RUN="$TASK_DIR/kick-$STAMP.sh"
+cat > "$RUN" <<RUNEOF
+#!/bin/bash
+"$TMUX_BIN" kill-session -t $SESSION 2>/dev/null
+exec "$TMUX_BIN" new-session -s $SESSION 'bash $INNER'
+RUNEOF
+chmod +x "$RUN"
 
 CFG="$CFG_DIR/$NAME.yaml"
 cat > "$CFG" <<YAML
@@ -63,27 +71,19 @@ windows:
         layout:
           cwd: "$DIR_ABS"
           commands:
-            - exec: '$EXEC'
+            - exec: 'bash $RUN'
 YAML
 
-# Prune old Margie launch configs (older than 1 day) to avoid clutter.
 find "$CFG_DIR" -name 'margie-claude-*.yaml' -type f -mtime +1 -delete 2>/dev/null || true
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
-  echo "--- $CFG ---"
-  cat "$CFG"
+  echo "--- $CFG ---"; cat "$CFG"
+  echo "--- $RUN ---"; cat "$RUN"
+  echo "--- $INNER ---"; cat "$INNER"
   exit 0
 fi
 
-# 1. Launch the configuration. This opens a new Warp tab and runs the command,
-#    cold-starting Warp if it isn't running. (Tested reliable on its own.)
 open "warp://launch/$NAME"
-
-# 2. Bring Warp and the new window to the foreground so Tom actually SEES it —
-#    without this the tab opens in the background / on another Space, which was
-#    the "she says it's up but I see nothing" bug. The delay lets the launch
-#    settle before we activate.
 sleep 1.5
 open -a Warp
-
-echo "Launched Claude in Warp — dir: $DIR_ABS, prompt: ${PROMPT:-<none>}"
+echo "Launched Claude in Warp (tmux session '$SESSION') — dir: $DIR_ABS, prompt: ${PROMPT:-<none>}"

@@ -81,6 +81,9 @@ pub fn start_stt(state: State<Whisper>) -> Result<String, String> {
             "127.0.0.1",
             "--port",
             &PORT.to_string(),
+            // More threads → faster transcription → snappier wake/turn-end.
+            "-t",
+            "8",
         ])
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err))

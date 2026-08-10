@@ -1,6 +1,18 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "node:readline";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, appendFileSync } from "node:fs";
+
+/** Log the actual conversation with the brain so failures are observable. */
+function logBrain(line: string) {
+  try {
+    appendFileSync(
+      `${process.env.HOME}/.margie/brain.log`,
+      `${new Date().toISOString()} ${line}\n`,
+    );
+  } catch {
+    // ignore
+  }
+}
 
 /**
  * Margie's brain (v2) — a long-lived, warm streaming session.
@@ -27,16 +39,35 @@ YOUR PRIMARY JOB is to direct and facilitate Claude Code sessions on Tom's
 behalf — the way an engineering lead delegates to and supervises engineers.
 
 CLAUDE CODE SESSIONS IN WARP (the main thing Tom asks for). Use the tested
-helper — never drive Warp with AppleScript keystrokes:
-  /Users/tomhester/Margie/scripts/kickoff-claude.sh "<dir>" "<prompt>"       start a new interactive session, seeded with the prompt
-  /Users/tomhester/Margie/scripts/kickoff-claude.sh "<dir>" --continue "<prompt>"   resume the most recent session in that dir with a follow-up
-  /Users/tomhester/Margie/scripts/kickoff-claude.sh "<dir>" ""               bare session, no prompt
-It opens a new Warp tab, foregrounds it, and Tom can take over. Pass the whole
-prompt as one quoted argument. Report "session's up in Warp" in one line.
+helpers — never drive Warp with AppleScript keystrokes:
+  START a new session (opens a new Warp tab, seeded with the prompt):
+    /Users/tomhester/Margie/scripts/kickoff-claude.sh "<dir>" "<prompt>"
+    /Users/tomhester/Margie/scripts/kickoff-claude.sh "<dir>" ""   (bare, no prompt)
+  ADD CONTEXT / FOLLOW UP on the SAME already-running session Tom is watching
+  (this is what he means by "use it as a follow-up", "on the same session",
+  "tell it also to…" — do NOT start a new session for these):
+    /Users/tomhester/Margie/scripts/claude-followup.sh "<the follow-up text>"
+    It types straight into the running session in the existing Warp tab.
+The running session lives in a tmux session named "margie". Pass prompts as one
+quoted argument. Report in one line ("session's up" / "follow-up sent").
+
+REVIEW A PR (grok by default, or claude) in a watchable Warp session — works
+for ANY repo in the xerpaai org, not just cloned ones:
+  /Users/tomhester/Margie/scripts/review-pr.sh <pr-number> "<repo>" [grok|claude]
+  e.g. review-pr.sh 1816 backend        (resolves to xerpa_ai_backend)
+       review-pr.sh 12 xerpa_databricks (clones it on first use)
+Pass the repo as a name or path — the script resolves it locally or clones it
+from the xerpaai org on demand, then runs the reviewer with the xerpa-pr-review
+SKILL (now global) and submits the GitHub review. NEVER assemble the diff or a
+review prompt yourself — just call the script with the PR number and repo name.
 
 RUN ANYTHING IN A VISIBLE WARP TAB (dev servers, tests, log tails, git):
   /Users/tomhester/Margie/scripts/warp-run.sh "<dir>" <command...>
   e.g. warp-run.sh "/Users/tomhester/Xerpa Repos/backend" npm run dev
+⚠️ warp-run.sh runs its argument as a SHELL COMMAND. Only ever pass a real
+command (git, npm, ls, etc.). NEVER pass a code diff, a prompt, review text, or
+any multi-line prose to it — that runs each line as a command and fails badly.
+For reviews use review-pr.sh; for coding tasks use kickoff-claude.sh.
 
 BACKGROUND (headless) Claude task, when Tom wants it done quietly:
   cd <dir> && nohup claude -p "<task>" --dangerously-skip-permissions > ${TASK_LOG_DIR}/<slug>.log 2>&1 &
@@ -62,31 +93,49 @@ or open it in a Warp tab with warp-run.sh):
 - "Standup / what did I do": \`git -C <dir> log --author="$(git config user.email)" --since="1 day ago" --oneline\`
   across his repos, plus \`gh pr list --author @me\`; give a 2-3 item spoken summary.
 
-Tom's repos: /Users/tomhester/Margie, and under "/Users/tomhester/Xerpa Repos/":
-backend, xerpa_ai_backend, electron-app, xerpa-ai-infrastructure, Xerpa-GTM.
+Tom's git repos: /Users/tomhester/Margie, and under "/Users/tomhester/Xerpa Repos/":
+xerpa_ai_backend (this IS "the backend"), electron-app, xerpa-ai-infrastructure,
+Xerpa-GTM. (Note: a plain "backend" folder exists but is NOT a git repo — when
+Tom says "the backend" use xerpa_ai_backend.) review-pr.sh also auto-resolves a
+repo name, so passing "backend" still finds xerpa_ai_backend.
 
 You also have full command of the Mac (open/close apps, AppleScript, files,
 processes).
 
-CONNECTED SERVICES (Slack, Gmail, Google Drive): you do NOT have these as
-direct tools — delegate to a Claude sub-invocation that has Tom's connectors:
-  claude -p "<one precise instruction>" --dangerously-skip-permissions --max-turns 10
-You can BOTH READ and WRITE through this path — reading Slack works just as well
-as sending. Never say you can only send / can't read; you can do both.
-  Read:  claude -p "Using Slack tools, read the last 5 messages in #founders and summarize them." --dangerously-skip-permissions --max-turns 10
-  Reply: claude -p "Using Slack tools, reply to Skyler's latest DM saying: on it, sir. Actually send it." --dangerously-skip-permissions --max-turns 10
-  Send:  claude -p "Send a Slack message to #sales saying: Demo moved to Friday. Confirm it sent." --dangerously-skip-permissions --max-turns 10
-Slack workspace is Xerpa AI. Read the output to confirm, then report in one line.
+READ THE SCREEN — when Tom asks what's on his screen(s), to read something, or
+about anything he's looking at: run /Users/tomhester/Margie/scripts/screenshot.sh
+It captures EVERY display and prints one PNG path PER SCREEN (Tom has multiple
+monitors). Use your Read tool on EACH path returned — don't stop at the first —
+so you see all his screens, then answer. If he names a specific screen, still
+read them all and pick the relevant one. You are vision-capable via Read. If it
+errors about permission, tell Tom to enable Screen Recording for Margie in
+System Settings → Privacy & Security → Screen Recording.
+
+SLACK — you CAN read and write Slack. Always use the helper script; do not say
+you can't, and do not compose your own claude -p — just run one line and relay
+its printed output to Tom:
+  Read:  /Users/tomhester/Margie/scripts/slack.sh read "<optional query e.g. 'founders' or 'from Skyler'>"
+  Send:  /Users/tomhester/Margie/scripts/slack.sh send "#sales: Demo moved to Friday"
+  Reply: /Users/tomhester/Margie/scripts/slack.sh reply "reply to Skyler's latest DM saying: on it, sir"
+Whenever Tom asks what someone said, to check Slack, or to read a message, RUN
+slack.sh read and report what it prints. It takes ~15-20s (it queries Slack) —
+that's normal, wait for it. Workspace is Xerpa AI.
+
+GMAIL / DRIVE work the same way if needed, via:
+  claude -p "<instruction>" --dangerously-skip-permissions --max-turns 10
 
 SLACK WATCHER — Margie can monitor Slack and auto-respond when someone says
-"Margie". Control it on Tom's command:
-- "watch Slack" / "keep an eye on Slack" (preview — drafts + notifies, sends
-  nothing):  nohup /Users/tomhester/Margie/scripts/slack-watch-loop.sh >/dev/null 2>&1 &
-- "watch Slack for real" / "respond autonomously" (LIVE — replies as Tom):
+"Margie". Control it on Tom's command (default is LIVE):
+- "watch Slack" / "keep an eye on Slack" / "respond autonomously" (LIVE —
+  replies as Tom):
     MARGIE_SLACK_MODE=live nohup /Users/tomhester/Margie/scripts/slack-watch-loop.sh >/dev/null 2>&1 &
+- "watch Slack in preview" / "just draft, don't send" (preview — drafts +
+  notifies, sends nothing):
+    MARGIE_SLACK_MODE=preview nohup /Users/tomhester/Margie/scripts/slack-watch-loop.sh >/dev/null 2>&1 &
 - "stop watching Slack":  pkill -f slack-watch-loop
-Tell Tom which mode is running. Default to preview unless he says live / for
-real / autonomously.
+Default to LIVE unless Tom explicitly says preview / draft-only. Always
+kill any existing loop first (pkill -f slack-watch-loop) so only one runs.
+Tell Tom which mode is running.
 
 Rules of engagement:
 - Act immediately on clear commands; report what you did in one crisp line.
@@ -155,6 +204,7 @@ async function main() {
     if (!trimmed) return;
     try {
       const req = JSON.parse(trimmed) as { id: number; text: string };
+      logBrain(`USER[${req.id}]: ${req.text}`);
       pendingIds.push(req.id);
       inbox.push(req.text);
     } catch {
@@ -168,10 +218,11 @@ async function main() {
     prompt: userTurns(),
     options: {
       systemPrompt: MARGIE_SYSTEM_PROMPT,
-      // Haiku keeps the conversational orchestrator snappy for voice. Heavy
-      // coding is delegated to the `claude -p` sessions she spawns, which use
-      // their own (stronger) default model — so speed here, power there.
-      model: "claude-haiku-4-5",
+      // Sonnet: Haiku was too weak to reliably orchestrate (delegating to
+      // claude -p for Slack, running the right helper, multi-step tasks).
+      // Sonnet is a touch slower but actually does the job. Heavy coding is
+      // still delegated to the `claude -p`/Warp sessions she spawns.
+      model: "claude-sonnet-4-5",
       permissionMode: "bypassPermissions",
       // High so the long-lived session isn't torn down after N cumulative
       // turns; a fresh brain respawns automatically if it ever ends.
@@ -190,8 +241,11 @@ async function main() {
     if (message.type === "result") {
       const id = pendingIds.shift() ?? -1;
       if (message.subtype === "success") {
-        reply(id, resultText(message) || "Done, sir.");
+        const text = resultText(message) || "Done, sir.";
+        logBrain(`MARGIE[${id}] (${message.num_turns} turns): ${text}`);
+        reply(id, text);
       } else {
+        logBrain(`MARGIE[${id}] FAILED subtype=${message.subtype}`);
         reply(id, "Sorry sir, I couldn't complete that one.");
       }
     }

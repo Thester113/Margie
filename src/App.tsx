@@ -44,10 +44,20 @@ function App() {
       setInterim("");
       setMessages((m) => [...m, { role: "user", text }]);
       voice.setStatus("thinking");
+      // If the brain takes a while (tool/Slack commands run ~20-30s), fill the
+      // silence with a quick acknowledgement so it doesn't feel dead.
+      let replied = false;
+      let ackPromise: Promise<void> | null = null;
+      const ackTimer = window.setTimeout(() => {
+        if (!replied) ackPromise = voice.speak("One moment, sir.");
+      }, 3500);
       try {
         const t0 = performance.now();
         const reply = await askBrain(text, resume);
         const t1 = performance.now();
+        replied = true;
+        window.clearTimeout(ackTimer);
+        if (ackPromise) await ackPromise; // don't talk over the acknowledgement
         setMessages((m) => [...m, { role: "margie", text: reply }]);
         await voice.speak(reply);
         const t2 = performance.now();
@@ -55,6 +65,8 @@ function App() {
           line: `${new Date().toISOString()} LATENCY brain=${Math.round(t1 - t0)}ms tts=${Math.round(t2 - t1)}ms`,
         });
       } catch (e) {
+        replied = true;
+        window.clearTimeout(ackTimer);
         const err = e instanceof Error ? e.message : String(e);
         setMessages((m) => [
           ...m,

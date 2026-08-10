@@ -8,7 +8,7 @@
 set -uo pipefail
 
 INTERVAL="${MARGIE_SLACK_INTERVAL:-90}"
-MODE="${MARGIE_SLACK_MODE:-preview}"
+MODE="${MARGIE_SLACK_MODE:-live}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="$HOME/.margie/slack-watch.log"
 mkdir -p "$HOME/.margie"

@@ -13,6 +13,27 @@ function dbg(line: string) {
   void invoke("dbg_log", { line: `${new Date().toISOString()} ${line}` });
 }
 
+/** A short, instant chime so waking feels responsive the moment it's detected. */
+function playWakeChime(ctx: AudioContext | null) {
+  if (!ctx) return;
+  try {
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(1320, now + 0.12);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.14, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.2);
+  } catch {
+    // non-fatal
+  }
+}
+
 /** Levenshtein distance, for fuzzy wake-word matching. */
 function lev(a: string, b: string): number {
   const m = a.length;
@@ -82,9 +103,14 @@ interface Options {
 // or too deaf for your mic.
 const START_RMS = 0.012;
 const STOP_RMS = 0.006;
-const HANGOVER_MS = 550; // silence that ends a phrase (snappier turn-end)
+// How long the speaker must pause before a phrase is considered finished.
+// Kept generous so brief mid-sentence pauses (a breath, thinking) don't cut
+// them off. Wake still feels instant because the early "peek" chimes before
+// this fires — so this only governs when a full command is dispatched.
+const HANGOVER_MS = 900;
 const MIN_PHRASE_MS = 250;
-const MAX_PHRASE_MS = 12000;
+const MAX_PHRASE_MS = 10000; // cap for a single utterance before forced finalize
+const PEEK_EVERY_MS = 900; // how often to "peek" for the wake word mid-speech
 const PREROLL_MS = 400; // audio kept from *before* speech is detected
 const WAKE_TIMEOUT_MS = 9000; // wait for the first command after a bare "Margie"
 const CONVERSATION_MS = 15000; // wait for a follow-up reply before sleeping
@@ -108,6 +134,11 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
   const prerollRef = useRef<Float32Array[]>([]);
   const speechMsRef = useRef(0);
   const silenceMsRef = useRef(0);
+  // Mid-speech wake "peek" state: detect "Margie" before the phrase ends so
+  // she chimes instantly even in a noisy room (no waiting for silence).
+  const peekInFlightRef = useRef(false);
+  const lastPeekMsRef = useRef(0);
+  const chimedThisPhraseRef = useRef(false);
 
   // Keep the latest callbacks without re-subscribing the audio node.
   const cbRef = useRef({ onWake, onCommand, onPartial, getMuted });
@@ -163,6 +194,7 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
       awakeRef.current = true;
       resumeNextRef.current = false;
       setState("awake");
+      if (!chimedThisPhraseRef.current) playWakeChime(ctxRef.current); // avoid double chime after a peek
       cbRef.current.onWake();
 
       if (rest.length > 2) {
@@ -231,6 +263,49 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
     }
   }, [handlePhrase]);
 
+  // Transcribe a snapshot of the in-progress phrase and, if the wake word is
+  // already present, chime + open the UI immediately — without waiting for the
+  // speaker to pause. This is what makes waking feel instant in a noisy room.
+  // It does NOT change FSM state; the normal finalize path still dispatches the
+  // command (and re-strips the wake word), guarded against a double chime.
+  const wakePeek = useCallback(
+    async (snapshot: Float32Array[], ctx: AudioContext) => {
+      try {
+        if (awakeRef.current || snapshot.length === 0) return;
+        let length = 0;
+        for (const c of snapshot) length += c.length;
+        const flat = new Float32Array(length);
+        let offset = 0;
+        for (const c of snapshot) {
+          flat.set(c, offset);
+          offset += c.length;
+        }
+        let peak = 0;
+        for (let i = 0; i < flat.length; i++) {
+          const a = Math.abs(flat[i]);
+          if (a > peak) peak = a;
+        }
+        if (peak > 0.001) {
+          const gain = Math.min(8, 0.95 / peak);
+          for (let i = 0; i < flat.length; i++) flat[i] *= gain;
+        }
+        const wav = encodeWav16k(downsampleTo16k(flat, ctx.sampleRate));
+        const text = await transcribe(baseUrlRef.current, wav);
+        if (!awakeRef.current && wakeSplit(text) !== null) {
+          chimedThisPhraseRef.current = true;
+          dbg(`WAKE PEEK: "${text}"`);
+          playWakeChime(ctx);
+          cbRef.current.onWake();
+        }
+      } catch {
+        // ignore — the full-phrase finalize will still catch it
+      } finally {
+        peekInFlightRef.current = false;
+      }
+    },
+    [],
+  );
+
   const start = useCallback(async () => {
     if (startedRef.current) return; // never run two capture pipelines
     startedRef.current = true;
@@ -297,6 +372,8 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
             chunksRef.current = [...prerollRef.current, frame];
             speechMsRef.current = frameMs * chunksRef.current.length;
             silenceMsRef.current = 0;
+            lastPeekMsRef.current = 0;
+            chimedThisPhraseRef.current = false;
             prerollRef.current = [];
           }
           return;
@@ -308,6 +385,18 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
           silenceMsRef.current += frameMs;
         } else {
           silenceMsRef.current = 0;
+        }
+
+        // Mid-speech wake peek: while asleep and still talking, check for
+        // "Margie" every ~900ms so she chimes without waiting for a pause.
+        if (
+          !awakeRef.current &&
+          !peekInFlightRef.current &&
+          speechMsRef.current - lastPeekMsRef.current >= PEEK_EVERY_MS
+        ) {
+          lastPeekMsRef.current = speechMsRef.current;
+          peekInFlightRef.current = true;
+          void wakePeek(chunksRef.current.slice(), ctx);
         }
 
         if (
@@ -328,7 +417,7 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
       setError(e instanceof Error ? e.message : String(e));
       setState("error");
     }
-  }, [finalizePhrase]);
+  }, [finalizePhrase, wakePeek]);
 
   const stop = useCallback(() => {
     window.clearTimeout(wakeTimerRef.current);
