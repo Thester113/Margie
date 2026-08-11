@@ -1,15 +1,15 @@
 #!/bin/bash
-# slack-watch.sh — one polling cycle of Margie's Slack watcher.
+# slack-watch.sh — one polling cycle of Margie's Slack @mention watcher.
 #
-# Finds recent messages containing "Margie" and:
-#   - live mode (DEFAULT): replies/acts as Tom via the Slack connector.
-#   - preview mode:        drafts a reply, sends nothing, notifies Tom.
+# Detects real @Margie mentions (the bot's `<@BOTID>` token) in the channels the
+# margie bot is a member of, plus any DM sent to the bot, and:
+#   - live mode (DEFAULT): replies in-thread AS @Margie (the bot), running grok
+#     to compose/act. grok is invoked ONLY when there's a new mention, so idle
+#     cycles are free (just a couple of Slack reads — no model usage).
+#   - preview mode:        drafts the reply, posts nothing, notifies Tom.
 #
-# Dedup is robust and does NOT rely on an LLM-returned timestamp (that bug
-# made the watcher advance past real messages and go silent). Instead:
-#   1. only look at the last LOOKBACK_MIN minutes,
-#   2. skip messages Tom has already replied to (natural dedup in live mode),
-#   3. skip messages whose signature is in the local handled list.
+# Runs on the direct Slack bot token + grok (no Claude, no connector).
+# Dedup is by message ts in a local handled list (no LLM-returned timestamps).
 set -uo pipefail
 
 MARGIE_DIR="$HOME/.margie"
@@ -18,65 +18,103 @@ HANDLED="$MARGIE_DIR/slack-handled.txt"
 mkdir -p "$MARGIE_DIR"
 
 MODE="${MARGIE_SLACK_MODE:-live}"
-LOOKBACK_MIN="${MARGIE_SLACK_LOOKBACK_MIN:-30}"
 NOW="$(date +%s)"
+GROK="${MARGIE_GROK_BIN:-$HOME/.grok/bin/grok}"
+GMODEL="${MARGIE_GROK_MODEL:-grok-4.5}"
 
-# Prune handled signatures older than 2h, then load recent ones to skip.
+BTOK="$(jq -r '.slack_token // empty' "$MARGIE_DIR/config.json" 2>/dev/null)"
+if [ -z "$BTOK" ]; then echo "$(date -u +%FT%TZ) no slack_token" >> "$LOG"; exit 0; fi
+sapi() { local m="$1"; shift; curl -sS -H "Authorization: Bearer $BTOK" "$@" "https://slack.com/api/$m"; }
+
+BOTID="$(sapi auth.test | jq -r '.user_id // empty')"
+[ -z "$BOTID" ] && { echo "$(date -u +%FT%TZ) auth.test failed" >> "$LOG"; exit 0; }
+MENTION="<@${BOTID}>"
+
+# Prune handled ts older than 6h.
 if [ -f "$HANDLED" ]; then
-  awk -F'|' -v n="$NOW" '($1 + 7200) > n' "$HANDLED" > "$HANDLED.tmp" 2>/dev/null && mv "$HANDLED.tmp" "$HANDLED"
+  awk -F'|' -v n="$NOW" '($1 + 21600) > n' "$HANDLED" > "$HANDLED.tmp" 2>/dev/null && mv "$HANDLED.tmp" "$HANDLED"
 fi
-SKIP_LIST="$(cut -d'|' -f2- "$HANDLED" 2>/dev/null | tail -50)"
+already() { grep -qF "|$1" "$HANDLED" 2>/dev/null; }
 
-if [ "$MODE" = "live" ]; then
-  ACTION="For each qualifying message, do what it asks or reply helpfully and CONCISELY as Tom's assistant Margie, and actually SEND it in the same channel/DM/thread using Slack tools. If it asks you to message someone else, do that too."
-else
-  ACTION="For each qualifying message, DRAFT the concise reply you WOULD send as Tom's assistant Margie, but DO NOT send anything. Put the draft in the 'action' field."
+echo "=== $(date -u +%FT%TZ) cycle mode=$MODE bot=$BOTID" >> "$LOG"
+
+# Collect (channel_id, channel_label, ts, thread_ts, user, text) for new mentions.
+# Channels the bot is a member of → look for the mention token.
+# DMs to the bot → every non-bot message counts (an implicit mention).
+SRCS="$(mktemp)"
+{
+  sapi conversations.list --get --data-urlencode "types=public_channel,private_channel" -d "limit=1000" -d "exclude_archived=true" \
+    | jq -r '.channels[]? | select(.is_member==true) | "chan\t"+.id+"\t#"+.name'
+  sapi conversations.list --get --data-urlencode "types=im" -d "limit=200" \
+    | jq -r '.channels[]? | "im\t"+.id+"\tDM"' 2>/dev/null
+} > "$SRCS"
+
+NEW="$(mktemp)"
+while IFS=$'\t' read -r kind cid label; do
+  [ -z "$cid" ] && continue
+  H="$(sapi conversations.history --get --data-urlencode "channel=$cid" -d "limit=15")"
+  echo "$H" | jq -e '.ok==true' >/dev/null 2>&1 || continue
+  # For channels, require the mention token; for DMs, any message not from the bot.
+  echo "$H" | jq -r --arg bot "$BOTID" --arg men "$MENTION" --arg kind "$kind" --arg cid "$cid" --arg label "$label" '
+    .messages[]?
+    | select(.subtype==null) | select((.user // "") != $bot)
+    | select($kind=="im" or ((.text // "") | contains($men)))
+    | [$cid, $label, .ts, (.thread_ts // .ts), (.user // "?"), ((.text // "") | gsub("\t";" ") | gsub("\n";" "))]
+    | @tsv' >> "$NEW"
+done < "$SRCS"
+rm -f "$SRCS"
+
+# Filter out already-handled ts.
+COUNT=0
+: > "$NEW.todo"
+while IFS=$'\t' read -r cid label ts thread user text; do
+  [ -z "$ts" ] && continue
+  already "$ts" && continue
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$cid" "$label" "$ts" "$thread" "$user" "$text" >> "$NEW.todo"
+  COUNT=$((COUNT+1))
+done < "$NEW"
+
+if [ "$COUNT" = "0" ]; then
+  echo "$(date -u +%FT%TZ) no new mentions" >> "$LOG"
+  rm -f "$NEW" "$NEW.todo"; exit 0
 fi
+echo "$(date -u +%FT%TZ) $COUNT new mention(s)" >> "$LOG"
 
-PROMPT="You are Margie, Tom's Slack assistant. Using Slack tools:
-1. Find messages containing the word 'Margie' posted in the LAST ${LOOKBACK_MIN} MINUTES across Tom's channels and DMs that are:
-   - NOT authored by Tom himself, AND
-   - NOT already answered (Tom/you have not replied after them), AND
-   - NOT matching any of these already-handled snippets:
-${SKIP_LIST:-(none yet)}
-2. ${ACTION}
-3. Output EXACTLY ONE final line of compact JSON and nothing after it:
-{\"handled\":[{\"from\":\"name\",\"channel\":\"name\",\"sig\":\"sender: first 40 chars of the message\",\"action\":\"what you did or drafted\"}]}"
+uname_of() { sapi users.info --get --data-urlencode "user=$1" | jq -r '.user.profile.display_name // .user.real_name // .user.name // "?"'; }
 
-echo "=== $(date -u +%FT%TZ) cycle mode=$MODE lookback=${LOOKBACK_MIN}m" >> "$LOG"
-OUT="$(cd "$HOME" && claude -p "$PROMPT" --dangerously-skip-permissions --max-turns 16 2>>"$LOG")"
-JSON="$(printf '%s' "$OUT" | grep -oE '\{.*\}' | tail -1)"
+FIRST_WHO=""; MORE=0
+while IFS=$'\t' read -r cid label ts thread user text; do
+  who="$(uname_of "$user")"
+  [ -z "$FIRST_WHO" ] && FIRST_WHO="$who" || MORE=$((MORE+1))
+  clean="$(printf '%s' "$text" | sed "s/$MENTION//g" | sed 's/^ *//;s/ *$//')"
+  P="You are Margie, Tom's assistant, replying in Slack AS the Margie bot. $who said to you: \"$clean\". Reply concisely and helpfully in one or two short sentences. If it asks for something you can do with Tom's helper scripts in /Users/tomhester/Margie/scripts (screenshot.sh, camera.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, kickoff-claude.sh, review-pr.sh), do it, then reply with the result. Output ONLY the message text to post — no preamble."
+  REPLY="$(cd "$HOME" && "$GROK" -p "$P" --always-approve -m "$GMODEL" --reasoning-effort low 2>>"$LOG" | sed 's/^ *//;s/ *$//')"
+  [ -z "$REPLY" ] && REPLY="Hello, sir — Margie here."
+  if [ "$MODE" = "live" ]; then
+    POST="$(sapi chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "thread_ts=$thread" --data-urlencode "text=$REPLY")"
+    if echo "$POST" | jq -e '.ok==true' >/dev/null 2>&1; then
+      echo "$(date -u +%FT%TZ) replied in $label ts=$ts" >> "$LOG"
+    else
+      echo "$(date -u +%FT%TZ) post failed in $label: $(echo "$POST"|jq -r '.error//"?"')" >> "$LOG"
+    fi
+  else
+    echo "$(date -u +%FT%TZ) DRAFT for $label: $REPLY" >> "$LOG"
+  fi
+  echo "${NOW}|${ts}" >> "$HANDLED"
+done < "$NEW.todo"
+rm -f "$NEW" "$NEW.todo"
 
-if [ -z "$JSON" ]; then
-  echo "$(date -u +%FT%TZ) mode=$MODE no-json" >> "$LOG"
-  exit 0
-fi
-
-COUNT="$(printf '%s' "$JSON" | jq -r '(.handled // []) | length' 2>/dev/null || echo 0)"
-echo "$(date -u +%FT%TZ) mode=$MODE count=${COUNT:-0} $JSON" >> "$LOG"
-[ "${COUNT:-0}" = "0" ] && exit 0
-
-# Record handled signatures so we never re-handle them.
-while IFS= read -r sig; do
-  [ -n "$sig" ] && echo "${NOW}|${sig}" >> "$HANDLED"
-done < <(printf '%s' "$JSON" | jq -r '(.handled // [])[] | .sig // empty' 2>/dev/null)
-
-# macOS notification
-SUMMARY="$(printf '%s' "$JSON" | jq -r '(.handled // [])[] | "\(.from): \(.action)"' 2>/dev/null | head -3 | tr '\n' ';')"
-TITLE="Margie · Slack"
-[ "$MODE" = "preview" ] && TITLE="Margie · Slack (preview — not sent)"
-osascript -e "display notification \"${SUMMARY//\"/\'}\" with title \"$TITLE\"" 2>/dev/null || true
-
-# Queue a spoken announcement for the app to say aloud when idle.
-SPOKEN="$(printf '%s' "$JSON" | jq -r --arg mode "$MODE" '
-  (.handled // []) as $h
-  | if ($h | length) == 0 then empty
-    else ($h[0].from) as $who
-      | "\($who) mentioned you on Slack. "
-        + (if $mode == "live" then "I have handled it, sir." else "I have a reply drafted for your approval, sir." end)
-        + (if ($h | length) > 1 then " Plus \(($h | length) - 1) more." else "" end)
-    end' 2>/dev/null)"
-if [ -n "$SPOKEN" ]; then
-  mkdir -p "$MARGIE_DIR/announce"
-  printf '%s' "$SPOKEN" > "$MARGIE_DIR/announce/$(date +%s%N).txt"
-fi
+# macOS notification + spoken announce — phrased from Margie's point of view
+# (she is speaking TO Tom, so it's about HER being mentioned, not "you").
+# Name the mentioner only when it isn't Tom himself.
+case "$FIRST_WHO" in
+  Tom | "Tom Hester" | tom) BY="" ;;
+  *) BY=" by $FIRST_WHO" ;;
+esac
+if [ "$MODE" = "live" ]; then TAIL="and I've replied, sir."; else TAIL="and I have a draft for your approval, sir."; fi
+SPOKEN="I've been mentioned on Slack$BY, $TAIL"
+[ "$MORE" -gt 0 ] && SPOKEN="$SPOKEN Plus $MORE more."
+TITLE="Margie · Slack"; [ "$MODE" = "preview" ] && TITLE="Margie · Slack (preview — not sent)"
+osascript -e "display notification \"${SPOKEN//\"/\'}\" with title \"$TITLE\"" 2>/dev/null || true
+mkdir -p "$MARGIE_DIR/announce"
+printf '%s' "$SPOKEN" > "$MARGIE_DIR/announce/$(date +%s%N).txt"

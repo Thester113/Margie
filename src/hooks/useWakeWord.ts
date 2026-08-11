@@ -109,7 +109,7 @@ const STOP_RMS = 0.006;
 // this fires — so this only governs when a full command is dispatched.
 const HANGOVER_MS = 900;
 const MIN_PHRASE_MS = 250;
-const MAX_PHRASE_MS = 10000; // cap for a single utterance before forced finalize
+const MAX_PHRASE_MS = 25000; // hard ceiling; long messages shouldn't hit this
 const PEEK_EVERY_MS = 900; // how often to "peek" for the wake word mid-speech
 const PREROLL_MS = 400; // audio kept from *before* speech is detected
 const WAKE_TIMEOUT_MS = 9000; // wait for the first command after a bare "Margie"
@@ -139,6 +139,7 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
   const peekInFlightRef = useRef(false);
   const lastPeekMsRef = useRef(0);
   const chimedThisPhraseRef = useRef(false);
+  const noiseFloorRef = useRef(0.01); // adaptive background level (RMS)
 
   // Keep the latest callbacks without re-subscribing the audio node.
   const cbRef = useRef({ onWake, onCommand, onPartial, getMuted });
@@ -242,7 +243,9 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
       const gain = Math.min(8, 0.95 / peak);
       for (let i = 0; i < flat.length; i++) flat[i] *= gain;
     }
-    dbg(`phrase ${(totalMs / 1000).toFixed(1)}s peak=${peak.toFixed(3)}`);
+    dbg(
+      `phrase ${(totalMs / 1000).toFixed(1)}s peak=${peak.toFixed(3)} floor=${noiseFloorRef.current.toFixed(3)}`,
+    );
 
     try {
       const wav = encodeWav16k(downsampleTo16k(flat, ctx.sampleRate));
@@ -363,11 +366,25 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
         for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
         const rms = Math.sqrt(sum / frame.length);
 
+        // Adaptive thresholds relative to the room's noise floor. In a noisy
+        // room a fixed STOP_RMS sits BELOW the background, so a pause never
+        // registers as silence and phrases run to the cap and cut you off.
+        // Speaking must clearly exceed the floor; a pause back near the floor
+        // ends the phrase.
+        const floor = noiseFloorRef.current;
+        const startThresh = Math.max(START_RMS, floor * 2.5);
+        const stopThresh = Math.max(STOP_RMS, floor * 1.6);
+
         if (!recordingRef.current) {
+          // Track the background level from non-speech frames (slow EMA).
+          noiseFloorRef.current = Math.min(
+            0.06,
+            Math.max(0.003, floor * 0.95 + rms * 0.05),
+          );
           // Keep a rolling pre-roll so the onset of speech isn't clipped.
           prerollRef.current.push(frame);
           if (prerollRef.current.length > prerollFrames) prerollRef.current.shift();
-          if (rms > START_RMS) {
+          if (rms > startThresh) {
             recordingRef.current = true;
             chunksRef.current = [...prerollRef.current, frame];
             speechMsRef.current = frameMs * chunksRef.current.length;
@@ -381,7 +398,7 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
 
         chunksRef.current.push(frame);
         speechMsRef.current += frameMs;
-        if (rms < STOP_RMS) {
+        if (rms < stopThresh) {
           silenceMsRef.current += frameMs;
         } else {
           silenceMsRef.current = 0;

@@ -4,10 +4,10 @@
 # Stop:   pkill -f slack-watch-loop
 #
 # MARGIE_SLACK_MODE   preview (default) | live
-# MARGIE_SLACK_INTERVAL   seconds between checks (default 90)
+# MARGIE_SLACK_INTERVAL   seconds between checks (default 20; idle cycles are cheap)
 set -uo pipefail
 
-INTERVAL="${MARGIE_SLACK_INTERVAL:-90}"
+INTERVAL="${MARGIE_SLACK_INTERVAL:-20}"
 MODE="${MARGIE_SLACK_MODE:-live}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="$HOME/.margie/slack-watch.log"
