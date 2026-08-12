@@ -1,5 +1,6 @@
 mod brain;
 mod stt;
+mod stt_stream;
 
 use tauri::{LogicalSize, Manager, RunEvent};
 
@@ -196,6 +197,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(stt::Whisper::default())
         .manage(brain::Brain::default())
+        .manage(stt_stream::SttStream::default())
         .invoke_handler(tauri::generate_handler![
             set_form,
             tts_config,
@@ -207,7 +209,10 @@ pub fn run() {
             brain::ask_brain,
             stt::stt_status,
             stt::start_stt,
-            stt::stop_stt
+            stt::stop_stt,
+            stt_stream::stt_stream_start,
+            stt_stream::stt_stream_feed,
+            stt_stream::stt_stream_stop
         ])
         .setup(|app| {
             // Keep a handle around for future subsystems (tray, shortcuts, PTY pool).

@@ -107,13 +107,15 @@ const STOP_RMS = 0.006;
 // Kept generous so brief mid-sentence pauses (a breath, thinking) don't cut
 // them off. Wake still feels instant because the early "peek" chimes before
 // this fires — so this only governs when a full command is dispatched.
-const HANGOVER_MS = 900;
+const HANGOVER_MS = 550; // silence after speech before she acts — kept short so
+// turn-taking feels natural (was 900, which added ~1s of dead air per turn).
 const MIN_PHRASE_MS = 250;
 const MAX_PHRASE_MS = 25000; // hard ceiling; long messages shouldn't hit this
 const PEEK_EVERY_MS = 900; // how often to "peek" for the wake word mid-speech
 const PREROLL_MS = 400; // audio kept from *before* speech is detected
 const WAKE_TIMEOUT_MS = 9000; // wait for the first command after a bare "Margie"
-const CONVERSATION_MS = 15000; // wait for a follow-up reply before sleeping
+const CONVERSATION_MS = 9000; // wait for a follow-up before sleeping (was 15000 —
+// felt like she was hovering; 9s still covers a natural back-and-forth)
 
 export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options) {
   const [state, setState] = useState<WakeState>("off");
