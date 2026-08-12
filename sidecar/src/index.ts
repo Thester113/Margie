@@ -1,7 +1,6 @@
 import { createInterface } from "node:readline";
-import { mkdirSync, appendFileSync } from "node:fs";
+import { mkdirSync, appendFileSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 
 /** Log the actual conversation with the brain so failures are observable. */
 function logBrain(line: string) {
@@ -16,53 +15,111 @@ function logBrain(line: string) {
 }
 
 /**
- * Margie's brain (v3) — powered by grok (xAI), NOT Claude.
- *
- * Rationale: the Agent SDK brain authenticated through Tom's Claude.ai account,
- * so every turn (and every connector helper) drew from his work Claude
- * subscription. grok bills to his xAI plan instead, keeping Margie entirely off
- * the Claude weekly limits.
- *
- * grok has no long-lived streaming API we can drive headlessly, but it persists
- * conversations on disk. So we run one `grok -p` per turn and chain context:
- *   - first turn:  --session-id <uuid>  (creates the session)
- *   - later turns: --resume <sessionId> (grok reloads full context)
- * grok runs agentically (--always-approve) so it can execute Margie's helper
- * scripts. The Rust bridge is unchanged — turns arrive/leave as NDJSON:
- *   in:  {"id": 1, "text": "..."}
- *   out: {"id": 1, "text": "..."}
+ * Margie's brain (v4) — powered by the xAI API (fast, non-reasoning grok), NOT
+ * Claude and NOT the grok CLI. The CLI's grok-4.5 was ~6s/turn; the API's
+ * non-reasoning model replies in ~0.5s. We run a small agentic tool loop with a
+ * single `bash` tool so Margie keeps full capability (she runs her helper
+ * scripts), and — since the API model has no built-in permission gate — the
+ * safety guards are enforced HERE in the sidecar. The Rust bridge is unchanged:
+ *   in:  {"id": 1, "text": "..."}   out: {"id": 1, "text": "..."}
  */
 
-const TASK_LOG_DIR = `${process.env.HOME}/.margie/tasks`;
-const GROK_BIN = process.env.MARGIE_GROK_BIN || `${process.env.HOME}/.grok/bin/grok`;
-const GROK_MODEL = process.env.MARGIE_GROK_MODEL || "grok-4.5";
-// Reasoning effort: "low" keeps spoken chat snappy; bump via env for heavier
-// orchestration. grok still runs multi-step tool use at any effort.
-const GROK_EFFORT = process.env.MARGIE_GROK_EFFORT || "low";
-// Hard ceiling so a runaway agentic turn can't spin forever with no reply.
-const TURN_TIMEOUT_MS = Number(process.env.MARGIE_TURN_TIMEOUT_MS || 60000);
+const HOME = process.env.HOME || "/";
+const TASK_LOG_DIR = `${HOME}/.margie/tasks`;
 
-// SAFETY GUARDS. grok-4.5 is an autonomous coding agent; left unconstrained it
-// will DO engineering work itself (it once reviewed a PR and submitted a real
-// GitHub Approve unprompted). Margie is a DISPATCHER, not the engineer — she
-// runs helper scripts and reports. These deny rules are a hard backstop: grok
-// may never run these destructive/outward commands directly (deny takes
-// precedence over --always-approve). Actual coding/reviews happen in the
-// separate, watchable Warp sessions the helper scripts spawn.
-const GROK_DENY = [
-  "Bash(gh pr review*)", "Bash(gh pr merge*)", "Bash(gh pr close*)", "Bash(gh pr edit*)",
-  "Bash(gh pr create*)", "Bash(gh pr comment*)", "Bash(gh pr ready*)", "Bash(gh api*)",
-  "Bash(gh release*)", "Bash(git push*)", "Bash(git commit*)", "Bash(git reset*)",
-  "Bash(git rebase*)", "Bash(git merge*)", "Bash(git tag*)", "Bash(rm *)", "Bash(rm-rf*)",
-  "Edit", "Write",
+function cfg(key: string): string | undefined {
+  try {
+    return JSON.parse(readFileSync(`${HOME}/.margie/config.json`, "utf8"))[key];
+  } catch {
+    return undefined;
+  }
+}
+const XAI_API_KEY = cfg("xai_api_key") || process.env.XAI_API_KEY || "";
+const XAI_MODEL = process.env.MARGIE_XAI_MODEL || cfg("xai_model") || "grok-4.20-0309-non-reasoning";
+const XAI_URL = "https://api.x.ai/v1/chat/completions";
+const CMD_TIMEOUT_MS = Number(process.env.MARGIE_CMD_TIMEOUT_MS || 45000);
+// Enough steps for a research question (several greps/reads) to finish. When it
+// IS exceeded, we force a final answer rather than bail (see handleTurn).
+const MAX_TOOL_STEPS = Number(process.env.MARGIE_MAX_TOOL_STEPS || 14);
+
+// SAFETY GUARDS enforced in-sidecar. Margie is a DISPATCHER, not the engineer:
+// she once reviewed a PR and submitted a real GitHub Approve unprompted. The
+// bash tool REFUSES these destructive/outward commands — real coding/reviews
+// happen only in the separate, watchable Warp sessions helper scripts spawn.
+const DENY: RegExp[] = [
+  /\bgh\s+pr\s+(review|merge|close|edit|create|comment|ready)\b/,
+  /\bgh\s+(api|release|workflow|secret)\b/,
+  /\bgh\s+repo\s+(delete|create|edit)\b/,
+  /\bgit\s+(push|commit|reset|rebase|merge|tag|clean)\b/,
+  /\brm\s+-[rf]/, /(^|[;&|]|\s)rm\s+/, /\bsudo\b/,
+  /\b(shutdown|reboot|halt|mkfs|diskutil\s+erase|dd\s+if=)\b/,
 ];
-function guardArgs(): string[] {
-  const a: string[] = [];
-  for (const r of GROK_DENY) a.push("--deny", r);
-  // Strip file-editing and subagent-spawning from the brain entirely (hard,
-  // not permission-gated) — a dispatcher never edits code or fans out agents.
-  a.push("--disallowed-tools", "Edit,Write,Agent");
-  return a;
+function denied(cmd: string): boolean {
+  return DENY.some((r) => r.test(cmd));
+}
+
+/** The one tool the brain gets: run a shell command (guarded). */
+const BASH_TOOL = {
+  type: "function",
+  function: {
+    name: "bash",
+    description:
+      "Run a shell command on Tom's Mac to carry out a request — typically a helper script in /Users/tomhester/Margie/scripts (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, worktree.sh), or read-only git/gh/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (gh pr review/merge, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.",
+    parameters: {
+      type: "object",
+      properties: { command: { type: "string", description: "The shell command to run." } },
+      required: ["command"],
+    },
+  },
+};
+
+function runBash(cmd: string): Promise<string> {
+  return new Promise((resolve) => {
+    if (denied(cmd)) {
+      logBrain(`BASH DENIED: ${cmd}`);
+      resolve("DENIED: Margie is a dispatcher and may not run that command directly. Use a helper script (e.g. review-pr.sh, kickoff-claude.sh) to do it in a supervised Warp session instead.");
+      return;
+    }
+    logBrain(`BASH: ${cmd}`);
+    const child = spawn("bash", ["-c", cmd], { env: process.env, cwd: HOME });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d.toString()));
+    child.stderr.on("data", (d) => (out += d.toString()));
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve((out || "").slice(0, 4000) + "\n[timed out]");
+    }, CMD_TIMEOUT_MS);
+    child.on("close", () => {
+      clearTimeout(timer);
+      let r = out.trim();
+      if (r.length > 4000) r = r.slice(0, 4000) + "\n…[truncated]";
+      resolve(r || "[no output]");
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve("[exec error] " + (e as Error).message);
+    });
+  });
+}
+
+interface ChatMsg { role: string; content?: string | null; tool_calls?: any[]; tool_call_id?: string; }
+
+async function callModel(messages: ChatMsg[], withTools = true): Promise<any> {
+  // Short cap: replies are spoken aloud, so long answers make TTS stutter for
+  // 20–30s. A tight budget keeps her to a sentence or two. Tool-call turns need
+  // little content, so this doesn't hurt multi-step work.
+  const body: Record<string, unknown> = { model: XAI_MODEL, messages, temperature: 0.3, max_tokens: 220 };
+  if (withTools) { body.tools = [BASH_TOOL]; body.tool_choice = "auto"; }
+  const resp = await fetch(XAI_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${XAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`xai ${resp.status}: ${t.slice(0, 300)}`);
+  }
+  return resp.json();
 }
 
 const MARGIE_SYSTEM_PROMPT = `You are Margie, Tom's personal AI assistant, living
@@ -239,6 +296,12 @@ Rules of engagement:
   first, in one sentence.
 - Never expose secrets in spoken replies.
 
+RESEARCH QUESTIONS (e.g. "would switching X be faster?", "how does Y work?"):
+do at most a FEW quick searches (a couple of rg/grep/cat), then give your best
+concise SPOKEN answer from what you found — do not exhaustively grep the whole
+codebase. If it genuinely needs a deep dig, say so in one sentence and offer to
+open a session (kickoff-claude.sh) rather than grinding through many searches.
+
 CRITICAL — your replies are spoken aloud, so be extremely brief. Default to ONE
 short sentence. Only go longer if Tom explicitly asks for detail. Never read
 lists aloud — give a count or the top item ("You have four sessions open, sir;
@@ -248,78 +311,132 @@ function reply(id: number, text: string) {
   process.stdout.write(JSON.stringify({ id, text }) + "\n");
 }
 
-/** Extract the final assistant text from grok's `--output-format json` stdout. */
-function parseGrokJson(stdout: string): { text: string; sessionId?: string } | null {
-  const trimmed = stdout.trim();
-  if (!trimmed) return null;
-  // Fast path: the whole thing is one JSON object.
-  try {
-    const d = JSON.parse(trimmed) as { text?: string; sessionId?: string };
-    if (typeof d.text === "string") return { text: d.text, sessionId: d.sessionId };
-  } catch {
-    // fall through
-  }
-  // Fallback: grab the last balanced {...} block and parse that.
-  const last = trimmed.lastIndexOf("{");
-  if (last >= 0) {
-    try {
-      const d = JSON.parse(trimmed.slice(last)) as { text?: string; sessionId?: string };
-      if (typeof d.text === "string") return { text: d.text, sessionId: d.sessionId };
-    } catch {
-      // ignore
-    }
-  }
-  return null;
+/**
+ * Deterministic fast-path for "review PR N" — the one command grok keeps doing
+ * itself (it read "have GROK review" as "I review" and once submitted a real
+ * GitHub approval). We detect the intent and run review-pr.sh directly, so it
+ * is always a supervised Warp session, never an inline self-review.
+ */
+function reviewFastPath(text: string): { pr: string; repo: string } | null {
+  const t = text.toLowerCase();
+  if (!/\breview\b/.test(t)) return null;
+  const m =
+    t.match(/\bp\s*\.?\s*r\.?\s*#?\s*(\d{2,6})\b/) ||
+    t.match(/\bpull\s*request\s*#?\s*(\d{2,6})\b/) ||
+    t.match(/#\s*(\d{2,6})\b/);
+  if (!m) return null;
+  let repo = "backend";
+  if (/\bdatabricks\b/.test(t)) repo = "databricks";
+  else if (/\binfra/.test(t)) repo = "infrastructure";
+  else if (/\bgtm\b/.test(t)) repo = "gtm";
+  else if (/\belectron\b/.test(t)) repo = "electron";
+  return { pr: m[1], repo };
 }
 
-/** Run one grok turn. First turn creates a session; later turns resume it. */
-function runGrokTurn(text: string, sessionId: string | null): Promise<{ text: string; sessionId: string | null }> {
+function runReviewScript(pr: string, repo: string): Promise<string> {
   return new Promise((resolve) => {
-    const args = ["-p", text, "--output-format", "json", "--always-approve", "-m", GROK_MODEL, "--reasoning-effort", GROK_EFFORT, "--cwd", process.env.HOME || "/", ...guardArgs()];
-    if (sessionId) {
-      args.push("--resume", sessionId);
-    } else {
-      args.push("--session-id", randomUUID().toUpperCase(), "--system-prompt-override", MARGIE_SYSTEM_PROMPT);
-    }
-
-    const child = spawn(GROK_BIN, args, { env: process.env });
+    const child = spawn("/Users/tomhester/Margie/scripts/review-pr.sh", [pr, repo, "grok"], { env: process.env });
     let out = "";
-    let err = "";
     child.stdout.on("data", (d) => (out += d.toString()));
-    child.stderr.on("data", (d) => (err += d.toString()));
-
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      logBrain(`GROK timeout after ${TURN_TIMEOUT_MS}ms`);
-      resolve({ text: "That one's taking too long, sir — I'll stop there.", sessionId });
-    }, TURN_TIMEOUT_MS);
-
-    child.on("close", (code) => {
+      resolve(`I've kicked off the review of PR ${pr}, sir — it's opening in Warp.`);
+    }, 45000);
+    child.on("close", () => {
       clearTimeout(timer);
-      const parsed = parseGrokJson(out);
-      if (parsed) {
-        resolve({ text: parsed.text || "Done, sir.", sessionId: parsed.sessionId || sessionId });
-      } else {
-        logBrain(`GROK no-json code=${code} err=${err.slice(0, 400)} out=${out.slice(0, 200)}`);
-        resolve({ text: "Sorry sir, I couldn't complete that one.", sessionId });
-      }
+      const line = (out.trim().split("\n").pop() || "").trim();
+      resolve(line || `Grok's reviewing PR ${pr} in the ${repo}, sir — up in Warp.`);
     });
-    child.on("error", (e) => {
+    child.on("error", () => {
       clearTimeout(timer);
-      logBrain(`GROK spawn error: ${(e as Error).message}`);
-      resolve({ text: "Sorry sir, my brain wouldn't start.", sessionId });
+      resolve(`I couldn't start the review of PR ${pr}, sir.`);
     });
   });
+}
+
+/** Make a reply safe/pleasant to speak: strip markdown, collapse whitespace. */
+function forSpeech(s: string): string {
+  let t = String(s || "").trim();
+  t = t.replace(/```[\s\S]*?```/g, " ");        // code fences
+  t = t.replace(/`([^`]*)`/g, "$1");             // inline code
+  t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"); // [text](url) -> text
+  t = t.replace(/^\s*#{1,6}\s*/gm, "");          // headings
+  t = t.replace(/^\s*[-*•]\s+/gm, "");           // bullets
+  t = t.replace(/[*_>|#]+/g, "");                // stray md symbols / table pipes
+  t = t.replace(/\s+/g, " ").trim();
+  return t || "Done, sir.";
+}
+
+/**
+ * Run one turn as an agentic tool loop against the xAI API. The tool churn
+ * (bash calls + outputs) lives only in a local working copy; we commit ONLY a
+ * clean {user, assistant} pair to the persistent `history`, so context isn't
+ * blown out by intermediate bash I/O and many real turns survive the trim.
+ */
+async function handleTurn(text: string, history: ChatMsg[]): Promise<string> {
+  const work: ChatMsg[] = history.slice();
+  work.push({ role: "user", content: text });
+  let finalText: string | null = null;
+
+  for (let step = 0; step < MAX_TOOL_STEPS && finalText === null; step++) {
+    let data: any;
+    try {
+      data = await callModel(work);
+    } catch (e) {
+      logBrain(`XAI error: ${(e as Error).message}`);
+      finalText = "Sorry sir, my brain hit an error reaching the model.";
+      break;
+    }
+    const msg = data?.choices?.[0]?.message;
+    if (!msg) { finalText = "Sorry sir, I got no reply from the model."; break; }
+    work.push(msg);
+    const calls = msg.tool_calls;
+    if (Array.isArray(calls) && calls.length) {
+      for (const tc of calls) {
+        let cmd = "";
+        try { cmd = JSON.parse(tc.function?.arguments || "{}").command || ""; } catch { /* ignore */ }
+        const result = tc.function?.name === "bash" ? await runBash(cmd) : "unknown tool";
+        work.push({ role: "tool", tool_call_id: tc.id, content: result });
+      }
+      continue; // let the model read the tool results and continue
+    }
+    finalText = (msg.content || "Done, sir.").trim();
+  }
+
+  // Step budget exhausted mid-investigation — force a final answer (no tools).
+  if (finalText === null) {
+    try {
+      work.push({ role: "user", content: "Stop searching now and answer in ONE short spoken sentence using what you already found. If you truly can't, offer to open a session to look properly." });
+      const data = await callModel(work, false);
+      finalText = String(data?.choices?.[0]?.message?.content || "").trim() || null;
+    } catch (e) {
+      logBrain(`XAI final-answer error: ${(e as Error).message}`);
+    }
+    if (!finalText) finalText = "I looked into that, sir, but it needs a proper dig — shall I open a session for it?";
+  }
+
+  const spoken = forSpeech(finalText);
+  // Commit only the clean turn to persistent history (drop the tool churn).
+  history.push({ role: "user", content: text });
+  history.push({ role: "assistant", content: spoken });
+  return spoken;
 }
 
 async function main() {
   mkdirSync(TASK_LOG_DIR, { recursive: true });
 
-  // FIFO turn queue — grok session resume must be strictly sequential (you
-  // can't resume the same session concurrently), so we process one at a time.
+  if (!XAI_API_KEY) logBrain("WARNING: no xai_api_key in config — brain will error.");
+
+  // Warm conversation history — clean {user, assistant} pairs only (handleTurn
+  // keeps the noisy bash tool churn out), so this holds ~20 real turns.
+  const history: ChatMsg[] = [{ role: "system", content: MARGIE_SYSTEM_PROMPT }];
+  function trimHistory() {
+    if (history.length > 41) history.splice(1, history.length - 41);
+  }
+
+  // FIFO turn queue — process one at a time so the shared history stays coherent.
   const queue: { id: number; text: string }[] = [];
   let running = false;
-  let sessionId: string | null = null;
 
   async function drain() {
     if (running) return;
@@ -327,10 +444,18 @@ async function main() {
     while (queue.length) {
       const { id, text } = queue.shift()!;
       const started = Date.now();
-      const res = await runGrokTurn(text, sessionId);
-      sessionId = res.sessionId;
-      logBrain(`MARGIE[${id}] (${Date.now() - started}ms, sess=${sessionId ?? "?"}): ${res.text}`);
-      reply(id, res.text);
+      // Deterministic PR-review dispatch — never let the model self-review.
+      const fp = reviewFastPath(text);
+      if (fp) {
+        const out = await runReviewScript(fp.pr, fp.repo);
+        logBrain(`MARGIE[${id}] (${Date.now() - started}ms, FASTPATH review PR ${fp.pr} ${fp.repo}): ${out}`);
+        reply(id, out);
+        continue;
+      }
+      const out = await handleTurn(text, history);
+      trimHistory();
+      logBrain(`MARGIE[${id}] (${Date.now() - started}ms): ${out}`);
+      reply(id, out);
     }
     running = false;
   }
