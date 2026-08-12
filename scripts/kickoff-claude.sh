@@ -19,10 +19,25 @@ CLAUDE_FLAG=""
 USE_WT=0
 WT_BRANCH=""
 ENGINE="${MARGIE_ENGINE:-grok}"
+
+# Pre-scan ALL args for --engine anywhere. The brain often appends it AFTER the
+# prompt ("... 'fix the bug' --engine claude"); without this it gets swallowed
+# into PROMPT and silently falls back to grok — the reason Claude sessions
+# "didn't work".
+PRE=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --engine | -e) ENGINE="${2:-grok}"; shift 2 ;;
+    --engine=*) ENGINE="${1#*=}"; shift ;;
+    *) PRE+=("$1"); shift ;;
+  esac
+done
+set -- ${PRE[@]+"${PRE[@]}"}
+
+# Remaining leading flags: --continue / --worktree [branch].
 while true; do
   case "${1:-}" in
     --continue | -c | --resume | -r) CLAUDE_FLAG="--continue"; shift ;;
-    --engine | -e) shift; ENGINE="${1:-grok}"; shift || true ;;
     --worktree | -w)
       USE_WT=1; shift
       case "${1:-}" in "" | --*) ;; *) WT_BRANCH="$1"; shift ;; esac
@@ -37,19 +52,23 @@ CFG_DIR="$HOME/.warp/launch_configurations"
 TASK_DIR="$HOME/.margie/tasks"
 mkdir -p "$CFG_DIR" "$TASK_DIR"
 
-SESSION="margie" # tmux session name Margie sends follow-ups to
+STAMP="$(date +%s)"
+# Unique tmux session per launch, so starting a new session NEVER kills a
+# running one. Worktree launches key off the branch (a repeat targets the same
+# one); plain launches get a timestamped name.
+SESSION="margie-$STAMP"
 if [ "$USE_WT" = "1" ]; then
-  [ -z "$WT_BRANCH" ] && WT_BRANCH="margie/$(date +%s)"
+  [ -z "$WT_BRANCH" ] && WT_BRANCH="margie/$STAMP"
   # Create/reuse the worktree (worktree.sh resolves the repo + clones if needed).
   DIR_ABS="$(bash "$(dirname "$0")/worktree.sh" add "$DIR" "$WT_BRANCH" 2>/dev/null | tail -1)"
   [ -z "$DIR_ABS" ] && { echo "Couldn't create worktree for '$DIR', sir."; exit 1; }
-  # Distinct tmux session per branch so worktree sessions can run in parallel.
   SESSION="margie-$(printf '%s' "$WT_BRANCH" | tr '/ ' '--')"
 else
   DIR_ABS="$(cd "$DIR" 2>/dev/null && pwd || echo "$HOME")"
 fi
+# Record as the current session so a follow-up targets the newest one by default.
+printf '%s' "$SESSION" > "$HOME/.margie/last-session"
 
-STAMP="$(date +%s)"
 NAME="margie-claude-$STAMP"
 TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
 
@@ -57,11 +76,10 @@ TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
 # quoting is clean; the prompt is read from a file to avoid all escaping.
 INNER="$TASK_DIR/inner-$STAMP.sh"
 # Pick the CLI binary. grok is the default (keeps sessions off the Claude sub).
-if [ "$ENGINE" = "claude" ]; then
-  ENGINE_BIN="claude"
-else
-  ENGINE_BIN="grok"
-fi
+case "$(printf '%s' "$ENGINE" | tr 'A-Z' 'a-z')" in
+  claude*) ENGINE_BIN="claude" ;;
+  *) ENGINE_BIN="grok" ;;
+esac
 if [ -n "${MARGIE_TEST_CMD:-}" ]; then
   CLAUDE_LINE="$MARGIE_TEST_CMD"
 elif [ -n "$PROMPT" ]; then

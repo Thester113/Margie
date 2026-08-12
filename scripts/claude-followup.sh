@@ -9,9 +9,9 @@
 set -uo pipefail
 
 TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
-SESSION="margie"
+SESSION=""
 
-# Optional trailing "--branch <name>" selects a worktree session.
+# Optional trailing "--branch <name>" selects a specific worktree session.
 ARGS=("$@")
 if [ "${#ARGS[@]}" -ge 2 ] && [ "${ARGS[${#ARGS[@]}-2]}" = "--branch" ]; then
   br="${ARGS[${#ARGS[@]}-1]}"
@@ -23,6 +23,17 @@ TEXT="${ARGS[*]}"
 if [ -z "$TEXT" ]; then
   echo "usage: claude-followup.sh <follow-up text> [--branch <branch>]" >&2
   exit 1
+fi
+
+# Default target: the most recently launched session. Fall back to the newest
+# live margie* tmux session if the recorded one is gone.
+if [ -z "$SESSION" ]; then
+  SESSION="$(cat "$HOME/.margie/last-session" 2>/dev/null || true)"
+  if [ -z "$SESSION" ] || ! "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then
+    SESSION="$("$TMUX_BIN" list-sessions -F '#{session_created} #{session_name}' 2>/dev/null \
+      | grep ' margie' | sort -nr | head -1 | awk '{print $2}')"
+  fi
+  [ -z "$SESSION" ] && SESSION="margie"
 fi
 
 if ! "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then

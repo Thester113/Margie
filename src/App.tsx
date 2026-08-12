@@ -32,6 +32,11 @@ function App() {
   mutedRef.current = voice.status === "speaking" || voice.status === "thinking";
   // Set after `wake` exists; lets sendCommand reopen the listening window.
   const continueConvRef = useRef<() => void>(() => {});
+  // Hard processing lock: while a turn is being handled/spoken, DROP any new
+  // command. Without this, a live conversation near the mic (continue-mode needs
+  // no wake word) floods sendCommand with ambient speech, the turns pile up, TTS
+  // backs up, and she freezes. One turn at a time; the rest are ignored.
+  const processingRef = useRef(false);
 
   const changeForm = useCallback(async (next: Form) => {
     await setForm(next);
@@ -41,6 +46,15 @@ function App() {
   const sendCommand = useCallback(
     async (text: string, resume = false) => {
       if (!text.trim()) return;
+      // Drop overlapping input while a turn is already in flight (prevents the
+      // ambient-conversation pile-up that froze her).
+      if (processingRef.current) {
+        void invoke("dbg_log", {
+          line: `${new Date().toISOString()} DROPPED (busy): "${text}"`,
+        });
+        return;
+      }
+      processingRef.current = true;
       setInterim("");
       setMessages((m) => [...m, { role: "user", text }]);
       voice.setStatus("thinking");
@@ -74,6 +88,7 @@ function App() {
         ]);
         voice.setStatus("idle");
       } finally {
+        processingRef.current = false;
         // Reopen the listening window so a follow-up needs no wake word.
         continueConvRef.current();
       }

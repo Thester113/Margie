@@ -65,7 +65,10 @@ TASK_DIR="$HOME/.margie/tasks"
 CFG_DIR="$HOME/.warp/launch_configurations"
 mkdir -p "$TASK_DIR" "$CFG_DIR"
 STAMP="$(date +%s)"
-SESSION="margie"
+# Unique session per review so it never kills a running session; record it as
+# the current one for follow-ups.
+SESSION="margie-review-$STAMP"
+printf '%s' "$SESSION" > "$HOME/.margie/last-session"
 TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
 
 PROMPT="Use the xerpa-pr-review skill to review PR #$PR, then submit the GitHub review per the skill."
