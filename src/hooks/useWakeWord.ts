@@ -18,7 +18,11 @@ function dbg(line: string) {
 // turn-taking (transcribes as you speak; server-VAD end-of-turn) vs local
 // whisper's transcribe-the-whole-phrase lag. Default on; fall back to whisper
 // with localStorage.setItem("margie_streaming_stt","0") (no rebuild needed).
-const STREAMING_STT_DEFAULT = true;
+// Default OFF: continuous EL streaming idle-closes the socket during silence and
+// isn't the right tool for always-on wake-listening. The proper design is the
+// hybrid below (whisper for wake, EL only while in an active conversation).
+// Opt in for testing with localStorage.setItem("margie_streaming_stt","1").
+const STREAMING_STT_DEFAULT = false;
 function streamingSttEnabled(): boolean {
   try {
     const v = localStorage.getItem("margie_streaming_stt");
