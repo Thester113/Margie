@@ -8,10 +8,30 @@ import {
   stopStt,
   transcribe,
 } from "../lib/stt";
+import * as elevenStt from "../lib/eleven-stt";
 
 function dbg(line: string) {
   void invoke("dbg_log", { line: `${new Date().toISOString()} ${line}` });
 }
+
+// Streaming STT via ElevenLabs Scribe realtime gives near-instant, natural
+// turn-taking (transcribes as you speak; server-VAD end-of-turn) vs local
+// whisper's transcribe-the-whole-phrase lag. Default on; fall back to whisper
+// with localStorage.setItem("margie_streaming_stt","0") (no rebuild needed).
+const STREAMING_STT_DEFAULT = true;
+function streamingSttEnabled(): boolean {
+  try {
+    const v = localStorage.getItem("margie_streaming_stt");
+    if (v === "1") return true;
+    if (v === "0") return false;
+  } catch {
+    // ignore
+  }
+  return STREAMING_STT_DEFAULT;
+}
+// While streaming, keep feeding audio for a short tail after local speech ends,
+// so ElevenLabs' VAD sees the trailing silence and commits the turn.
+const STREAM_TAIL_MS = 1200;
 
 /** A short, instant chime so waking feels responsive the moment it's detected. */
 function playWakeChime(ctx: AudioContext | null) {
@@ -129,6 +149,7 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
   const awakeRef = useRef(false);
   const resumeNextRef = useRef(false); // does the next turn continue the convo?
   const wakeTimerRef = useRef<number | undefined>(undefined);
+  const streamingRef = useRef(false); // using ElevenLabs streaming STT this run?
 
   // Capture buffers, held in refs so the audio callback stays allocation-light.
   const recordingRef = useRef(false);
@@ -316,13 +337,50 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
     startedRef.current = true;
     setError(null);
     try {
-      if (!(await sttModelReady())) {
-        startedRef.current = false;
-        setError("Speech model not installed yet.");
-        setState("error");
-        return;
+      // Streaming STT (ElevenLabs) drives wake + end-of-turn off transcript
+      // events; local whisper is the fallback.
+      streamingRef.current = streamingSttEnabled();
+      if (streamingRef.current) {
+        try {
+          await elevenStt.startStream({
+            onPartial: (text) => {
+              const t = text.trim();
+              if (!t) return;
+              cbRef.current.onPartial?.(t);
+              // Chime the instant "Margie" appears mid-speech (asleep only).
+              if (
+                !awakeRef.current &&
+                !chimedThisPhraseRef.current &&
+                wakeSplit(t) !== null
+              ) {
+                chimedThisPhraseRef.current = true;
+                playWakeChime(ctxRef.current);
+              }
+            },
+            onCommitted: (text) => {
+              if (cbRef.current.getMuted()) return; // ignore her own voice
+              handlePhrase(text);
+            },
+            onError: (msg) => dbg(`stt-error: ${msg.slice(0, 200)}`),
+            onClosed: () => dbg("stt stream closed"),
+          });
+          dbg("streaming STT (ElevenLabs) started");
+        } catch (e) {
+          dbg(
+            `streaming STT failed, falling back to whisper: ${e instanceof Error ? e.message : String(e)}`,
+          );
+          streamingRef.current = false;
+        }
       }
-      baseUrlRef.current = await startStt();
+      if (!streamingRef.current) {
+        if (!(await sttModelReady())) {
+          startedRef.current = false;
+          setError("Speech model not installed yet.");
+          setState("error");
+          return;
+        }
+        baseUrlRef.current = await startStt();
+      }
 
       // Raw audio — Chromium's echo cancellation / noise suppression /
       // auto-gain are tuned for phone calls and degrade speech recognition.
@@ -376,6 +434,44 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
         const floor = noiseFloorRef.current;
         const startThresh = Math.max(START_RMS, floor * 2.5);
         const stopThresh = Math.max(STOP_RMS, floor * 1.6);
+
+        // Streaming path: local VAD only GATES how much audio we send to
+        // ElevenLabs (so we don't stream — or pay — during silence). Wake and
+        // end-of-turn come from the transcript events, not from here. We keep
+        // feeding for a short tail after speech so EL's VAD commits the turn.
+        if (streamingRef.current) {
+          if (!recordingRef.current) {
+            noiseFloorRef.current = Math.min(
+              0.06,
+              Math.max(0.003, floor * 0.95 + rms * 0.05),
+            );
+            prerollRef.current.push(frame);
+            if (prerollRef.current.length > prerollFrames) prerollRef.current.shift();
+            if (rms > startThresh) {
+              recordingRef.current = true;
+              speechMsRef.current = 0;
+              silenceMsRef.current = 0;
+              chimedThisPhraseRef.current = false;
+              for (const p of prerollRef.current) void elevenStt.feed(p, ctx.sampleRate);
+              prerollRef.current = [];
+              void elevenStt.feed(frame, ctx.sampleRate);
+            }
+            return;
+          }
+          void elevenStt.feed(frame, ctx.sampleRate);
+          speechMsRef.current += frameMs;
+          if (rms < stopThresh) silenceMsRef.current += frameMs;
+          else silenceMsRef.current = 0;
+          if (
+            silenceMsRef.current >= STREAM_TAIL_MS ||
+            speechMsRef.current >= MAX_PHRASE_MS
+          ) {
+            recordingRef.current = false;
+            silenceMsRef.current = 0;
+            speechMsRef.current = 0;
+          }
+          return;
+        }
 
         if (!recordingRef.current) {
           // Track the background level from non-speech frames (slow EMA).
@@ -450,6 +546,7 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
     streamRef.current = null;
     ctxRef.current?.close();
     ctxRef.current = null;
+    if (streamingRef.current) void elevenStt.stopStream();
     void stopStt();
     startedRef.current = false;
     setState("off");
