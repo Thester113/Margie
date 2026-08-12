@@ -49,9 +49,31 @@ export function useVoice() {
   const rafRef = useRef<number>(0);
   const ttsCfgRef = useRef<TtsConfig | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const resolveSpeakRef = useRef<null | (() => void)>(null);
   // Latest status, read by the announcement poller without re-subscribing it.
   const statusRef = useRef<VoiceStatus>(status);
   statusRef.current = status;
+
+  /** Stop whatever she's saying immediately (used for barge-in). */
+  const stop = useCallback(() => {
+    const a = audioRef.current;
+    if (a) {
+      try {
+        a.pause();
+      } catch {
+        // ignore
+      }
+    }
+    audioRef.current = null;
+    try {
+      speechSynthesis.cancel();
+    } catch {
+      // ignore
+    }
+    resolveSpeakRef.current?.(); // unblock the awaiting speak()
+    resolveSpeakRef.current = null;
+    setStatus((s) => (s === "speaking" ? "idle" : s));
+  }, []);
 
   useEffect(() => {
     getTtsConfig()
@@ -86,13 +108,15 @@ export function useVoice() {
           const audio = new Audio(url);
           audioRef.current = audio;
           await new Promise<void>((resolve) => {
+            resolveSpeakRef.current = resolve; // so stop() can interrupt cleanly
             audio.onended = () => resolve();
             audio.onerror = () => resolve();
             void audio.play();
           });
+          resolveSpeakRef.current = null;
           URL.revokeObjectURL(url);
           audioRef.current = null;
-          setStatus("idle");
+          setStatus((s) => (s === "speaking" ? "idle" : s));
           return;
         } catch {
           // Cloud failed (bad key, offline, quota) — fall back to system voice.
@@ -156,5 +180,5 @@ export function useVoice() {
 
   useEffect(() => stopListening, [stopListening]);
 
-  return { status, setStatus, micLevel, speak, startListening, stopListening };
+  return { status, setStatus, micLevel, speak, stop, startListening, stopListening };
 }

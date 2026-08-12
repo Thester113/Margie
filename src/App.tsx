@@ -105,6 +105,14 @@ function App() {
     onCommand: sendCommand,
     onPartial: setInterim,
     getMuted: () => mutedRef.current,
+    getSpeaking: () => voice.status === "speaking",
+    onBargeIn: () => {
+      // User talked over her — cut the speech; the flow then reopens listening
+      // so their interruption becomes the next turn.
+      voice.stop();
+      setInterim("");
+      voice.setStatus("listening");
+    },
   });
   continueConvRef.current = wake.continueConversation;
 

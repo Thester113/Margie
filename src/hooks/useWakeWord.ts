@@ -37,6 +37,14 @@ function streamingSttEnabled(): boolean {
 // so ElevenLabs' VAD sees the trailing silence and commits the turn.
 const STREAM_TAIL_MS = 1200;
 
+// Barge-in: interrupt her while she's speaking. The raw mic (no echo cancel)
+// hears her own TTS, so we only barge when a voice is clearly LOUDER than that
+// bleed (BARGE_FACTOR over the tracked speaking floor AND above an absolute
+// floor) for a sustained window. Conservative so she doesn't cut herself off.
+const BARGE_FACTOR = 2.6;
+const BARGE_ABS_RMS = 0.055;
+const BARGE_MIN_MS = 350;
+
 /** A short, instant chime so waking feels responsive the moment it's detected. */
 function playWakeChime(ctx: AudioContext | null) {
   if (!ctx) return;
@@ -121,6 +129,10 @@ interface Options {
   onCommand: (text: string, resume: boolean) => void;
   onPartial?: (text: string) => void;
   getMuted: () => boolean;
+  /** True while Margie is actually speaking (for barge-in detection). */
+  getSpeaking?: () => boolean;
+  /** Fired when the user talks over her — stop speaking and listen. */
+  onBargeIn?: () => void;
 }
 
 // VAD tuning (RMS on normalized float samples). Adjust if it's too eager
@@ -141,7 +153,14 @@ const WAKE_TIMEOUT_MS = 9000; // wait for the first command after a bare "Margie
 const CONVERSATION_MS = 9000; // wait for a follow-up before sleeping (was 15000 —
 // felt like she was hovering; 9s still covers a natural back-and-forth)
 
-export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options) {
+export function useWakeWord({
+  onWake,
+  onCommand,
+  onPartial,
+  getMuted,
+  getSpeaking,
+  onBargeIn,
+}: Options) {
   const [state, setState] = useState<WakeState>("off");
   const [error, setError] = useState<string | null>(null);
 
@@ -169,8 +188,12 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
   const noiseFloorRef = useRef(0.01); // adaptive background level (RMS)
 
   // Keep the latest callbacks without re-subscribing the audio node.
-  const cbRef = useRef({ onWake, onCommand, onPartial, getMuted });
-  cbRef.current = { onWake, onCommand, onPartial, getMuted };
+  const cbRef = useRef({ onWake, onCommand, onPartial, getMuted, getSpeaking, onBargeIn });
+  cbRef.current = { onWake, onCommand, onPartial, getMuted, getSpeaking, onBargeIn };
+  // Barge-in state: track her TTS bleed level so only a clearly louder voice
+  // (the user talking over her) interrupts — not her own audio in the mic.
+  const speakFloorRef = useRef(0.02);
+  const bargeMsRef = useRef(0);
 
   const sleep = useCallback(() => {
     awakeRef.current = false;
@@ -416,12 +439,38 @@ export function useWakeWord({ onWake, onCommand, onPartial, getMuted }: Options)
 
       node.onaudioprocess = (e) => {
         if (cbRef.current.getMuted()) {
-          // Drop anything captured while Margie is speaking.
+          // Drop anything captured while Margie is speaking/thinking.
           recordingRef.current = false;
           chunksRef.current = [];
           prerollRef.current = [];
           speechMsRef.current = 0;
           silenceMsRef.current = 0;
+
+          // Barge-in: while she's actually SPEAKING, listen for the user
+          // talking over her. Only a voice clearly louder than her TTS bleed
+          // (tracked as speakFloor) counts, sustained for BARGE_MIN_MS.
+          if (cbRef.current.getSpeaking?.() && cbRef.current.onBargeIn) {
+            const inb = e.inputBuffer.getChannelData(0);
+            let s2 = 0;
+            for (let i = 0; i < inb.length; i++) s2 += inb[i] * inb[i];
+            const r = Math.sqrt(s2 / inb.length);
+            const sf = speakFloorRef.current;
+            const bargeThresh = Math.max(BARGE_ABS_RMS, sf * BARGE_FACTOR);
+            if (r > bargeThresh) {
+              bargeMsRef.current += (4096 / ctx.sampleRate) * 1000;
+              if (bargeMsRef.current >= BARGE_MIN_MS) {
+                bargeMsRef.current = 0;
+                dbg("BARGE-IN");
+                cbRef.current.onBargeIn();
+              }
+            } else {
+              bargeMsRef.current = 0;
+              // Track her TTS bleed level (slow EMA of the quieter frames).
+              speakFloorRef.current = Math.min(0.05, Math.max(0.005, sf * 0.9 + r * 0.1));
+            }
+          } else {
+            bargeMsRef.current = 0;
+          }
           return;
         }
         const input = e.inputBuffer.getChannelData(0);
