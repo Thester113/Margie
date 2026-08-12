@@ -66,11 +66,19 @@ if [ "$USE_WT" = "1" ]; then
 else
   DIR_ABS="$(cd "$DIR" 2>/dev/null && pwd || echo "$HOME")"
 fi
-# Record as the current session so a follow-up targets the newest one by default.
-printf '%s' "$SESSION" > "$HOME/.margie/last-session"
 
 NAME="margie-claude-$STAMP"
 TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
+
+# Guarantee the session name is FREE, so a new launch never collides with (and
+# the kick script never clobbers) a running one — even two launches in the same
+# second, or a repeat of the same worktree branch.
+base="$SESSION"; n=2
+while "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; do
+  SESSION="${base}-${n}"; n=$((n + 1))
+done
+# Record as the current session so a follow-up targets the newest one by default.
+printf '%s' "$SESSION" > "$HOME/.margie/last-session"
 
 # Inner script: cd + run claude (or a test command). Written as plain bash so
 # quoting is clean; the prompt is read from a file to avoid all escaping.
@@ -101,8 +109,8 @@ chmod +x "$INNER"
 RUN="$TASK_DIR/kick-$STAMP.sh"
 cat > "$RUN" <<RUNEOF
 #!/bin/bash
-"$TMUX_BIN" kill-session -t $SESSION 2>/dev/null
-exec "$TMUX_BIN" new-session -s $SESSION 'bash $INNER'
+# -A: attach if it somehow already exists, create otherwise — NEVER kill.
+exec "$TMUX_BIN" new-session -A -s $SESSION 'bash $INNER'
 RUNEOF
 chmod +x "$RUN"
 

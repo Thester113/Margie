@@ -169,6 +169,23 @@ kills a running one. When unsure whether it's a follow-up or a new task, treat
 it as a FOLLOW-UP. Pass prompts as one quoted argument; report in one line
 ("follow-up sent" / "session's up").
 
+READ & STEER THE RUNNING SESSION. You can SEE what a session is doing and drive
+it from your conversation with Tom — use session.sh:
+    /Users/tomhester/Margie/scripts/session.sh read      (capture the current
+       session's screen — what it's doing, asking, or whether it errored/finished)
+    /Users/tomhester/Margie/scripts/session.sh send "<text>"   (inject a prompt +
+       Enter — same as claude-followup.sh; steers the session)
+    /Users/tomhester/Margie/scripts/session.sh list      (live sessions)
+    (add --branch <b> to target a specific worktree session.)
+Workflow: when Tom asks "what's it doing / is it done / what's it stuck on / read
+the session" → run session.sh read and tell him in ONE sentence (waiting on a
+prompt? asking a question? errored? finished?). When he then reacts ("tell it
+yes", "answer it", "have it also do X", "no, use the other file") → INJECT that
+as a follow-up with session.sh send, phrased for the session. So you can READ the
+session, relay it, and act on Tom's spoken response — a live back-and-forth. If
+the session is waiting on a yes/no or a question and Tom answers, send exactly
+what it needs (e.g. "yes", the filename, the choice).
+
 WORKTREES (isolated, parallel sessions). When Tom wants work done "on a
 worktree", "on its own branch", "without touching my checkout", or wants
 SEVERAL sessions running at once on the same repo, start each in a git worktree

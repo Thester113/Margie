@@ -65,10 +65,9 @@ TASK_DIR="$HOME/.margie/tasks"
 CFG_DIR="$HOME/.warp/launch_configurations"
 mkdir -p "$TASK_DIR" "$CFG_DIR"
 STAMP="$(date +%s)"
-# Unique session per review so it never kills a running session; record it as
-# the current one for follow-ups.
+# Unique session per review so it never kills a running session (finalized +
+# recorded to last-session after the uniqueness check below).
 SESSION="margie-review-$STAMP"
-printf '%s' "$SESSION" > "$HOME/.margie/last-session"
 TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
 
 PROMPT="Use the xerpa-pr-review skill to review PR #$PR, then submit the GitHub review per the skill."
@@ -86,11 +85,18 @@ $REV_CMD
 INNEREOF
 chmod +x "$INNER"
 
+# Guarantee the session name is free so this review never clobbers a running one.
+base="$SESSION"; n=2
+while "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; do
+  SESSION="${base}-${n}"; n=$((n + 1))
+done
+printf '%s' "$SESSION" > "$HOME/.margie/last-session"
+
 RUN="$TASK_DIR/kick-$STAMP.sh"
 cat > "$RUN" <<RUNEOF
 #!/bin/bash
-"$TMUX_BIN" kill-session -t $SESSION 2>/dev/null
-exec "$TMUX_BIN" new-session -s $SESSION 'bash $INNER'
+# -A: attach if it somehow exists, create otherwise — NEVER kill.
+exec "$TMUX_BIN" new-session -A -s $SESSION 'bash $INNER'
 RUNEOF
 chmod +x "$RUN"
 
