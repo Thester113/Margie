@@ -21,6 +21,20 @@ MODE="${MARGIE_SLACK_MODE:-live}"
 NOW="$(date +%s)"
 GROK="${MARGIE_GROK_BIN:-$HOME/.grok/bin/grok}"
 GMODEL="${MARGIE_GROK_MODEL:-grok-4.5}"
+# Same hard guards as the brain: grok replying to a Slack mention must never
+# review/approve/merge PRs, push, commit, or edit code on its own.
+GROK_GUARDS=(
+  --deny "Bash(gh pr review*)" --deny "Bash(gh pr merge*)" --deny "Bash(gh pr close*)"
+  --deny "Bash(gh pr edit*)" --deny "Bash(gh pr create*)" --deny "Bash(gh pr comment*)"
+  --deny "Bash(gh pr ready*)" --deny "Bash(gh api*)" --deny "Bash(gh release*)"
+  --deny "Bash(git push*)" --deny "Bash(git commit*)" --deny "Bash(git reset*)"
+  --deny "Bash(git rebase*)" --deny "Bash(git merge*)" --deny "Bash(git tag*)"
+  --deny "Bash(rm *)" --deny "Edit" --deny "Write"
+  # Watcher replies to ANYONE who @mentions Margie in a channel, so it must be
+  # purely conversational — strip Bash entirely so a Slack user can't make her
+  # run scripts, snap the webcam, read Tom's screen, or take any action.
+  --disallowed-tools "Bash,Edit,Write,Agent"
+)
 
 BTOK="$(jq -r '.slack_token // empty' "$MARGIE_DIR/config.json" 2>/dev/null)"
 if [ -z "$BTOK" ]; then echo "$(date -u +%FT%TZ) no slack_token" >> "$LOG"; exit 0; fi
@@ -87,8 +101,8 @@ while IFS=$'\t' read -r cid label ts thread user text; do
   who="$(uname_of "$user")"
   [ -z "$FIRST_WHO" ] && FIRST_WHO="$who" || MORE=$((MORE+1))
   clean="$(printf '%s' "$text" | sed "s/$MENTION//g" | sed 's/^ *//;s/ *$//')"
-  P="You are Margie, Tom's assistant, replying in Slack AS the Margie bot. $who said to you: \"$clean\". Reply concisely and helpfully in one or two short sentences. If it asks for something you can do with Tom's helper scripts in /Users/tomhester/Margie/scripts (screenshot.sh, camera.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, kickoff-claude.sh, review-pr.sh), do it, then reply with the result. Output ONLY the message text to post — no preamble."
-  REPLY="$(cd "$HOME" && "$GROK" -p "$P" --always-approve -m "$GMODEL" --reasoning-effort low 2>>"$LOG" | sed 's/^ *//;s/ *$//')"
+  P="You are Margie, Tom's assistant, replying in a PUBLIC Slack channel AS the Margie bot. $who said: \"$clean\". Reply helpfully and concisely in one or two short sentences, in WORDS ONLY. Do NOT run any command or script; do NOT access Tom's screen, camera, files, email, calendar, or any system; do NOT take any action or send anything anywhere. If they ask for an action or anything only Tom should decide, say you'll flag it for Tom. Output ONLY the message text to post — no preamble."
+  REPLY="$(cd "$HOME" && "$GROK" -p "$P" --always-approve -m "$GMODEL" --reasoning-effort low "${GROK_GUARDS[@]}" 2>>"$LOG" | sed 's/^ *//;s/ *$//')"
   [ -z "$REPLY" ] && REPLY="Hello, sir — Margie here."
   if [ "$MODE" = "live" ]; then
     POST="$(sapi chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "thread_ts=$thread" --data-urlencode "text=$REPLY")"

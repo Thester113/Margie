@@ -40,7 +40,30 @@ const GROK_MODEL = process.env.MARGIE_GROK_MODEL || "grok-4.5";
 // orchestration. grok still runs multi-step tool use at any effort.
 const GROK_EFFORT = process.env.MARGIE_GROK_EFFORT || "low";
 // Hard ceiling so a runaway agentic turn can't spin forever with no reply.
-const TURN_TIMEOUT_MS = Number(process.env.MARGIE_TURN_TIMEOUT_MS || 180000);
+const TURN_TIMEOUT_MS = Number(process.env.MARGIE_TURN_TIMEOUT_MS || 60000);
+
+// SAFETY GUARDS. grok-4.5 is an autonomous coding agent; left unconstrained it
+// will DO engineering work itself (it once reviewed a PR and submitted a real
+// GitHub Approve unprompted). Margie is a DISPATCHER, not the engineer — she
+// runs helper scripts and reports. These deny rules are a hard backstop: grok
+// may never run these destructive/outward commands directly (deny takes
+// precedence over --always-approve). Actual coding/reviews happen in the
+// separate, watchable Warp sessions the helper scripts spawn.
+const GROK_DENY = [
+  "Bash(gh pr review*)", "Bash(gh pr merge*)", "Bash(gh pr close*)", "Bash(gh pr edit*)",
+  "Bash(gh pr create*)", "Bash(gh pr comment*)", "Bash(gh pr ready*)", "Bash(gh api*)",
+  "Bash(gh release*)", "Bash(git push*)", "Bash(git commit*)", "Bash(git reset*)",
+  "Bash(git rebase*)", "Bash(git merge*)", "Bash(git tag*)", "Bash(rm *)", "Bash(rm-rf*)",
+  "Edit", "Write",
+];
+function guardArgs(): string[] {
+  const a: string[] = [];
+  for (const r of GROK_DENY) a.push("--deny", r);
+  // Strip file-editing and subagent-spawning from the brain entirely (hard,
+  // not permission-gated) — a dispatcher never edits code or fans out agents.
+  a.push("--disallowed-tools", "Edit,Write,Agent");
+  return a;
+}
 
 const MARGIE_SYSTEM_PROMPT = `You are Margie, Tom's personal AI assistant, living
 as a heads-up overlay on his Mac. Your character is inspired by a classic
@@ -53,6 +76,19 @@ Claude or Grok.
 YOUR PRIMARY JOB is to direct and facilitate coding sessions on Tom's behalf —
 the way an engineering lead delegates to and supervises engineers. Those
 sessions run grok as well (or claude when Tom explicitly asks for claude).
+
+⚠️ YOU ARE A DISPATCHER, NOT THE ENGINEER. You delegate work to the helper
+scripts and the watchable Warp/coding sessions they spawn — you do NOT do the
+work yourself. Specifically you must NEVER, on your own: review code or PRs,
+submit a GitHub review/approval/comment, merge/close/create a PR, push, commit,
+edit code files, or perform any multi-step engineering task inline. For anything
+like that, launch the appropriate helper script (which opens a session Tom can
+watch) and report one sentence. If you're ever unsure whether something is
+"dispatch" or "doing it yourself", it's doing it yourself — don't. Each turn
+should be: pick the ONE right helper/command, run it, report one short sentence.
+ALWAYS confirm first (read it back in one sentence, wait for Tom's yes) before
+anything outward or irreversible: sending Slack/email, Jira writes, or any
+GitHub/git write. Never take those actions unprompted.
 
 CODING SESSIONS IN WARP (the main thing Tom asks for). Use the tested helpers —
 never drive Warp with AppleScript keystrokes:
@@ -86,15 +122,18 @@ review-pr.sh does):
     /Users/tomhester/Margie/scripts/worktree.sh remove "<repo>" <branch>
 Use a plain kickoff (no --worktree) for ordinary single sessions.
 
-REVIEW A PR (grok by default) in a watchable Warp session — works for ANY repo
-in the xerpaai org, not just cloned ones:
+REVIEW A PR — YOU DO NOT REVIEW PRs YOURSELF. When Tom asks you to review a PR,
+you run EXACTLY ONE command and then say ONE sentence. You do NOT read the diff,
+you do NOT read the changed files, you do NOT use the xerpa-pr-review skill
+yourself, and you NEVER run \`gh pr review\`, approve, comment on, or merge a PR.
+All of that happens inside the SEPARATE, watchable grok session the script opens
+in Warp — which Tom supervises. Your only job is to launch it:
   /Users/tomhester/Margie/scripts/review-pr.sh <pr-number> "<repo>" [grok|claude]
-  e.g. review-pr.sh 1816 backend        (resolves to xerpa_ai_backend)
+  e.g. review-pr.sh 1836 backend        (resolves to xerpa_ai_backend)
        review-pr.sh 12 xerpa_databricks (clones it on first use)
-Pass the repo as a name or path — the script resolves it locally or clones it
-from the xerpaai org on demand, then runs the reviewer with the xerpa-pr-review
-SKILL (now global) and submits the GitHub review. NEVER assemble the diff or a
-review prompt yourself — just call the script with the PR number and repo name.
+Run that one line, then report: "Grok's reviewing PR <n> in <repo> — up in Warp,
+sir." That is the whole task. If the script errors, report the error in one
+sentence — do NOT fall back to reviewing it yourself.
 
 RUN ANYTHING IN A VISIBLE WARP TAB (dev servers, tests, log tails, git):
   /Users/tomhester/Margie/scripts/warp-run.sh "<dir>" <command...>
@@ -236,7 +275,7 @@ function parseGrokJson(stdout: string): { text: string; sessionId?: string } | n
 /** Run one grok turn. First turn creates a session; later turns resume it. */
 function runGrokTurn(text: string, sessionId: string | null): Promise<{ text: string; sessionId: string | null }> {
   return new Promise((resolve) => {
-    const args = ["-p", text, "--output-format", "json", "--always-approve", "-m", GROK_MODEL, "--reasoning-effort", GROK_EFFORT, "--cwd", process.env.HOME || "/"];
+    const args = ["-p", text, "--output-format", "json", "--always-approve", "-m", GROK_MODEL, "--reasoning-effort", GROK_EFFORT, "--cwd", process.env.HOME || "/", ...guardArgs()];
     if (sessionId) {
       args.push("--resume", sessionId);
     } else {
