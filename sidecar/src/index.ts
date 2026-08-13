@@ -81,7 +81,10 @@ function runBash(cmd: string): Promise<string> {
       return;
     }
     logBrain(`BASH: ${cmd}`);
-    const child = spawn("bash", ["-c", cmd], { env: process.env, cwd: HOME });
+    // Put Margie's scripts dir on PATH so bare names (messages.sh, slack.sh…)
+    // resolve even when the model omits the full path.
+    const env = { ...process.env, PATH: `${HOME}/Margie/scripts:${process.env.PATH || ""}` };
+    const child = spawn("bash", ["-c", cmd], { env, cwd: HOME });
     let out = "";
     child.stdout.on("data", (d) => (out += d.toString()));
     child.stderr.on("data", (d) => (out += d.toString()));
@@ -287,7 +290,8 @@ run entirely on direct API tokens (no Claude, no connectors):
   "next meeting"). (Google Calendar is read visually.)
 - Messages / texts (iMessage): messages.sh send "<who>: <message>" | read "<who>" [n] | list | resolve "<who>"
   To read replies ("did my wife text back", "what did she say"), run
-  messages.sh read "<who>" and relay it. (Reading needs Full Disk Access for
+  messages.sh read "<who>" and relay it. Voice memos are auto-transcribed and
+  shown as "(voice memo) <what they said>" — read those aloud too. (Reading needs Full Disk Access for
   Margie — if it errors about that, tell Tom to grant it in System Settings →
   Privacy & Security → Full Disk Access.)
   ALWAYS use this helper for texting — never improvise osascript "to buddy". <who>
