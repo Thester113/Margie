@@ -12,6 +12,7 @@
 #                                         transcribed). Needs Full Disk Access.
 #   messages.sh groups                    list group chats by members (newest first)
 #   messages.sh readchat <chat_id> [n]    read a group chat (senders + transcripts)
+#   messages.sh sendchat <chat_id> "<m>"  send to a GROUP chat (never use `send`)
 #   messages.sh list                      list recent chat handles
 #   messages.sh resolve "<who>"           show what an alias/name resolves to
 set -uo pipefail
@@ -107,6 +108,28 @@ OSA
     [ -z "$id" ] && { echo "usage: messages.sh readchat <chat_id> [count]  (see: messages.sh groups)" >&2; exit 1; }
     need_db
     python3 "$DIR/imsg_read.py" chat "$id" "$N"
+    ;;
+  sendchat)
+    # Send to a GROUP chat by its id (the number from `groups`/`readchat`).
+    # NEVER use `send` for a group — that treats the id as a person and fails.
+    id="$1"; shift || true; msg="$*"
+    if [ -z "$id" ] || [ -z "$msg" ]; then
+      echo "usage: messages.sh sendchat <chat_id> \"<message>\"  (chat_id from: messages.sh groups)" >&2; exit 1
+    fi
+    # A bare number is a chat ROWID → look up its guid; a "…;…;…" value is a guid already.
+    case "$id" in
+      *\;*) guid="$id" ;;
+      *) need_db; guid="$(sqlite3 "file:$DB?mode=ro" "SELECT guid FROM chat WHERE ROWID=$id;" 2>/dev/null)" ;;
+    esac
+    [ -z "$guid" ] && { echo "No group chat with id $id, sir — run messages.sh groups to find it." >&2; exit 1; }
+    esc_msg="$(printf '%s' "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    esc_guid="$(printf '%s' "$guid" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    out="$(osascript -e "tell application \"Messages\" to send \"$esc_msg\" to chat id \"$esc_guid\"" 2>&1)"
+    if [ $? -eq 0 ]; then
+      echo "Sent to the group (chat $id), sir: \"$msg\""
+    else
+      echo "Couldn't send to the group (chat $id), sir: ${out:0:160}" >&2; exit 1
+    fi
     ;;
   list)
     # Chat ids embed the handle (e.g. "iMessage;-;+15551234567"); pull out the
