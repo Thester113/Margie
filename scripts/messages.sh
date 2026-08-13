@@ -8,14 +8,24 @@
 #
 # Usage:
 #   messages.sh send "<who>: <message>"   who = alias | phone/email | contact name
-#   messages.sh read "<who>" [count]      read recent iMessages with someone
-#                                         (needs Full Disk Access for the app)
+#   messages.sh read "<who>" [count]      read recent 1:1 iMessages (voice memos
+#                                         transcribed). Needs Full Disk Access.
+#   messages.sh groups                    list group chats by members (newest first)
+#   messages.sh readchat <chat_id> [n]    read a group chat (senders + transcripts)
 #   messages.sh list                      list recent chat handles
 #   messages.sh resolve "<who>"           show what an alias/name resolves to
 set -uo pipefail
 
 CFG="$HOME/.margie/config.json"
 cmd="${1:-}"; shift || true
+DIR="$(cd "$(dirname "$0")" && pwd)"
+DB="$HOME/Library/Messages/chat.db"
+
+need_db() {
+  [ -r "$DB" ] && return 0
+  echo "I can't read Messages, sir — grant Full Disk Access to the app (System Settings → Privacy & Security → Full Disk Access), then try again." >&2
+  exit 1
+}
 
 resolve() {
   local who="$1" key val
@@ -60,99 +70,43 @@ OSA
     fi
     ;;
   read)
-    # Read recent iMessages with someone from the Messages database. Requires
-    # Full Disk Access for whatever app is running this (Margie, or Warp/Terminal
-    # when testing) — System Settings → Privacy & Security → Full Disk Access.
+    # Recent 1:1 iMessages with someone (voice memos auto-transcribed). Needs
+    # Full Disk Access for the running app.
     who="$1"; shift || true; N="${1:-12}"
     [ -z "$who" ] && { echo "usage: messages.sh read \"<who>\" [count]" >&2; exit 1; }
-    target="$(resolve "$who")"
-    DB="$HOME/Library/Messages/chat.db"
-    if [ ! -r "$DB" ]; then
-      echo "I can't read Messages, sir — grant Full Disk Access to Margie (System Settings → Privacy & Security → Full Disk Access), then try again." >&2
-      exit 1
-    fi
-    MG_DB="$DB" MG_TARGET="$target" MG_N="$N" python3 <<'PY'
-import os, re, sqlite3, sys, subprocess, tempfile, shutil
-db = os.environ["MG_DB"]; target = os.environ["MG_TARGET"]; n = int(os.environ["MG_N"])
-digits = re.sub(r"\D", "", target)
-OBJ = "￼"  # object-replacement char = an attachment placeholder
-
-MODELS = os.path.expanduser("~/.margie/models")
-MODEL = next((os.path.join(MODELS, m) for m in
-              ("ggml-small.en.bin", "ggml-base.en.bin", "ggml-tiny.en.bin")
-              if os.path.exists(os.path.join(MODELS, m))), None)
-WHISPER = shutil.which("whisper-cli") or "/opt/homebrew/bin/whisper-cli"
-
-def decode_attr(data):
-    if not data:
-        return ""
-    try:
-        seg = data.split(b"NSString", 1)[1][5:]
-        length = int.from_bytes(seg[1:3], "little") if seg[0] == 0x81 else seg[0]
-        start = 3 if seg[0] == 0x81 else 1
-        return seg[start:start + length].decode("utf-8", "ignore")
-    except Exception:
-        return ""
-
-def is_audio(mime, blob):
-    return (mime or "").lower().startswith("audio") or b"imaudio" in (blob or b"").lower()
-
-def label_media(mime, blob):
-    m = (mime or "").lower()
-    if m.startswith("image") or any(x in (blob or b"").lower() for x in (b"public.jpeg", b"public.png", b"public.heic")):
-        return "[image]"
-    if m.startswith("video"):
-        return "[video]"
-    return "[attachment]"
-
-def transcribe(fn):
-    """Voice memo -> text via afconvert (built-in) + whisper-cli."""
-    p = os.path.expanduser(fn) if fn else ""
-    if not p or not os.path.exists(p) or not MODEL or not os.path.exists(WHISPER):
-        return ""
-    wav = tempfile.mktemp(suffix=".wav")
-    try:
-        subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", p, wav],
-                       capture_output=True, timeout=30, check=True)
-        r = subprocess.run([WHISPER, "-m", MODEL, "-f", wav, "-nt", "-np"],
-                           capture_output=True, text=True, timeout=120)
-        return " ".join(l.strip() for l in r.stdout.splitlines() if l.strip())
-    except Exception:
-        return ""
-    finally:
-        try:
-            os.unlink(wav)
-        except Exception:
-            pass
-
-try:
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    q = """
-      SELECT m.is_from_me, m.text, m.attributedBody, a.mime_type, a.filename
-      FROM message m JOIN handle h ON m.handle_id = h.ROWID
-      LEFT JOIN message_attachment_join maj ON maj.message_id = m.ROWID
-      LEFT JOIN attachment a ON a.ROWID = maj.attachment_id
-      WHERE h.id = ? OR replace(replace(replace(h.id,'+',''),'-',''),' ','') = ?
-      ORDER BY m.date DESC LIMIT ?
-    """
-    rows = con.execute(q, (target, digits, n)).fetchall()
-except Exception as e:
-    print(f"Couldn't read Messages, sir: {e}", file=sys.stderr); sys.exit(1)
-
-out = []
-for is_me, text, blob, mime, fname in reversed(rows):
-    t = (text or "").strip()
-    if not t or t == OBJ:
-        t = decode_attr(blob).strip()
-    if (not t or t == OBJ or mime) and is_audio(mime, blob):
-        tx = transcribe(fname)
-        t = f"(voice memo) {tx}" if tx else "[audio message]"
-    elif not t or t == OBJ or mime:
-        t = label_media(mime, blob)
-    who = "Me" if is_me else "Them"
-    out.append(f"{who}: {t.replace(chr(10), ' ')}")
-print("\n".join(out) if out else "No messages found with that contact, sir.")
-PY
+    need_db
+    python3 "$DIR/imsg_read.py" handle "$(resolve "$who")" "$N"
+    ;;
+  groups)
+    # List group chats (unnamed groups shown by members), so the brain/Tom can
+    # find the right one — e.g. the group containing wifey. Prints: <chat_id> · <members> · <last active>
+    need_db
+    # Subqueries (not joins) so members aren't multiplied by message count.
+    sqlite3 "file:$DB?mode=ro" "
+      SELECT c.ROWID || char(9) ||
+        (SELECT group_concat(h.id, ', ') FROM chat_handle_join chj
+           JOIN handle h ON chj.handle_id=h.ROWID WHERE chj.chat_id=c.ROWID) || char(9) ||
+        COALESCE((SELECT datetime(MAX(m.date)/1000000000 + 978307200,'unixepoch','localtime')
+           FROM chat_message_join cmj JOIN message m ON m.ROWID=cmj.message_id
+           WHERE cmj.chat_id=c.ROWID),'')
+      FROM chat c
+      WHERE (SELECT COUNT(*) FROM chat_handle_join WHERE chat_id=c.ROWID) >= 2
+      ORDER BY (SELECT MAX(m.date) FROM chat_message_join cmj
+                  JOIN message m ON m.ROWID=cmj.message_id WHERE cmj.chat_id=c.ROWID) DESC
+      LIMIT 20;" 2>/dev/null \
+      | while IFS=$'\t' read -r id members last; do
+          # Swap known handles for their aliases for readability.
+          jq -r --arg m "$members" '(.contacts // {}) as $c
+            | ($m | split(", ") | map(. as $h | ($c | to_entries[] | select(.value==$h) | .key) // $h) | join(", "))' "$CFG" 2>/dev/null \
+            | { read -r pretty; echo "chat $id · ${pretty:-$members} · ${last}"; }
+        done
+    ;;
+  readchat)
+    # Read recent messages from a group chat by its id (from `groups`).
+    id="$1"; shift || true; N="${1:-15}"
+    [ -z "$id" ] && { echo "usage: messages.sh readchat <chat_id> [count]  (see: messages.sh groups)" >&2; exit 1; }
+    need_db
+    python3 "$DIR/imsg_read.py" chat "$id" "$N"
     ;;
   list)
     # Chat ids embed the handle (e.g. "iMessage;-;+15551234567"); pull out the

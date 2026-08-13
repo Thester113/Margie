@@ -288,10 +288,13 @@ run entirely on direct API tokens (no Claude, no connectors):
 - Calendar: calendar.sh [week|day] opens Tom's Google Calendar and prints a
   screenshot PATH — then Read that image to answer ("what's on my calendar",
   "next meeting"). (Google Calendar is read visually.)
-- Messages / texts (iMessage): messages.sh send "<who>: <message>" | read "<who>" [n] | list | resolve "<who>"
+- Messages / texts (iMessage): messages.sh send "<who>: <message>" | read "<who>" [n] | groups | readchat <id> [n] | list | resolve "<who>"
   To read replies ("did my wife text back", "what did she say"), run
   messages.sh read "<who>" and relay it. Voice memos are auto-transcribed and
-  shown as "(voice memo) <what they said>" — read those aloud too. (Reading needs Full Disk Access for
+  shown as "(voice memo) <what they said>" — read those aloud too.
+  For a GROUP chat ("the group with my wife and Stacy"), run messages.sh groups
+  (lists each group's members, aliases resolved, newest first), pick the chat
+  <id> whose members match, then messages.sh readchat <id>. (Reading needs Full Disk Access for
   Margie — if it errors about that, tell Tom to grant it in System Settings →
   Privacy & Security → Full Disk Access.)
   ALWAYS use this helper for texting — never improvise osascript "to buddy". <who>
