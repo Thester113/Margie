@@ -8,7 +8,9 @@
 #
 # Usage:
 #   messages.sh send "<who>: <message>"   who = alias | phone/email | contact name
-#   messages.sh list                      list recent chat names (to find a handle)
+#   messages.sh read "<who>" [count]      read recent iMessages with someone
+#                                         (needs Full Disk Access for the app)
+#   messages.sh list                      list recent chat handles
 #   messages.sh resolve "<who>"           show what an alias/name resolves to
 set -uo pipefail
 
@@ -56,6 +58,53 @@ OSA
       echo "Couldn't send to $who ($target), sir: ${out:0:160}. Is the handle a phone/email? Set an alias in config.contacts." >&2
       exit 1
     fi
+    ;;
+  read)
+    # Read recent iMessages with someone from the Messages database. Requires
+    # Full Disk Access for whatever app is running this (Margie, or Warp/Terminal
+    # when testing) — System Settings → Privacy & Security → Full Disk Access.
+    who="$1"; shift || true; N="${1:-12}"
+    [ -z "$who" ] && { echo "usage: messages.sh read \"<who>\" [count]" >&2; exit 1; }
+    target="$(resolve "$who")"
+    DB="$HOME/Library/Messages/chat.db"
+    if [ ! -r "$DB" ]; then
+      echo "I can't read Messages, sir — grant Full Disk Access to Margie (System Settings → Privacy & Security → Full Disk Access), then try again." >&2
+      exit 1
+    fi
+    MG_DB="$DB" MG_TARGET="$target" MG_N="$N" python3 <<'PY'
+import os, re, sqlite3, sys
+db = os.environ["MG_DB"]; target = os.environ["MG_TARGET"]; n = int(os.environ["MG_N"])
+digits = re.sub(r"\D", "", target)
+def decode_attr(data):
+    if not data:
+        return ""
+    try:
+        seg = data.split(b"NSString", 1)[1][5:]
+        if seg[0] == 0x81:
+            length = int.from_bytes(seg[1:3], "little"); start = 3
+        else:
+            length = seg[0]; start = 1
+        return seg[start:start + length].decode("utf-8", "ignore")
+    except Exception:
+        return ""
+try:
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    q = """
+      SELECT m.is_from_me, m.text, m.attributedBody
+      FROM message m JOIN handle h ON m.handle_id = h.ROWID
+      WHERE h.id = ? OR replace(replace(replace(h.id,'+',''),'-',''),' ','') = ?
+      ORDER BY m.date DESC LIMIT ?
+    """
+    rows = con.execute(q, (target, digits, n)).fetchall()
+except Exception as e:
+    print(f"Couldn't read Messages, sir: {e}", file=sys.stderr); sys.exit(1)
+out = []
+for is_me, text, blob in reversed(rows):
+    t = (text or "").strip() or decode_attr(blob).strip()
+    if t:
+        out.append(("Me" if is_me else "Them") + ": " + t.replace("\n", " "))
+print("\n".join(out) if out else "No messages found with that contact, sir.")
+PY
     ;;
   list)
     # Chat ids embed the handle (e.g. "iMessage;-;+15551234567"); pull out the

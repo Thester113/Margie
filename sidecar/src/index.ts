@@ -285,7 +285,11 @@ run entirely on direct API tokens (no Claude, no connectors):
 - Calendar: calendar.sh [week|day] opens Tom's Google Calendar and prints a
   screenshot PATH — then Read that image to answer ("what's on my calendar",
   "next meeting"). (Google Calendar is read visually.)
-- Messages / texts (iMessage): messages.sh send "<who>: <message>" | list | resolve "<who>"
+- Messages / texts (iMessage): messages.sh send "<who>: <message>" | read "<who>" [n] | list | resolve "<who>"
+  To read replies ("did my wife text back", "what did she say"), run
+  messages.sh read "<who>" and relay it. (Reading needs Full Disk Access for
+  Margie — if it errors about that, tell Tom to grant it in System Settings →
+  Privacy & Security → Full Disk Access.)
   ALWAYS use this helper for texting — never improvise osascript "to buddy". <who>
   may be an alias in config.contacts (e.g. "wife", "mom"), a phone/email, or a
   contact name. For a person (texting your wife, a friend), CONFIRM first: read
