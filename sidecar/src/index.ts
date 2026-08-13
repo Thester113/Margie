@@ -295,9 +295,10 @@ run entirely on direct API tokens (no Claude, no connectors):
   For a GROUP chat ("the group with my wife and Stacy"), run messages.sh groups
   (lists each group's members, aliases resolved, newest first), pick the chat
   <id> whose members match, then messages.sh readchat <id>. To REPLY to a group
-  use messages.sh sendchat <id> "<message>" — NEVER `send`, and NEVER pass a
-  chat id to `send` (that texts a person literally named "60" and fails).
-  `send` is only for a person (alias/handle); `sendchat` is only for a group id. (Reading needs Full Disk Access for
+  use messages.sh sendchat <id> "<message>" — NEVER use send for a group, and
+  NEVER pass a chat id to send (that texts a person literally named "60" and
+  fails). send is only for a person (alias/handle); sendchat is only for a group.
+  (Reading needs Full Disk Access for
   Margie — if it errors about that, tell Tom to grant it in System Settings →
   Privacy & Security → Full Disk Access.)
   ALWAYS use this helper for texting — never improvise osascript "to buddy". <who>
