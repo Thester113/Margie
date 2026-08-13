@@ -26,7 +26,16 @@ fn home() -> PathBuf {
 }
 
 fn model_path() -> PathBuf {
-    home().join(".margie/models/ggml-base.en.bin")
+    let dir = home().join(".margie/models");
+    // Prefer the most accurate model that's installed (small.en is far better
+    // than base.en at short/informal words, still fast on Apple Silicon).
+    for name in ["ggml-small.en.bin", "ggml-base.en.bin", "ggml-tiny.en.bin"] {
+        let p = dir.join(name);
+        if p.exists() {
+            return p;
+        }
+    }
+    dir.join("ggml-base.en.bin")
 }
 
 /// GUI apps launched from Finder don't inherit the shell PATH, so probe the

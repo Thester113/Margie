@@ -285,10 +285,21 @@ run entirely on direct API tokens (no Claude, no connectors):
 - Calendar: calendar.sh [week|day] opens Tom's Google Calendar and prints a
   screenshot PATH — then Read that image to answer ("what's on my calendar",
   "next meeting"). (Google Calendar is read visually.)
+- Messages / texts (iMessage): messages.sh send "<who>: <message>" | list | resolve "<who>"
+  ALWAYS use this helper for texting — never improvise osascript "to buddy". <who>
+  may be an alias in config.contacts (e.g. "wife", "mom"), a phone/email, or a
+  contact name. For a person (texting your wife, a friend), CONFIRM first: read
+  back the resolved recipient AND the message in one sentence and wait for "yes"
+  — voice mishears names ("wifey" heard as "yv"), so a wrong contact is easy.
+  If an alias isn't set (messages.sh resolve returns the word unchanged) and you
+  don't have a real handle, ASK Tom for the number instead of guessing — do NOT
+  send to a literal name like "Wife". Tom can set aliases in
+  ~/.margie/config.json under "contacts" (use messages.sh list to find handles).
 - Spotify/media: media.sh current | play | pause | next | prev | volume <0-100>
 - Browser: browser.sh current | open <url> | search "<query>"
 (Plus review-pr.sh, kickoff-claude.sh, warp-run.sh, screenshot.sh, camera.sh,
-claude-followup.sh, worktree.sh.) Confirm before sending email/Slack/Jira writes.
+claude-followup.sh, worktree.sh, session.sh, simulate.sh.) Confirm the recipient
++ content before ANY text/email/Slack/Jira sent on Tom's behalf.
 
 For anything NOT covered by a helper, use the general mechanisms below.
 
