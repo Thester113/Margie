@@ -75,34 +75,53 @@ OSA
 import os, re, sqlite3, sys
 db = os.environ["MG_DB"]; target = os.environ["MG_TARGET"]; n = int(os.environ["MG_N"])
 digits = re.sub(r"\D", "", target)
+OBJ = "￼"  # object-replacement char = an attachment placeholder
+
 def decode_attr(data):
     if not data:
         return ""
     try:
         seg = data.split(b"NSString", 1)[1][5:]
-        if seg[0] == 0x81:
-            length = int.from_bytes(seg[1:3], "little"); start = 3
-        else:
-            length = seg[0]; start = 1
+        length = int.from_bytes(seg[1:3], "little") if seg[0] == 0x81 else seg[0]
+        start = 3 if seg[0] == 0x81 else 1
         return seg[start:start + length].decode("utf-8", "ignore")
     except Exception:
         return ""
+
+def label_media(mime, blob):
+    m = (mime or "").lower()
+    b = (blob or b"").lower()
+    if m.startswith("audio") or b"imaudio" in b:
+        return "[audio message]"
+    if m.startswith("image") or b"public.jpeg" in b or b"public.png" in b or b"public.heic" in b:
+        return "[image]"
+    if m.startswith("video"):
+        return "[video]"
+    return "[attachment]"
+
 try:
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     q = """
-      SELECT m.is_from_me, m.text, m.attributedBody
+      SELECT m.is_from_me, m.text, m.attributedBody, a.mime_type
       FROM message m JOIN handle h ON m.handle_id = h.ROWID
+      LEFT JOIN message_attachment_join maj ON maj.message_id = m.ROWID
+      LEFT JOIN attachment a ON a.ROWID = maj.attachment_id
       WHERE h.id = ? OR replace(replace(replace(h.id,'+',''),'-',''),' ','') = ?
       ORDER BY m.date DESC LIMIT ?
     """
     rows = con.execute(q, (target, digits, n)).fetchall()
 except Exception as e:
     print(f"Couldn't read Messages, sir: {e}", file=sys.stderr); sys.exit(1)
+
 out = []
-for is_me, text, blob in reversed(rows):
-    t = (text or "").strip() or decode_attr(blob).strip()
-    if t:
-        out.append(("Me" if is_me else "Them") + ": " + t.replace("\n", " "))
+for is_me, text, blob, mime in reversed(rows):
+    t = (text or "").strip()
+    if not t or t == OBJ:
+        t = decode_attr(blob).strip()
+    if not t or t == OBJ or mime:
+        t = label_media(mime, blob)  # attachment, not text
+    who = "Me" if is_me else "Them"
+    out.append(f"{who}: {t.replace(chr(10), ' ')}")
 print("\n".join(out) if out else "No messages found with that contact, sir.")
 PY
     ;;
