@@ -143,8 +143,14 @@ const STOP_RMS = 0.006;
 // Kept generous so brief mid-sentence pauses (a breath, thinking) don't cut
 // them off. Wake still feels instant because the early "peek" chimes before
 // this fires — so this only governs when a full command is dispatched.
-const HANGOVER_MS = 550; // silence after speech before she acts — kept short so
-// turn-taking feels natural (was 900, which added ~1s of dead air per turn).
+const HANGOVER_MS = 1000; // silence after speech before she acts. 550 was too
+// eager and cut Tom off mid-thought when he paused between clauses; 1s tolerates
+// a natural thinking pause. Fragment-stitching (below) catches the rest.
+// End-of-turn cues: if a phrase ends on one of these, Tom's mid-sentence — hold
+// it and stitch with what he says next instead of answering the fragment.
+const CONTINUATION_RE =
+  /(,|\b(and|but|so|or|nor|because|cause|the|an?|to|of|is|are|was|were|be|been|that|this|these|those|i|we|you|he|she|it|they|my|our|your|for|with|at|in|on|from|then|well|um+|uh+|like|if|when|while|which|who|what|as|about|into|keep|make|makes|let|maybe|also|really|just|gonna|wanna|could|would|should|can|will))\s*$/i;
+const STITCH_MS = 2600; // how long to wait for the rest before giving up on a hold
 const MIN_PHRASE_MS = 250;
 const MAX_PHRASE_MS = 25000; // hard ceiling; long messages shouldn't hit this
 const PEEK_EVERY_MS = 900; // how often to "peek" for the wake word mid-speech
@@ -194,11 +200,17 @@ export function useWakeWord({
   // (the user talking over her) interrupts — not her own audio in the mic.
   const speakFloorRef = useRef(0.02);
   const bargeMsRef = useRef(0);
+  // Fragment stitching: hold a phrase that ends mid-sentence and prepend it to
+  // the next one, so a thinking pause doesn't get answered as a half-thought.
+  const pendingRef = useRef("");
+  const stitchTimerRef = useRef<number | undefined>(undefined);
 
   const sleep = useCallback(() => {
     awakeRef.current = false;
     resumeNextRef.current = false;
+    pendingRef.current = "";
     window.clearTimeout(wakeTimerRef.current);
+    window.clearTimeout(stitchTimerRef.current);
     setState((s) => (s === "off" || s === "error" ? s : "asleep"));
   }, []);
 
@@ -229,10 +241,32 @@ export function useWakeWord({
       // In an active conversation, any phrase is the next turn — no wake word.
       if (awakeRef.current) {
         window.clearTimeout(wakeTimerRef.current);
+        window.clearTimeout(stitchTimerRef.current);
+        // Stitch onto anything held from a mid-sentence pause.
+        const combined = (pendingRef.current ? pendingRef.current + " " : "") + clean;
+        pendingRef.current = "";
+
+        // Still mid-thought? Hold it and wait for the rest instead of answering.
+        if (CONTINUATION_RE.test(combined)) {
+          pendingRef.current = combined;
+          dbg(`HOLD (mid-sentence): "${combined}"`);
+          armWindow(CONVERSATION_MS); // stay awake while he continues
+          stitchTimerRef.current = window.setTimeout(() => {
+            const p = pendingRef.current.trim();
+            pendingRef.current = "";
+            if (!p) return;
+            const resume = resumeNextRef.current;
+            resumeNextRef.current = true;
+            dbg(`FLUSH (paused too long): "${p}"`);
+            cbRef.current.onCommand(p, resume);
+          }, STITCH_MS);
+          return;
+        }
+
         const resume = resumeNextRef.current;
         resumeNextRef.current = true; // subsequent turns keep context
-        dbg(`TURN (resume=${resume}): "${clean}"`);
-        cbRef.current.onCommand(clean, resume);
+        dbg(`TURN (resume=${resume}): "${combined}"`);
+        cbRef.current.onCommand(combined, resume);
         return;
       }
 
