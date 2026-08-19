@@ -148,9 +148,13 @@ const HANGOVER_MS = 1000; // silence after speech before she acts. 550 was too
 // a natural thinking pause. Fragment-stitching (below) catches the rest.
 // End-of-turn cues: if a phrase ends on one of these, Tom's mid-sentence — hold
 // it and stitch with what he says next instead of answering the fragment.
+// Deliberately ONLY conjunctions/prepositions that almost never end a real
+// utterance — so we don't hold (and delay) complete sentences like "do it",
+// "I will", or "what do you think". Everything else answers immediately.
 const CONTINUATION_RE =
-  /(,|\b(and|but|so|or|nor|because|cause|the|an?|to|of|is|are|was|were|be|been|that|this|these|those|i|we|you|he|she|it|they|my|our|your|for|with|at|in|on|from|then|well|um+|uh+|like|if|when|while|which|who|what|as|about|into|keep|make|makes|let|maybe|also|really|just|gonna|wanna|could|would|should|can|will))\s*$/i;
-const STITCH_MS = 2600; // how long to wait for the rest before giving up on a hold
+  /(,\s*$|\b(and|but|or|nor|because|cause|the|an?|of|for|with|from|into|onto|than|plus|versus)\s*$)/i;
+const STITCH_MS = 1400; // brief wait for the rest; short so a rare false hold
+// never feels like a hang.
 const MIN_PHRASE_MS = 250;
 const MAX_PHRASE_MS = 25000; // hard ceiling; long messages shouldn't hit this
 const PEEK_EVERY_MS = 900; // how often to "peek" for the wake word mid-speech
