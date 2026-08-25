@@ -9,6 +9,7 @@ import {
   transcribe,
 } from "../lib/stt";
 import * as elevenStt from "../lib/eleven-stt";
+import { getSelectedMicId } from "../lib/mic";
 
 function dbg(line: string) {
   void invoke("dbg_log", { line: `${new Date().toISOString()} ${line}` });
@@ -449,14 +450,23 @@ export function useWakeWord({
 
       // Raw audio — Chromium's echo cancellation / noise suppression /
       // auto-gain are tuned for phone calls and degrade speech recognition.
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 1,
-        },
-      });
+      const base: MediaTrackConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1,
+      };
+      const micId = getSelectedMicId();
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: micId ? { ...base, deviceId: { exact: micId } } : base,
+        });
+      } catch {
+        // Chosen mic unplugged/unavailable — fall back to the system default.
+        if (micId) dbg(`selected mic unavailable, using default`);
+        stream = await navigator.mediaDevices.getUserMedia({ audio: base });
+      }
       streamRef.current = stream;
       // Capture natively at 16 kHz where supported, so no resampling is
       // needed (the biggest source of distortion). Falls back gracefully.
@@ -645,5 +655,11 @@ export function useWakeWord({
 
   useEffect(() => stop, [stop]);
 
-  return { state, error, start, stop, continueConversation };
+  // Tear down and re-open the capture pipeline (e.g. after switching mics).
+  const restart = useCallback(() => {
+    stop();
+    window.setTimeout(() => void start(), 250);
+  }, [stop, start]);
+
+  return { state, error, start, stop, restart, continueConversation };
 }

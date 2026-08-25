@@ -4,9 +4,12 @@ import {
   writeSettings,
   type Settings as SettingsData,
 } from "../lib/settings";
+import { listMics, getSelectedMicId, setSelectedMicId, type MicOption } from "../lib/mic";
 
 interface SettingsProps {
   onCollapse: () => void;
+  /** Called after the mic selection changes, so the app can re-open capture. */
+  onMicChange?: () => void;
 }
 
 const EMPTY: SettingsData = {
@@ -18,10 +21,12 @@ const EMPTY: SettingsData = {
 type SaveState = "loading" | "idle" | "saving" | "saved" | "error";
 
 /** Settings form: view and persist the ~/.margie/config.json values. */
-export function Settings({ onCollapse }: SettingsProps) {
+export function Settings({ onCollapse, onMicChange }: SettingsProps) {
   const [values, setValues] = useState<SettingsData>(EMPTY);
   const [state, setState] = useState<SaveState>("loading");
   const [error, setError] = useState("");
+  const [mics, setMics] = useState<MicOption[]>([]);
+  const [micId, setMicId] = useState<string>(getSelectedMicId());
 
   useEffect(() => {
     readSettings()
@@ -33,7 +38,15 @@ export function Settings({ onCollapse }: SettingsProps) {
         setError(e instanceof Error ? e.message : String(e));
         setState("error");
       });
+    void listMics().then(setMics);
   }, []);
+
+  const chooseMic = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.currentTarget.value;
+    setMicId(id);
+    setSelectedMicId(id);
+    onMicChange?.(); // re-open capture on the new device
+  };
 
   const update =
     (field: keyof SettingsData) =>
@@ -77,6 +90,18 @@ export function Settings({ onCollapse }: SettingsProps) {
       </header>
 
       <div className="settings__body">
+        <label className="settings__field">
+          <span className="settings__label">Microphone</span>
+          <select className="panel__input" value={micId} onChange={chooseMic}>
+            <option value="">System default</option>
+            {mics.map((m) => (
+              <option key={m.deviceId} value={m.deviceId}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <label className="settings__field">
           <span className="settings__label">ElevenLabs API key</span>
           <input

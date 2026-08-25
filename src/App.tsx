@@ -180,7 +180,10 @@ function App() {
         />
       )}
       {form === "settings" && (
-        <Settings onCollapse={() => void changeForm("panel")} />
+        <Settings
+          onCollapse={() => void changeForm("panel")}
+          onMicChange={() => wake.restart()}
+        />
       )}
 
       {form !== "orb" && wakeHint && (
