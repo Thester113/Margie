@@ -655,11 +655,25 @@ export function useWakeWord({
 
   useEffect(() => stop, [stop]);
 
-  // Tear down and re-open the capture pipeline (e.g. after switching mics).
+  // Swap the mic without tearing down whisper-server (keep STT warm) — a full
+  // stop()+start() killed and respawned whisper each time, leaving her briefly
+  // deaf while switching devices.
   const restart = useCallback(() => {
-    stop();
+    awakeRef.current = false;
+    recordingRef.current = false;
+    chunksRef.current = [];
+    prerollRef.current = [];
+    pendingRef.current = "";
+    if (streamingRef.current) void elevenStt.stopStream();
+    nodeRef.current?.disconnect();
+    nodeRef.current = null;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    ctxRef.current?.close();
+    ctxRef.current = null;
+    startedRef.current = false; // let start() re-open (startStt is idempotent)
     window.setTimeout(() => void start(), 250);
-  }, [stop, start]);
+  }, [start]);
 
   return { state, error, start, stop, restart, continueConversation };
 }
