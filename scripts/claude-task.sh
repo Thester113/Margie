@@ -42,6 +42,13 @@ resolve_id() {
   printf '%s' "$id"
 }
 running() { local pid; pid="$(meta "$1" pid)"; [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
+by_tag() { # by_tag <tag> -> task id or empty
+  local m
+  for m in $(ls -t "$TASKS"/*.meta 2>/dev/null); do
+    [ "$(jq -r '.tag // empty' "$m")" = "$1" ] && { basename "$m" .meta; return 0; }
+  done
+  return 1
+}
 age() {
   local s d; s="$(meta "$1" started)"; d=$(( $(date +%s) - s ))
   if [ $d -lt 90 ]; then echo "${d}s"; elif [ $d -lt 5400 ]; then echo "$((d/60))m"; else echo "$((d/3600))h"; fi
@@ -99,7 +106,7 @@ case "$cmd" in
       id="$(basename "$m" .meta)"; found=1
       [ $(( $(date +%s) - $(meta "$id" started) )) -gt 172800 ] && continue
       if running "$id"; then
-        state="RUNNING"; gist="$(meta "$id" task | cut -c1-90)"
+        state="RUNNING"; gist="$(meta "$id" task | tr '\n' ' ' | cut -c1-90)"
       else
         j="$TASKS/$id.json"
         if [ -s "$j" ] && jq -e . "$j" >/dev/null 2>&1; then
@@ -151,6 +158,14 @@ case "$cmd" in
   stop)
     id="$(resolve_id "${1:-latest}")" || exit 1
     if running "$id"; then kill "$(meta "$id" pid)" && echo "Stopped task '$id', sir."; else echo "Task '$id' isn't running, sir."; fi
+    ;;
+  state)
+    x="${1:-}"; [ -z "$x" ] && { echo "usage: claude-task.sh state <tag|id>" >&2; exit 1; }
+    id="$x"; [ -f "$TASKS/$id.meta" ] || id="$(by_tag "$x" || true)"
+    [ -z "$id" ] && { echo "NONE"; exit 0; }
+    if running "$id"; then echo "RUNNING"
+    elif [ -s "$TASKS/$id.json" ] && jq -e 'if .is_error then false else true end' "$TASKS/$id.json" >/dev/null 2>&1; then harvest; echo "DONE"
+    else echo "FAILED"; fi
     ;;
   notify)
     harvest

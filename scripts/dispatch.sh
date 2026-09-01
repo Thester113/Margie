@@ -285,11 +285,9 @@ case "$cmd" in
           if spec_ready "$D"; then
             st "$D" spec-ready
             announce "The spec for \"$(jq -r .title "$D/spec.json")\" is ready, sir — $(jq '.acceptance_criteria|length' "$D/spec.json") criteria, $(jq '.test_cases|length' "$D/spec.json") tests, $(jq -r .security.risk_label "$D/spec.json")."
-          elif ! "$DIR/claude-task.sh" status 2>/dev/null | grep -F "spec:$(basename "$D")" | grep -q RUNNING; then
-            "$DIR/claude-task.sh" status 2>/dev/null | grep -F "spec:$(basename "$D")" | grep -q . && {
-              st "$D" spec-failed
-              announce "The spec run for $(basename "$D") failed, sir."
-            }
+          elif [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" = "FAILED" ]; then
+            st "$D" spec-failed
+            announce "The spec run for $(basename "$D") failed, sir."
           fi ;;
         qa-running)
           if [ -s "$D/qa.json" ] && jq -e .verdict "$D/qa.json" >/dev/null 2>&1; then
@@ -320,11 +318,9 @@ case "$cmd" in
               st "$D" qa-fail
             fi
             announce "QA on $PT: $(jq -r .summary_spoken "$D/qa.json")"
-          elif ! "$DIR/claude-task.sh" status 2>/dev/null | grep -F "qa:$(basename "$D")" | grep -q RUNNING; then
-            "$DIR/claude-task.sh" status 2>/dev/null | grep -F "qa:$(basename "$D")" | grep -q FAILED && {
-              st "$D" qa-failed-to-run
-              announce "The QA run on $(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null) failed to complete, sir."
-            }
+          elif [ "$("$DIR/claude-task.sh" state "qa:$(basename "$D")")" = "FAILED" ]; then
+            st "$D" qa-failed-to-run
+            announce "The QA run on $(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null) failed to complete, sir."
           fi ;;
         implementing|qa-pass)
           # Merge detection: MR for the branch merged -> ticket Done, dispatch closed.
