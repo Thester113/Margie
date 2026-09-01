@@ -161,7 +161,7 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
 function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise<string> {
   return new Promise((resolve) => {
     logBrain(`BASH${extraEnv.MARGIE_DESCRIBE ? " (describe)" : ""}: ${cmd}`);
-    if (!extraEnv.MARGIE_DESCRIBE) currentEmit?.("tool", cmd.slice(0, 120));
+    if (!extraEnv.MARGIE_DESCRIBE && !extraEnv.MARGIE_POLLER) currentEmit?.("tool", cmd.slice(0, 120));
     // Put Margie's scripts dir on PATH so bare names (messages.sh, slack.sh…)
     // resolve even when the model omits the full path.
     const env = {
@@ -709,7 +709,8 @@ async function drain() {
 // ── Hooks for the daemon (server.ts) ─────────────────────────────────────────
 /** Run one helper script exactly as the bash tool would (env, PATH, timeout). */
 export function runScript(cmd: string): Promise<string> {
-  return runBashRaw(cmd);
+  // Pollers must not leak progress events into whatever turn is in flight.
+  return runBashRaw(cmd, { MARGIE_POLLER: "1" });
 }
 /** Record an unsolicited notice in history so "what was that?" works. */
 export function noteToHistory(text: string) {
