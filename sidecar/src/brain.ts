@@ -106,6 +106,7 @@ const OUTWARD: RegExp[] = [
   /\bnotion\.sh\s+(ticket\s+(create|status|comment|append)|testcase\s+(add|status)|page\s+(create|append))\b/,
   /\bdispatch\.sh\s+(file|go|close)\b/,
   /\bagent-messages\.sh\s+(send|reply|ack)\b/,
+  /\bmr\.sh\s+(create|update)\b/,
 ];
 const PENDING_TTL_MS = 3 * 60 * 1000;
 let pending: { cmd: string; at: number } | null = null;
@@ -127,7 +128,7 @@ const BASH_TOOL = {
   function: {
     name: "bash",
     description:
-      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
+      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, mr.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
     parameters: {
       type: "object",
       properties: { command: { type: "string", description: "The shell command to run." } },
@@ -258,6 +259,14 @@ session directly. Run the dispatch pipeline (one command per turn):
 "What did QA find?" → dispatch.sh status <PT> then summarize; full text via
    dispatch.sh open <PT> qa (opens in Warp — never read long reports aloud).
 "Cancel it" → dispatch.sh close <PT>  (held).
+"Open the MR / raise the merge request" (after QA passed, or whenever Tom says) →
+   ${SCRIPTS}/mr.sh create <PT>   (held — read back the title, risk label and
+   target). It pushes the branch, fills the repo's MR template (QA's draft when
+   there is one), opens the ${NOUN} and links the ticket. If it says it's still
+   drafting the description, tell Tom "about a minute" and run it again when he
+   asks. "Show me the MR text first" → mr.sh draft <PT>. For a branch that isn't
+   a dispatch: mr.sh create --branch <b> --repo <repo>. "Make it a draft MR" → --draft.
+   (Raw ${FORGE_CLI} MR/PR creation stays refused — always go through mr.sh.)
 A tiny fix Tom explicitly calls quick ("just patch", "one-liner") may skip the
 pipeline and use a plain kickoff — but when in doubt, spec first.
 "What's PT-296 about?" → notion.sh ticket read PT-296, summarize in a sentence.

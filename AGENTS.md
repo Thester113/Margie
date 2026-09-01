@@ -52,7 +52,7 @@ npm run tauri dev              # run the app
   sessions her scripts spawn. Extend the guards; don't loosen them. A second
   deterministic gate (`OUTWARD` in the sidecar) HOLDS anything that sends on
   Tom's behalf (`slack.sh send`, `gmail.sh send`, `messages.sh send`,
-  `jira.sh create/comment`, `notion.sh create/append`) until his short "yes" on the next turn — add new
+  `jira.sh create/comment`, `notion.sh create/append`, `mr.sh create/update`) until his short "yes" on the next turn — add new
   outward helpers to that list rather than trusting the prompt.
 - Nothing may hardcode a user path. The sidecar derives `MARGIE_HOME` from
   its own location and puts `$MARGIE_HOME/scripts` on PATH for every command;

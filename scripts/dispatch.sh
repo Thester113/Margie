@@ -365,6 +365,8 @@ case "$cmd" in
     echo "Dispatch closed, sir."
     ;;
 
+  __resolve)
+    resolve_d "${1:-latest}" ;;
   describe)
     need_d "${1:-latest}"
     MARGIE_DESCRIBE=1 "$0" "${2:-go}" "$(basename "$D")"

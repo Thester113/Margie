@@ -68,6 +68,11 @@
   explicit choice). Ticket/testcase/page writes go through `notion.sh`, whose
   every write honors `MARGIE_DESCRIBE=1` — keep it that way, the gate's
   read-back depends on it.
+- **MRs are authored through `scripts/mr.sh`** (`draft|create|update`): it
+  pushes the branch, fills the repo's own MR template (QA's draft or a
+  headless one), ends with the single `/label ~"… Risk"` line, opens the MR
+  and links the ticket. `create|update` are OUTWARD-held; raw `glab mr
+  create` stays DENIED so the brain can never bypass the read-back.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on a ≤6-word affirmative within 3 minutes; anything else

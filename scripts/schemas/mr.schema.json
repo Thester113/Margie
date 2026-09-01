@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["title", "description_markdown", "risk_label"],
+  "properties": {
+    "title": {"type": "string", "maxLength": 90, "description": "Conventional-commit style MR title, with the ticket id in parentheses when known"},
+    "description_markdown": {"type": "string", "description": "The FULL merge request description: the repo template with every section filled, ending with exactly one /label ~\"Low Risk\"|\"Medium Risk\"|\"High Risk\" line"},
+    "risk_label": {"type": "string", "enum": ["Low Risk", "Medium Risk", "High Risk"]}
+  }
+}
