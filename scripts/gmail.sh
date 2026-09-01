@@ -2,7 +2,7 @@
 # gmail.sh — Gmail via IMAP/SMTP directly (no Claude, no connector).
 #
 # Reads credentials from ~/.margie/config.json:
-#   gmail_address        e.g. tom@xerpa.ai
+#   gmail_address        e.g. you@example.com
 #   gmail_app_password   a 16-char app password from
 #                        myaccount.google.com/apppasswords (needs 2FA on).
 #   gmail_imap_host      (optional, default imap.gmail.com)

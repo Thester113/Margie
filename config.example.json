@@ -1,0 +1,39 @@
+{
+  "_comment": "Copy to ~/.margie/config.json (chmod 600). Omit any key you don't use — the scripts treat a missing key as 'not configured', but an empty string is NOT treated as missing by jq.",
+
+  "engine": "claude",
+  "_engine": "CLI the dispatched sessions run (kickoff-claude.sh / review-pr.sh / simulate.sh): 'claude' (default, Claude Code) or 'grok'. Overridden by MARGIE_ENGINE. Omit unless you want grok.",
+
+  "forge": "gitlab",
+  "gitlab_host": "gitlab.com",
+  "org": "your-group-or-org",
+  "repos_dir": "~/repos",
+  "default_repo": "backend",
+  "review_skill": "",
+  "_forge": "forge: gitlab | github — which CLI (glab / gh), vocabulary (MR / PR) and write-guards Margie uses. Log in once with `glab auth login` or `gh auth login`. gitlab_host: only for self-hosted GitLab. org: GitLab group (subgroups included) or GitHub org bare repo names resolve against — omit to search the projects you're a member of.",
+  "_repos": "repos_dir: where your clones live (bare repo names resolve here; new clones land here). default_repo: assumed when Tom says 'review MR 12' without naming one — omit to make her ask. review_skill: a repo-local skill name review-pr.sh should invoke — omit for a generic thorough-review prompt.",
+
+  "xai_api_key": "xai-...",
+  "xai_model": "grok-4.20-0309-non-reasoning",
+  "_xai": "Margie's conversational brain (sidecar/src/index.ts) runs on the xAI chat API. Required for her to answer at all.",
+
+  "slack_via": "claude",
+  "slack_user_token": "xoxp-...",
+  "slack_token": "xoxb-...",
+  "_slack": "slack.sh read/send default to Claude Code's Slack connector (the claude.ai Slack app — run `claude mcp list` to confirm it's connected) when no token is set; slack_via: 'claude' forces it even with tokens. Tokens: user token = direct Web API as Tom; bot token = posts as @margie and is REQUIRED for the slack-watch.sh @mention watcher (that one doesn't use the connector).",
+
+  "gmail_address": "you@example.com",
+  "gmail_app_password": "16-char app password (myaccount.google.com/apppasswords)",
+
+  "notion_token": "ntn_...",
+  "notion_parent_page": "https://www.notion.so/...",
+  "_notion": "Internal integration token (notion.so/my-integrations; name it 'Margie'). It only sees pages connected to it: page → ··· → Connections → Margie. notion_parent_page: where `notion.sh create` puts new pages when no --parent is given.",
+
+  "atlassian_email": "you@example.com",
+  "atlassian_api_token": "...",
+  "jira_base_url": "https://yourorg.atlassian.net",
+  "jira_default_project": "KEY",
+
+  "contacts": { "wife": "+15551234567", "mom": "jane@icloud.com" },
+  "_contacts": "Spoken alias → iMessage handle (phone/email is most reliable) for messages.sh."
+}

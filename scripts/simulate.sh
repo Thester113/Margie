@@ -14,12 +14,12 @@ ENGINE=""
 DESC=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --engine | -e) ENGINE="${2:-grok}"; shift 2 ;;
+    --engine | -e) ENGINE="${2:-claude}"; shift 2 ;;
     *) DESC="${DESC:+$DESC }$1"; shift ;;
   esac
 done
 if [ -z "$DESC" ]; then
-  echo "usage: simulate.sh \"<hypothesis or thing to simulate>\" [--engine grok|claude]" >&2
+  echo "usage: simulate.sh \"<hypothesis or thing to simulate>\" [--engine claude|grok]" >&2
   exit 1
 fi
 

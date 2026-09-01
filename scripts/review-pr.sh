@@ -1,63 +1,49 @@
 #!/bin/bash
-# review-pr.sh — review a GitHub PR in a watchable Warp session.
+# review-pr.sh — review a GitHub PR or GitLab MR in a watchable Warp session.
+# The forge comes from `forge` in ~/.margie/config.json (gitlab | github).
 #
-# Runs the reviewer (grok by default, or claude) IN the repo with a
-# skill-triggering prompt — exactly like reviewing manually — so the repo's
-# xerpa-pr-review skill is discovered and used. No pre-baked diff (that was
-# what bypassed the skill before).
+# Runs the reviewer (Claude Code by default, or grok) IN the repo — exactly like
+# reviewing manually — so any repo-local review skill is discovered. Set
+# review_skill in ~/.margie/config.json to name a skill the prompt should
+# trigger; otherwise a generic thorough-review prompt is used. No pre-baked
+# diff (that bypasses repo skills).
 #
-# Usage: review-pr.sh <pr-number> [repo-dir] [grok|claude]
+# Usage: review-pr.sh <pr-or-mr-number> [repo-dir] [claude|grok]
 set -euo pipefail
+
+CFG="$HOME/.margie/config.json"
+cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+FORGE="${MARGIE_FORGE:-$(cfg forge)}"; FORGE="$(printf '%s' "${FORGE:-github}" | tr 'A-Z' 'a-z')"
+GL_HOST="$(cfg gitlab_host)"; [ -n "$GL_HOST" ] && export GITLAB_HOST="${GITLAB_HOST:-$GL_HOST}"
+if [ "$FORGE" = "gitlab" ]; then NOUN="MR"; REF="!"; LONG="merge request"; SITE="GitLab"; else NOUN="PR"; REF="#"; LONG="pull request"; SITE="GitHub"; fi
 
 PR="${1:-}"
 DIR="${2:-$PWD}"
-REVIEWER="${3:-grok}"
+REVIEWER="${3:-${MARGIE_ENGINE:-$(jq -r '.engine // empty' "$HOME/.margie/config.json" 2>/dev/null)}}"
+REVIEWER="${REVIEWER:-claude}"
 if [ -z "$PR" ]; then
-  echo "usage: review-pr.sh <pr-number> [repo-dir] [grok|claude]" >&2
+  echo "usage: review-pr.sh <pr-or-mr-number> [repo-dir] [claude|grok]" >&2
   exit 1
 fi
 
-# Resolve the repo. $DIR may be a full path OR a bare name ("backend",
-# "xerpa_databricks"). Order: use it if it's a git repo; else match a locally
-# cloned repo by name; else find it in the xerpaai org and clone on demand.
-# This lets her review PRs in ANY org repo, not just cloned ones.
-DIR_ABS=""
-if git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  DIR_ABS="$(cd "$DIR" && pwd)"
-else
-  token="$(basename "$DIR" | tr 'A-Z' 'a-z')"
-  for d in "$HOME/Xerpa Repos"/*/ "$HOME"/*/; do
-    git -C "$d" rev-parse --is-inside-work-tree >/dev/null 2>&1 || continue
-    bn="$(basename "$d" | tr 'A-Z' 'a-z')"
-    case "$bn" in *"$token"*) DIR_ABS="${d%/}"; break ;; esac
-  done
-  if [ -z "$DIR_ABS" ]; then
-    # `|| true` so a no-match grep under `set -e`/pipefail doesn't kill us
-    # silently — we want the clear "couldn't find" message below.
-    orgrepo="$(gh repo list xerpaai --limit 200 --json name --jq '.[].name' 2>/dev/null \
-      | grep -iF "$token" | head -1 || true)"
-    if [ -n "$orgrepo" ]; then
-      DIR_ABS="$HOME/Xerpa Repos/$orgrepo"
-      if ! git -C "$DIR_ABS" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        echo "Cloning xerpaai/$orgrepo (first time), sir…"
-        gh repo clone "xerpaai/$orgrepo" "$DIR_ABS" >/dev/null 2>&1 || {
-          echo "Couldn't clone xerpaai/$orgrepo, sir."; exit 1; }
-      fi
-    fi
-  fi
-  if [ -z "$DIR_ABS" ]; then
-    echo "Couldn't find a repo matching '$token' in the xerpaai org, sir."
-    exit 1
-  fi
-fi
+# Resolve the repo. $DIR may be a full path OR a bare name ("backend"): a local
+# clone under repos_dir/$HOME, or a GitHub repo cloned on first use (see
+# resolve-repo.sh; configure repos_dir / github_org in ~/.margie/config.json).
+DIR_ABS="$("$(dirname "$0")/resolve-repo.sh" "$DIR")" || exit 1
 
-# Validate the PR exists before launching anything (fail fast on a bad number).
+# Validate the PR/MR exists before launching anything (fail fast on a bad number).
 set +e
-PRCHECK="$(cd "$DIR_ABS" && gh pr view "$PR" --json number 2>&1)"
+if [ "$FORGE" = "gitlab" ]; then
+  PRCHECK="$(cd "$DIR_ABS" && glab mr view "$PR" 2>&1)"
+else
+  PRCHECK="$(cd "$DIR_ABS" && gh pr view "$PR" --json number 2>&1)"
+fi
 RC=$?
 set -e
 if [ "$RC" -ne 0 ]; then
-  echo "Couldn't find PR #$PR in $(basename "$DIR_ABS"), sir: ${PRCHECK:0:200}"
+  # One line, no ANSI/box-drawing noise: the brain speaks the LAST line of our output.
+  PRCHECK="$(printf '%s' "$PRCHECK" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tr '\n' ' ' | tr -s ' ' | sed 's/^ *//;s/ *$//')"
+  echo "Couldn't find $NOUN $REF$PR in $(basename "$DIR_ABS"), sir: ${PRCHECK:0:160}"
   exit 1
 fi
 
@@ -70,11 +56,21 @@ STAMP="$(date +%s)"
 SESSION="margie-review-$STAMP"
 TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
 
-PROMPT="Use the xerpa-pr-review skill to review PR #$PR, then submit the GitHub review per the skill."
-if [ "$REVIEWER" = "claude" ]; then
-  REV_CMD="claude --dangerously-skip-permissions \"$PROMPT\""
+REVIEW_SKILL="$(cfg review_skill)"
+if [ -n "$REVIEW_SKILL" ]; then
+  PROMPT="Use the $REVIEW_SKILL skill to review $LONG $REF$PR, then submit the $SITE review per the skill."
+elif [ "$FORGE" = "gitlab" ]; then
+  PROMPT="Review merge request !$PR in this repo: check out its branch (glab mr checkout $PR), read the full diff (glab mr diff $PR) and the surrounding code, run the relevant tests if practical, then submit a GitLab review — leave specific, actionable comments with glab mr note, and glab mr approve only if it's genuinely ready."
 else
+  PROMPT="Review PR #$PR in this repo: check out the branch, read the full diff and the surrounding code, run the relevant tests if practical, then submit a GitHub review (approve or request changes) with specific, actionable comments."
+fi
+# Interactive, watchable session: Tom supervises in Warp, so the reviewer runs
+# unprompted (skip-permissions) and can post the review itself.
+if [ "$REVIEWER" = "grok" ]; then
   REV_CMD="grok --always-approve \"$PROMPT\""
+else
+  REVIEWER="claude"
+  REV_CMD="claude --dangerously-skip-permissions \"$PROMPT\""
 fi
 
 INNER="$TASK_DIR/inner-$STAMP.sh"
@@ -122,4 +118,4 @@ fi
 open "warp://launch/$NAME"
 sleep 1.5
 open -a Warp
-echo "$REVIEWER is reviewing PR #$PR in $(basename "$DIR_ABS") — up in Warp, sir."
+echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — up in Warp, sir."

@@ -3,7 +3,7 @@
 # Use for dev servers, test runs, log tails — anything Tom wants to watch.
 #
 # Usage: warp-run.sh <dir> <command...>
-#   e.g. warp-run.sh "/Users/tomhester/Xerpa Repos/backend" npm run dev
+#   e.g. warp-run.sh ~/repos/backend npm run dev
 #
 # Same reliable mechanism as kickoff-claude.sh: a Warp Launch Configuration +
 # the warp://launch URI, then foreground Warp. The command is routed through a

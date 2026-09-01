@@ -13,12 +13,13 @@ DIR="${1:-$HOME}"
 shift || true
 
 # Flags: --continue (resume), --worktree [branch] (isolated git worktree),
-# --engine grok|claude (which CLI to run; grok is the default so sessions stay
-# off Tom's Claude subscription).
+# --engine claude|grok (which CLI to run). Claude Code is the default; `engine`
+# in ~/.margie/config.json or MARGIE_ENGINE overrides.
 CLAUDE_FLAG=""
 USE_WT=0
 WT_BRANCH=""
-ENGINE="${MARGIE_ENGINE:-grok}"
+ENGINE="${MARGIE_ENGINE:-$(jq -r '.engine // empty' "$HOME/.margie/config.json" 2>/dev/null)}"
+ENGINE="${ENGINE:-claude}"
 
 # Pre-scan ALL args for --engine anywhere. The brain often appends it AFTER the
 # prompt ("... 'fix the bug' --engine claude"); without this it gets swallowed
@@ -27,7 +28,7 @@ ENGINE="${MARGIE_ENGINE:-grok}"
 PRE=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --engine | -e) ENGINE="${2:-grok}"; shift 2 ;;
+    --engine | -e) ENGINE="${2:-claude}"; shift 2 ;;
     --engine=*) ENGINE="${1#*=}"; shift ;;
     *) PRE+=("$1"); shift ;;
   esac
@@ -83,10 +84,10 @@ printf '%s' "$SESSION" > "$HOME/.margie/last-session"
 # Inner script: cd + run claude (or a test command). Written as plain bash so
 # quoting is clean; the prompt is read from a file to avoid all escaping.
 INNER="$TASK_DIR/inner-$STAMP.sh"
-# Pick the CLI binary. grok is the default (keeps sessions off the Claude sub).
+# Pick the CLI binary. Claude Code unless grok was explicitly requested.
 case "$(printf '%s' "$ENGINE" | tr 'A-Z' 'a-z')" in
-  claude*) ENGINE_BIN="claude" ;;
-  *) ENGINE_BIN="grok" ;;
+  grok*) ENGINE_BIN="grok" ;;
+  *) ENGINE_BIN="claude" ;;
 esac
 if [ -n "${MARGIE_TEST_CMD:-}" ]; then
   CLAUDE_LINE="$MARGIE_TEST_CMD"

@@ -70,20 +70,32 @@ A separate wake-word engine (Porcupine etc.) was intentionally avoided —
 continuous whisper transcription + a regex trigger needs no extra model or
 API key.
 
-## Claude Code control (target)
+## Claude Code harness (implemented)
 
-Two tiers:
+Margie is a dispatcher: the brain never edits code or reviews anything itself —
+it picks the one right helper, runs it, and reports one sentence. Three tiers:
 
-- **Interactive Warp session (primary)** — Margie's brain runs
-  `scripts/kickoff-claude.sh <dir> <prompt>`, which writes a Warp Launch
-  Configuration and opens it via the `warp://launch/<name>` URI. This starts
-  an interactive `claude "<prompt>"` session in a new Warp tab that Tom can
-  watch and take over. Deterministic — no AppleScript keystroke automation,
-  no Accessibility permission. The prompt is passed through a file to avoid
-  YAML/shell quoting issues.
-- **Headless task** — for background work, the brain runs
-  `claude -p "<task>" &` and logs to `~/.margie/tasks/`, then reports status
-  by reading those logs and `~/.claude/projects/` transcripts.
+- **Interactive Warp session (primary)** — `scripts/kickoff-claude.sh <dir>
+  <prompt>` writes a Warp Launch Configuration and opens it via the
+  `warp://launch/<name>` URI, starting `claude "<prompt>"` inside a tmux session
+  (`margie-<stamp>`, or `margie-<branch>` for `--worktree`) in a new Warp tab
+  Tom can watch and take over. `session.sh read|send|list` captures the pane
+  or injects follow-ups into that same session, so Margie can relay what a
+  session is asking and act on Tom's spoken answer. Deterministic — no
+  AppleScript keystrokes, no Accessibility permission; prompts go through
+  files to dodge quoting.
+- **Headless task** — `scripts/claude-task.sh start <dir> "<task>"` runs
+  `claude -p … --output-format json` detached, recording `<id>.{meta,log,json}`
+  under `~/.margie/tasks/`. `status` shows RUNNING/DONE/FAILED with a gist,
+  `result` prints the outcome (plus turns/cost/session id), `followup` resumes
+  the same Claude session with a new prompt, `stop` kills it.
+- **Review session** — `scripts/review-pr.sh <n> <repo>` validates the MR/PR
+  (`glab mr view` / `gh pr view`), then opens a watchable Claude Code session
+  in the repo with a review prompt (or a repo-local `review_skill`).
+
+The brain runs with an in-sidecar deny-list (no `git push/commit`, no forge
+writes, no `rm`/`sudo`) so anything outward happens only in those supervised
+sessions. `engine` in `~/.margie/config.json` can swap the session CLI.
 
 ## Security notes
 

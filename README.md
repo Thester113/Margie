@@ -13,8 +13,13 @@ that listens, speaks, sees, and directs Claude Code.
   metering and macOS `speechSynthesis` as the TTS stand-in.
 - **Brain** — the Claude Agent SDK runs in a Node sidecar (`sidecar/`); the
   Tauri shell bridges requests to it.
-- **Claude Code control** — planned: Margie spawns and drives real `claude` CLI
-  sessions in PTYs so you can issue coding tasks by voice.
+- **Claude Code harness & dispatcher** — Margie's main job. By voice she starts
+  interactive Claude Code sessions in Warp tabs (`kickoff-claude.sh`), reads and
+  steers them (`session.sh read|send`), runs quiet headless tasks and tracks
+  them (`claude-task.sh start|status|result|followup`), dispatches MR/PR
+  reviews to a watchable session (`review-pr.sh`), and runs parallel work in
+  git worktrees. She never does the engineering herself — she delegates,
+  supervises and reports.
 - **Vision** — camera access so Margie can see you; frames will be snapshotted
   to the brain for visual context.
 
@@ -52,6 +57,24 @@ cd sidecar
 npm install
 npm run build
 ```
+
+### Configure her
+
+Runtime config and secrets live in `~/.margie/config.json` (never in the repo).
+Copy `config.example.json` there, `chmod 600` it, and fill in what you use — at
+minimum `xai_api_key` (her conversational brain) and `forge` (`gitlab` or
+`github` — she reviews MRs via
+`glab` or PRs via `gh`; log in once with `glab auth login` / `gh auth login`).
+Helper scripts need `tmux` and `imagesnap` for the camera:
+`brew install tmux glab gh imagesnap`. Slack reads/sends go through Claude
+Code's Slack connector (connect the claude.ai Slack app once) unless you add a
+Slack token. Notion uses an internal integration token (`notion_token`) — connect
+the pages she should see to it. Set `org` to your GitLab group / GitHub
+org so bare repo names ("the backend") resolve and `forge.sh` can list projects
+and MRs group-wide.
+
+The checkout can live anywhere: the sidecar derives `MARGIE_HOME` from its own
+location (override with `MARGIE_HOME=…`).
 
 On first camera/mic use, macOS will prompt for permission (usage strings are in
 `src-tauri/Info.plist`).

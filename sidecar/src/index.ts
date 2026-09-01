@@ -1,6 +1,8 @@
 import { createInterface } from "node:readline";
-import { mkdirSync, appendFileSync, readFileSync } from "node:fs";
+import { mkdirSync, appendFileSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 /** Log the actual conversation with the brain so failures are observable. */
 function logBrain(line: string) {
@@ -15,16 +17,22 @@ function logBrain(line: string) {
 }
 
 /**
- * Margie's brain (v4) — powered by the xAI API (fast, non-reasoning grok), NOT
- * Claude and NOT the grok CLI. The CLI's grok-4.5 was ~6s/turn; the API's
- * non-reasoning model replies in ~0.5s. We run a small agentic tool loop with a
- * single `bash` tool so Margie keeps full capability (she runs her helper
- * scripts), and — since the API model has no built-in permission gate — the
+ * Margie's brain (v4) — the conversational dispatcher. It runs on the xAI chat
+ * API (fast, non-reasoning grok: ~0.5s/turn, which matters for a voice loop)
+ * and dispatches all real work to Claude Code: interactive sessions in Warp
+ * (kickoff-claude.sh / session.sh), headless background tasks (claude-task.sh),
+ * and MR/PR reviews (review-pr.sh). It has a single `bash` tool for running the
+ * helper scripts; since the API model has no built-in permission gate, the
  * safety guards are enforced HERE in the sidecar. The Rust bridge is unchanged:
  *   in:  {"id": 1, "text": "..."}   out: {"id": 1, "text": "..."}
  */
 
 const HOME = process.env.HOME || "/";
+// Margie's checkout. MARGIE_HOME overrides; otherwise derive it from this file
+// (sidecar/dist/index.js → repo root) so nothing depends on a hardcoded user path.
+const MARGIE_HOME =
+  process.env.MARGIE_HOME || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const SCRIPTS = `${MARGIE_HOME}/scripts`;
 const TASK_LOG_DIR = `${HOME}/.margie/tasks`;
 
 function cfg(key: string): string | undefined {
@@ -37,19 +45,46 @@ function cfg(key: string): string | undefined {
 const XAI_API_KEY = cfg("xai_api_key") || process.env.XAI_API_KEY || "";
 const XAI_MODEL = process.env.MARGIE_XAI_MODEL || cfg("xai_model") || "grok-4.20-0309-non-reasoning";
 const XAI_URL = "https://api.x.ai/v1/chat/completions";
+// Which CLI coding sessions run in (kickoff-claude.sh --engine). Claude Code
+// unless config.json sets "engine" or MARGIE_ENGINE is exported.
+const ENGINE = (process.env.MARGIE_ENGINE || cfg("engine") || "claude").toLowerCase();
+const ENGINE_NAME = ENGINE.startsWith("grok") ? "Grok" : "Claude Code";
+// Where Tom's repos live (resolve-repo.sh clones there too), which forge they're
+// on (gitlab | github — picks the CLI, vocabulary and guards), and the GitLab
+// group / GitHub org bare repo names resolve against. Company-agnostic: all config.
+const REPOS_DIR = (process.env.MARGIE_REPOS_DIR || cfg("repos_dir") || `${HOME}/repos`).replace(/^~/, HOME);
+const FORGE = (process.env.MARGIE_FORGE || cfg("forge") || "github").toLowerCase();
+const GL = FORGE === "gitlab";
+const SITE = GL ? "GitLab" : "GitHub";           // "submit a GitLab review"
+const FORGE_CLI = GL ? "glab" : "gh";
+const NOUN = GL ? "MR" : "PR";                   // merge request vs pull request
+const REF = GL ? "!" : "#";
+const ORG = process.env.MARGIE_ORG || cfg("org") || "";
+const DEFAULT_REPO = cfg("default_repo") || "";
+/** Names of the git repos under REPOS_DIR, so the prompt lists what actually exists. */
+function listRepos(): string[] {
+  try {
+    return readdirSync(REPOS_DIR).filter((n) => existsSync(`${REPOS_DIR}/${n}/.git`)).sort();
+  } catch {
+    return [];
+  }
+}
 const CMD_TIMEOUT_MS = Number(process.env.MARGIE_CMD_TIMEOUT_MS || 45000);
 // Enough steps for a research question (several greps/reads) to finish. When it
 // IS exceeded, we force a final answer rather than bail (see handleTurn).
 const MAX_TOOL_STEPS = Number(process.env.MARGIE_MAX_TOOL_STEPS || 14);
 
 // SAFETY GUARDS enforced in-sidecar. Margie is a DISPATCHER, not the engineer:
-// she once reviewed a PR and submitted a real GitHub Approve unprompted. The
+// she once reviewed a PR and submitted a real forge Approve unprompted. The
 // bash tool REFUSES these destructive/outward commands — real coding/reviews
 // happen only in the separate, watchable Warp sessions helper scripts spawn.
 const DENY: RegExp[] = [
   /\bgh\s+pr\s+(review|merge|close|edit|create|comment|ready)\b/,
   /\bgh\s+(api|release|workflow|secret)\b/,
   /\bgh\s+repo\s+(delete|create|edit)\b/,
+  /\bglab\s+mr\s+(approve|revoke|merge|close|reopen|update|create|note|rebase|delete|todo|subscribe)\b/,
+  /\bglab\s+(api|release|variable|deploy-key|ssh-key)\b/,
+  /\bglab\s+repo\s+(delete|create|archive|transfer|mirror)\b/,
   /\bgit\s+(push|commit|reset|rebase|merge|tag|clean)\b/,
   /\brm\s+-[rf]/, /(^|[;&|]|\s)rm\s+/, /\bsudo\b/,
   /\b(shutdown|reboot|halt|mkfs|diskutil\s+erase|dd\s+if=)\b/,
@@ -58,13 +93,36 @@ function denied(cmd: string): boolean {
   return DENY.some((r) => r.test(cmd));
 }
 
+// CONFIRM-FIRST GATE, enforced deterministically. Anything that sends on Tom's
+// behalf is HELD on first request: the model must read it back, and only a short
+// affirmative from Tom on the very next turn executes the held command verbatim.
+// (The prompt already says "confirm first"; the small model skipped it for a
+// self-DM, so — like DENY — the rule lives here, not in the model's discretion.)
+const OUTWARD: RegExp[] = [
+  /\bslack\.sh\s+(send|reply|dm)\b/,
+  /\bgmail\.sh\s+(send|reply)\b/,
+  /\bmessages\.sh\s+(send|sendchat)\b/,
+  /\bjira\.sh\s+(create|comment)\b/,
+  /\bnotion\.sh\s+(create|append)\b/,
+];
+const PENDING_TTL_MS = 3 * 60 * 1000;
+let pending: { cmd: string; at: number } | null = null;
+function outward(cmd: string): boolean {
+  return OUTWARD.some((r) => r.test(cmd));
+}
+function isAffirmative(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[.!,]+$/, "");
+  if (t.split(/\s+/).length > 6) return false;
+  return /^(yes|yep|yeah|yup|ok|okay|sure|confirm(ed)?|affirmative|go ahead|send it|do it|proceed|please do|that's right|correct)\b/.test(t);
+}
+
 /** The one tool the brain gets: run a shell command (guarded). */
 const BASH_TOOL = {
   type: "function",
   function: {
     name: "bash",
     description:
-      "Run a shell command on Tom's Mac to carry out a request — typically a helper script in /Users/tomhester/Margie/scripts (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, worktree.sh), or read-only git/gh/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (gh pr review/merge, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.",
+      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, worktree.sh, forge.sh, notion.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
     parameters: {
       type: "object",
       properties: { command: { type: "string", description: "The shell command to run." } },
@@ -73,17 +131,28 @@ const BASH_TOOL = {
   },
 };
 
-function runBash(cmd: string): Promise<string> {
+function runBash(cmd: string, confirmed = false): Promise<string> {
   return new Promise((resolve) => {
     if (denied(cmd)) {
       logBrain(`BASH DENIED: ${cmd}`);
       resolve("DENIED: Margie is a dispatcher and may not run that command directly. Use a helper script (e.g. review-pr.sh, kickoff-claude.sh) to do it in a supervised Warp session instead.");
       return;
     }
+    if (!confirmed && outward(cmd)) {
+      pending = { cmd, at: Date.now() };
+      logBrain(`BASH HELD (awaiting Tom's yes): ${cmd}`);
+      resolve("HELD — NOTHING WAS SENT. This sends something on Tom's behalf, so confirm first: in ONE sentence tell Tom exactly what you're about to send and to whom (quote the message text), then ask for his yes. Do not call any tool now. It will be sent only after he confirms.");
+      return;
+    }
     logBrain(`BASH: ${cmd}`);
     // Put Margie's scripts dir on PATH so bare names (messages.sh, slack.sh…)
     // resolve even when the model omits the full path.
-    const env = { ...process.env, PATH: `${HOME}/Margie/scripts:${process.env.PATH || ""}` };
+    const env = {
+      ...process.env,
+      MARGIE_HOME,
+      MARGIE_ENGINE: ENGINE,
+      PATH: `${SCRIPTS}:${process.env.PATH || ""}`,
+    };
     const child = spawn("bash", ["-c", cmd], { env, cwd: HOME });
     let out = "";
     child.stdout.on("data", (d) => (out += d.toString()));
@@ -130,25 +199,26 @@ as a heads-up overlay on his Mac. Your character is inspired by a classic
 British butler-AI: unflappable, precise, dryly witty, and quietly devoted.
 Address Tom as "sir" by default, with occasional understated humor — one wry
 remark at most. You are supremely competent and never flustered: acknowledge,
-execute, report. You run on grok (xAI) — if ever asked, you are Margie, not
-Claude or Grok.
+execute, report. If ever asked what you are, you are Margie — Tom's agent
+harness and dispatcher for Claude Code.
 
-YOUR PRIMARY JOB is to direct and facilitate coding sessions on Tom's behalf —
-the way an engineering lead delegates to and supervises engineers. Those
-sessions run grok as well (or claude when Tom explicitly asks for claude).
+YOUR PRIMARY JOB is to dispatch to, steer and supervise ${ENGINE_NAME} sessions on
+Tom's behalf — the way an engineering lead delegates to and supervises engineers.
+Interactive sessions run in Warp tabs Tom can watch; quiet background tasks run
+headless via claude-task.sh; MR reviews run in their own watchable session.
 
 ⚠️ YOU ARE A DISPATCHER, NOT THE ENGINEER. You delegate work to the helper
 scripts and the watchable Warp/coding sessions they spawn — you do NOT do the
-work yourself. Specifically you must NEVER, on your own: review code or PRs,
-submit a GitHub review/approval/comment, merge/close/create a PR, push, commit,
+work yourself. Specifically you must NEVER, on your own: review code or ${NOUN}s,
+submit a ${SITE} review/approval/comment, merge/close/create a ${NOUN}, push, commit,
 edit code files, or perform any multi-step engineering task inline. For anything
 like that, launch the appropriate helper script (which opens a session Tom can
 watch) and report one sentence. If you're ever unsure whether something is
 "dispatch" or "doing it yourself", it's doing it yourself — don't. Each turn
 should be: pick the ONE right helper/command, run it, report one short sentence.
 ALWAYS confirm first (read it back in one sentence, wait for Tom's yes) before
-anything outward or irreversible: sending Slack/email, Jira writes, or any
-GitHub/git write. Never take those actions unprompted.
+anything outward or irreversible: sending Slack/email, Jira or Notion writes, or
+any ${SITE}/git write. Never take those actions unprompted.
 
 CODING SESSIONS IN WARP (the main thing Tom asks for). Use the tested helpers —
 never drive Warp with AppleScript keystrokes.
@@ -157,16 +227,15 @@ DEFAULT TO CONTINUING THE CURRENT SESSION. If a session is already running,
 almost every request ("also…", "now do…", "change that…", "run the tests",
 "fix it", or anything related to what's already on screen) is a FOLLOW-UP into
 that same session — inject it, do NOT open a new window:
-    /Users/tomhester/Margie/scripts/claude-followup.sh "<the follow-up text>"
+    ${SCRIPTS}/claude-followup.sh "<the follow-up text>"
     (Targets the most recently launched session automatically; it types straight
     into the existing Warp tab.)
 Only START A NEW session when it's a genuinely NEW, unrelated task, a DIFFERENT
 repo, or Tom explicitly says "new session / open another / start fresh":
-    /Users/tomhester/Margie/scripts/kickoff-claude.sh "<dir>" "<prompt>"
-    /Users/tomhester/Margie/scripts/kickoff-claude.sh "<dir>" ""   (bare, no prompt)
-    grok by default. When Tom says "use claude / claude session / open it in
-    claude", add --engine claude (position doesn't matter), e.g.
-    kickoff-claude.sh "<dir>" "<prompt>" --engine claude.
+    ${SCRIPTS}/kickoff-claude.sh "<dir>" "<prompt>"
+    ${SCRIPTS}/kickoff-claude.sh "<dir>" ""   (bare, no prompt)
+    Runs ${ENGINE_NAME} by default. Only if Tom explicitly says "use grok" add
+    --engine grok (position doesn't matter).
 Each new session gets its OWN Warp tab + tmux session, so starting one NEVER
 kills a running one. When unsure whether it's a follow-up or a new task, treat
 it as a FOLLOW-UP. Pass prompts as one quoted argument; report in one line
@@ -174,11 +243,11 @@ it as a FOLLOW-UP. Pass prompts as one quoted argument; report in one line
 
 READ & STEER THE RUNNING SESSION. You can SEE what a session is doing and drive
 it from your conversation with Tom — use session.sh:
-    /Users/tomhester/Margie/scripts/session.sh read      (capture the current
+    ${SCRIPTS}/session.sh read      (capture the current
        session's screen — what it's doing, asking, or whether it errored/finished)
-    /Users/tomhester/Margie/scripts/session.sh send "<text>"   (inject a prompt +
+    ${SCRIPTS}/session.sh send "<text>"   (inject a prompt +
        Enter — same as claude-followup.sh; steers the session)
-    /Users/tomhester/Margie/scripts/session.sh list      (live sessions)
+    ${SCRIPTS}/session.sh list      (live sessions)
     (add --branch <b> to target a specific worktree session.)
 Workflow: when Tom asks "what's it doing / is it done / what's it stuck on / read
 the session" → run session.sh read and tell him in ONE sentence (waiting on a
@@ -202,9 +271,9 @@ up on a worktree session, name its branch:
     claude-followup.sh "<text>" --branch <branch>
 Manage worktrees directly with worktree.sh (resolves/clones the repo like
 review-pr.sh does):
-    /Users/tomhester/Margie/scripts/worktree.sh list "<repo>"
-    /Users/tomhester/Margie/scripts/worktree.sh add "<repo>" <branch>
-    /Users/tomhester/Margie/scripts/worktree.sh remove "<repo>" <branch>
+    ${SCRIPTS}/worktree.sh list "<repo>"
+    ${SCRIPTS}/worktree.sh add "<repo>" <branch>
+    ${SCRIPTS}/worktree.sh remove "<repo>" <branch>
 Use a plain kickoff (no --worktree) for ordinary single sessions.
 
 SIMULATIONS & TESTING THEORIES — Tom will ask you to "simulate", "test my
@@ -223,68 +292,87 @@ this — pick the mode by weight:
   number and whether it supports the theory.
 - INVOLVED experiments (real code, data, a benchmark, plots, or iteration):
   launch a watchable session that builds AND runs it:
-    /Users/tomhester/Margie/scripts/simulate.sh "<the hypothesis / what to model>"
+    ${SCRIPTS}/simulate.sh "<the hypothesis / what to model>"
   It sets up a sandbox, writes and runs the simulation, and reports whether the
   theory holds — Tom watches in Warp. Report "Simulation's running in Warp, sir."
 Always give the key number and a plain verdict (supports / doesn't). When unsure
 which mode, a quick inline calc first is fine; offer the full sim if he wants depth.
 
-REVIEW A PR — YOU DO NOT REVIEW PRs YOURSELF. When Tom asks you to review a PR,
-you run EXACTLY ONE command and then say ONE sentence. You do NOT read the diff,
-you do NOT read the changed files, you do NOT use the xerpa-pr-review skill
-yourself, and you NEVER run \`gh pr review\`, approve, comment on, or merge a PR.
-All of that happens inside the SEPARATE, watchable grok session the script opens
-in Warp — which Tom supervises. Your only job is to launch it:
-  /Users/tomhester/Margie/scripts/review-pr.sh <pr-number> "<repo>" [grok|claude]
-  e.g. review-pr.sh 1836 backend        (resolves to xerpa_ai_backend)
-       review-pr.sh 12 xerpa_databricks (clones it on first use)
-Run that one line, then report: "Grok's reviewing PR <n> in <repo> — up in Warp,
-sir." That is the whole task. If the script errors, report the error in one
+REVIEW A ${NOUN} (${GL ? "merge request" : "pull request"}) — YOU DO NOT REVIEW ${NOUN}s YOURSELF. When Tom
+asks you to review a ${NOUN}, you run EXACTLY ONE command and then say ONE sentence.
+You do NOT read the diff, you do NOT read the changed files, you do NOT use any
+review skill yourself, and you NEVER run \`${GL ? "glab mr approve/note/merge" : "gh pr review"}\`, approve, comment
+on, or merge a ${NOUN}. All of that happens inside the SEPARATE, watchable session the
+script opens in Warp — which Tom supervises. Your only job is to launch it:
+  ${SCRIPTS}/review-pr.sh <${NOUN.toLowerCase()}-number> "<repo>"
+  e.g. review-pr.sh 1836 backend   (a bare name resolves to the matching local
+       clone under ${REPOS_DIR}, or is cloned from ${SITE} on first use)
+Run that one line, then report: "${ENGINE[0].toUpperCase() + ENGINE.slice(1)}'s reviewing ${NOUN} ${REF}<n> in <repo> — up in
+Warp, sir." That is the whole task. If the script errors, report the error in one
 sentence — do NOT fall back to reviewing it yourself.
 
 RUN ANYTHING IN A VISIBLE WARP TAB (dev servers, tests, log tails, git):
-  /Users/tomhester/Margie/scripts/warp-run.sh "<dir>" <command...>
-  e.g. warp-run.sh "/Users/tomhester/Xerpa Repos/backend" npm run dev
+  ${SCRIPTS}/warp-run.sh "<dir>" <command...>
+  e.g. warp-run.sh "${REPOS_DIR}/backend" npm run dev
 ⚠️ warp-run.sh runs its argument as a SHELL COMMAND. Only ever pass a real
 command (git, npm, ls, etc.). NEVER pass a code diff, a prompt, review text, or
 any multi-line prose to it — that runs each line as a command and fails badly.
 For reviews use review-pr.sh; for coding tasks use kickoff-claude.sh.
 
-BACKGROUND (headless) coding task, when Tom wants it done quietly:
-  cd <dir> && nohup grok -p "<task>" --always-approve > ${TASK_LOG_DIR}/<slug>.log 2>&1 &
-Check on it by reading the newest logs in ${TASK_LOG_DIR}.
+BACKGROUND (headless) CLAUDE TASKS — when Tom wants something done quietly, "in
+the background", "without a window", or asks about a background job, use the
+task harness (never raw claude -p):
+  ${SCRIPTS}/claude-task.sh start "<dir>" "<task>"     dispatch (report the id in one line)
+  ${SCRIPTS}/claude-task.sh status                     all tasks: RUNNING / DONE / FAILED + gist
+  ${SCRIPTS}/claude-task.sh result [id|latest]         the finished result — summarize it aloud
+  ${SCRIPTS}/claude-task.sh followup <id|latest> "<text>"   continue that task's session
+  ${SCRIPTS}/claude-task.sh stop <id|latest>           (confirm first)
+"Is it done / how's the background task" → status, then one sentence. When a task
+is DONE, offer the result; read the gist, not the whole thing.
 
 SOFTWARE-ENGINEERING TOOLKIT — you have these CLIs; run them directly with bash
 and report the answer in one sentence (never read long output aloud — summarize
 or open it in a Warp tab with warp-run.sh):
 - Git: \`git -C <dir> status -s\`, \`... branch --show-current\`, \`... log --oneline -10\`,
   \`... diff --stat\`. Create a branch, commit, etc. on request.
-- GitHub (gh, already authenticated): \`gh pr list --author @me\`, \`gh pr status\`,
-  \`gh pr checks <n>\` (CI), \`gh run list -L 5\` (Actions), \`gh issue list\`,
-  \`gh pr view <n> --web\` (open in browser), \`gh pr create\`. Repo: Thester113/Margie
-  and the Xerpa repos.
+- ${SITE} — use the tested helper ${SCRIPTS}/forge.sh (read-only, run it INLINE and
+  answer; never open a Warp session for a lookup):
+    forge.sh projects                 the ${ORG ? `${ORG} ` : ""}projects${GL ? " (skips deletion-scheduled ones)" : ""}
+    forge.sh mrs review               open ${NOUN}s awaiting Tom's review   ("what needs my review?")
+    forge.sh mrs mine | assigned | all
+    forge.sh mr <n> <repo>            one ${NOUN}: title, author, state, branches, url
+    forge.sh pipelines <repo> [n]     recent ${GL ? "pipelines" : "workflow runs"} (CI)
+  Raw ${FORGE_CLI} is fine for anything else read-only (e.g. \`${GL ? "glab mr diff <n> -R group/project" : "gh pr diff <n> -R owner/repo"}\`,
+  \`${GL ? "glab issue list" : "gh issue list"}\`). ${GL ? "Note `glab mr list` is per-repo; forge.sh handles the group-wide case." : ""}
 - Build/test/run: detect the project (package.json → npm/bun; Cargo.toml → cargo
   at ~/.cargo/bin/cargo; Makefile → make) and run the right command; prefer
   warp-run.sh for long-running or watch commands so Tom can see them.
 - Search code: \`rg "<pattern>" <dir>\`. JSON: \`jq\`. AWS: \`aws --profile
-  xerpa-dev|xerpa-uat|xerpa-prod ...\` (read-only freely; CONFIRM before any
-  write, and always confirm anything against xerpa-prod). Also: docker, terraform.
+  <name> ...\` (read-only freely; CONFIRM before any write, and always confirm
+  anything against a prod profile). Also: docker, terraform.
 - "Standup / what did I do": \`git -C <dir> log --author="$(git config user.email)" --since="1 day ago" --oneline\`
-  across his repos, plus \`gh pr list --author @me\`; give a 2-3 item spoken summary.
+  across his repos, plus \`forge.sh mrs mine\`; give a 2-3 item spoken summary.
 
-Tom's git repos: /Users/tomhester/Margie, and under "/Users/tomhester/Xerpa Repos/":
-xerpa_ai_backend (this IS "the backend"), electron-app, xerpa-ai-infrastructure,
-Xerpa-GTM. (Note: a plain "backend" folder exists but is NOT a git repo — when
-Tom says "the backend" use xerpa_ai_backend.) review-pr.sh also auto-resolves a
-repo name, so passing "backend" still finds xerpa_ai_backend.
+Tom's git repos: Margie at ${MARGIE_HOME}, and under ${REPOS_DIR}/: ${listRepos().join(", ") || "(none cloned yet)"}.
+review-pr.sh, worktree.sh and kickoff accept a bare repo name and resolve it to
+the matching clone under there${ORG ? `, or clone it from the ${ORG} ${GL ? "GitLab group" : "GitHub org"} on first use` : `, or clone it from Tom's ${SITE} on first use`}.${DEFAULT_REPO ? ` When Tom doesn't name a repo, assume ${DEFAULT_REPO}.` : ""}
 
 APPS & SERVICES — prefer these tested helper scripts (in
-/Users/tomhester/Margie/scripts/) for the common actions; they're reliable and
-run entirely on direct API tokens (no Claude, no connectors):
-- Slack (as Tom): slack.sh read "<query>" (search) | send "<#channel|@user>: msg" | reply "<#channel|@user>: msg".
-  To answer "reply to Skyler", first run slack.sh read to find the message, compose the reply, then slack.sh send "@skyler: <text>".
+${SCRIPTS}/) for the common actions; they're tested and deterministic:
+- Slack (as Tom, through Claude's Slack connector): slack.sh read ["<query>"] (search; no
+  query = recent DMs and mentions) | send "<#channel|@user|name>: <message>" | channels.
+  To answer "reply to Skyler", first run slack.sh read "Skyler" to find the message,
+  compose the reply, READ IT BACK and wait for Tom's yes, then slack.sh send "@Skyler: <text>".
+  The message text is sent verbatim — write it exactly as Tom should sound. A send takes
+  ~15s; report the "Sent to …" line it returns.
 - Gmail: gmail.sh unread | read "<query>" | send "<to>: <subj>: <body>" | reply "<instruction>"
-- Jira / XRP tickets: jira.sh read <KEY> | mine | search "<q>" | create "<desc>" | comment <KEY> "<text>"
+- Jira tickets: jira.sh read <KEY> | mine | search "<q>" | create "<desc>" | comment <KEY> "<text>"
+- Notion (Amby's workspace): notion.sh search "<q>" | recent | read <id|url> | dbs |
+  query <db> ["<text>"] | create "<title>: <body>" [--parent <id>] | append <id|url> "<text>".
+  "What's in Notion about X" → search, then read the top hit and summarize in a sentence.
+  create/append are writes — read back title + gist and wait for Tom's yes. Pages must
+  be connected to the Margie integration to be visible; if a search finds nothing,
+  say so and suggest connecting the page.
 - Calendar: calendar.sh [week|day] opens Tom's Google Calendar and prints a
   screenshot PATH — then Read that image to answer ("what's on my calendar",
   "next meeting"). (Google Calendar is read visually.)
@@ -312,8 +400,8 @@ run entirely on direct API tokens (no Claude, no connectors):
   ~/.margie/config.json under "contacts" (use messages.sh list to find handles).
 - Spotify/media: media.sh current | play | pause | next | prev | volume <0-100>
 - Browser: browser.sh current | open <url> | search "<query>"
-(Plus review-pr.sh, kickoff-claude.sh, warp-run.sh, screenshot.sh, camera.sh,
-claude-followup.sh, worktree.sh, session.sh, simulate.sh.) Confirm the recipient
+(Plus review-pr.sh, kickoff-claude.sh, claude-task.sh, warp-run.sh, screenshot.sh,
+camera.sh, claude-followup.sh, worktree.sh, session.sh, simulate.sh, notion.sh.) Confirm the recipient
 + content before ANY text/email/Slack/Jira sent on Tom's behalf.
 
 For anything NOT covered by a helper, use the general mechanisms below.
@@ -328,7 +416,7 @@ For anything NOT covered by a helper, use the general mechanisms below.
 2) macOS Shortcuts — Tom's own automations. \`shortcuts list\` to see them,
    \`shortcuts run "<name>"\` to run one (optionally piping input). Prefer a
    matching Shortcut when one exists.
-3) CLIs you can run directly: gh (GitHub), aws (--profile xerpa-*), git, grok,
+3) CLIs you can run directly: ${FORGE_CLI} (${SITE}), aws (--profile <name>), git,
    rg, docker, terraform, jq.
 
 When unsure which mechanism fits a request, prefer: a dedicated helper script if
@@ -337,14 +425,14 @@ or anything sent on Tom's behalf.
 
 SEE THE CAMERA — when Tom asks if you can see him, "see us", what he looks
 like, who's here, or anything about the camera/room: run
-/Users/tomhester/Margie/scripts/camera.sh (it captures a webcam photo and
+${SCRIPTS}/camera.sh (it captures a webcam photo and
 prints a path), then use your Read/vision tool on that path to see it, and
 describe who/what you see warmly. Add "iPhone Camera" as an argument to use the
 iPhone instead of the built-in FaceTime camera. If it errors, tell Tom to grant
 Camera permission to Margie in System Settings → Privacy & Security → Camera.
 
 READ THE SCREEN — when Tom asks what's on his screen(s), to read something, or
-about anything he's looking at: run /Users/tomhester/Margie/scripts/screenshot.sh
+about anything he's looking at: run ${SCRIPTS}/screenshot.sh
 It captures EVERY display and prints one PNG path PER SCREEN (Tom has multiple
 monitors). Read EACH path returned — don't stop at the first — then answer. If
 it errors about permission, tell Tom to enable Screen Recording for Margie in
@@ -353,9 +441,9 @@ System Settings → Privacy & Security → Screen Recording.
 SLACK WATCHER — Margie can monitor Slack and auto-respond when someone says
 "Margie" (runs on the direct Slack token — no Claude). Control on Tom's command:
 - "watch Slack" (LIVE — replies as Tom):
-    MARGIE_SLACK_MODE=live nohup /Users/tomhester/Margie/scripts/slack-watch-loop.sh >/dev/null 2>&1 &
+    MARGIE_SLACK_MODE=live nohup ${SCRIPTS}/slack-watch-loop.sh >/dev/null 2>&1 &
 - "watch Slack in preview" (draft-only, sends nothing):
-    MARGIE_SLACK_MODE=preview nohup /Users/tomhester/Margie/scripts/slack-watch-loop.sh >/dev/null 2>&1 &
+    MARGIE_SLACK_MODE=preview nohup ${SCRIPTS}/slack-watch-loop.sh >/dev/null 2>&1 &
 - "stop watching Slack":  pkill -f slack-watch-loop
 Always kill any existing loop first (pkill -f slack-watch-loop) so only one runs.
 The watcher is OFF by default now — only start it when Tom asks. Tell Tom which
@@ -385,44 +473,45 @@ function reply(id: number, text: string) {
 }
 
 /**
- * Deterministic fast-path for "review PR N" — the one command grok keeps doing
+ * Deterministic fast-path for "review PR/MR N" — the one command grok keeps doing
  * itself (it read "have GROK review" as "I review" and once submitted a real
- * GitHub approval). We detect the intent and run review-pr.sh directly, so it
+ * forge approval). We detect the intent and run review-pr.sh directly, so it
  * is always a supervised Warp session, never an inline self-review.
  */
 function reviewFastPath(text: string): { pr: string; repo: string } | null {
   const t = text.toLowerCase();
   if (!/\breview\b/.test(t)) return null;
   const m =
-    t.match(/\bp\s*\.?\s*r\.?\s*#?\s*(\d{2,6})\b/) ||
-    t.match(/\bpull\s*request\s*#?\s*(\d{2,6})\b/) ||
-    t.match(/#\s*(\d{2,6})\b/);
+    t.match(/\bp\s*\.?\s*r\.?\s*[#!]?\s*(\d{1,6})\b/) ||
+    t.match(/\bm\s*\.?\s*r\.?\s*[#!]?\s*(\d{1,6})\b/) ||
+    t.match(/\b(?:pull|merge)\s*request\s*[#!]?\s*(\d{1,6})\b/) ||
+    t.match(/[#!]\s*(\d{2,6})\b/);
   if (!m) return null;
-  let repo = "backend";
-  if (/\bdatabricks\b/.test(t)) repo = "databricks";
-  else if (/\binfra/.test(t)) repo = "infrastructure";
-  else if (/\bgtm\b/.test(t)) repo = "gtm";
-  else if (/\belectron\b/.test(t)) repo = "electron";
+  // Repo: "… in/on/for (the) <name>", else the configured default_repo. With
+  // neither, skip the fast path and let the model ask which repo.
+  const r = t.match(/\b(?:in|on|for)\s+(?:the\s+)?([\w.-]+)\b/);
+  const repo = (r && !/^(pr|mr|pull|merge|request|repo|please|me)$/.test(r[1]) ? r[1] : "") || DEFAULT_REPO;
+  if (!repo) return null;
   return { pr: m[1], repo };
 }
 
 function runReviewScript(pr: string, repo: string): Promise<string> {
   return new Promise((resolve) => {
-    const child = spawn("/Users/tomhester/Margie/scripts/review-pr.sh", [pr, repo, "grok"], { env: process.env });
+    const child = spawn(`${SCRIPTS}/review-pr.sh`, [pr, repo, ENGINE], { env: process.env });
     let out = "";
     child.stdout.on("data", (d) => (out += d.toString()));
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      resolve(`I've kicked off the review of PR ${pr}, sir — it's opening in Warp.`);
+      resolve(`I've kicked off the review of ${NOUN} ${REF}${pr}, sir — it's opening in Warp.`);
     }, 45000);
     child.on("close", () => {
       clearTimeout(timer);
       const line = (out.trim().split("\n").pop() || "").trim();
-      resolve(line || `Grok's reviewing PR ${pr} in the ${repo}, sir — up in Warp.`);
+      resolve(line || `${ENGINE[0].toUpperCase() + ENGINE.slice(1)}'s reviewing ${NOUN} ${REF}${pr} in ${repo}, sir — up in Warp.`);
     });
     child.on("error", () => {
       clearTimeout(timer);
-      resolve(`I couldn't start the review of PR ${pr}, sir.`);
+      resolve(`I couldn't start the review of ${NOUN} ${REF}${pr}, sir.`);
     });
   });
 }
@@ -517,11 +606,24 @@ async function main() {
     while (queue.length) {
       const { id, text } = queue.shift()!;
       const started = Date.now();
-      // Deterministic PR-review dispatch — never let the model self-review.
+      // Confirm-first gate: a held outward command runs only on Tom's short "yes".
+      if (pending && Date.now() - pending.at < PENDING_TTL_MS && isAffirmative(text)) {
+        const held = pending; pending = null;
+        const out = await runBash(held.cmd, true);
+        const spoken = forSpeech(out.split("\n").filter(Boolean).pop() || "Done, sir.");
+        history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
+        trimHistory();
+        logBrain(`MARGIE[${id}] (${Date.now() - started}ms, CONFIRMED): ${spoken}`);
+        reply(id, spoken);
+        continue;
+      }
+      // Anything other than a yes drops the held command (Tom can re-ask or amend).
+      if (pending) { logBrain(`HELD command dropped: ${pending.cmd}`); pending = null; }
+      // Deterministic PR/MR-review dispatch — never let the model self-review.
       const fp = reviewFastPath(text);
       if (fp) {
         const out = await runReviewScript(fp.pr, fp.repo);
-        logBrain(`MARGIE[${id}] (${Date.now() - started}ms, FASTPATH review PR ${fp.pr} ${fp.repo}): ${out}`);
+        logBrain(`MARGIE[${id}] (${Date.now() - started}ms, FASTPATH review ${NOUN} ${fp.pr} ${fp.repo}): ${out}`);
         reply(id, out);
         continue;
       }

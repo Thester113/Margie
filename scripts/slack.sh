@@ -1,7 +1,11 @@
 #!/bin/bash
-# slack.sh — Slack via the Web API directly (no Claude, no connector).
+# slack.sh — Slack for Margie. Two backends:
+#   1) direct Slack Web API when a token is in ~/.margie/config.json (below), or
+#   2) Claude Code's Slack connector (the claude.ai Slack app) via headless
+#      `claude -p` with only the needed Slack tools allowed — the default when no
+#      token is configured, or when config has "slack_via": "claude".
 #
-# Tokens in ~/.margie/config.json (either or both):
+# Tokens for backend 1 in ~/.margie/config.json (either or both):
 #   slack_user_token  xoxp-…  posts AS Tom, can search all his messages/DMs.
 #   slack_token       xoxb-…  posts as the "margie" bot; reads/posts only in
 #                             channels margie has been /invite-d to. No search,
@@ -25,10 +29,41 @@ UTOK="$(jq -r '.slack_user_token // empty' "$CFG" 2>/dev/null)"
 BTOK="$(jq -r '.slack_token // empty' "$CFG" 2>/dev/null)"
 # Prefer the user token; fall back to the bot token.
 TOKEN="${UTOK:-$BTOK}"
-if [ -z "$TOKEN" ]; then
-  echo "Slack isn't configured yet, sir — add slack_token (bot) or slack_user_token (user) to ~/.margie/config.json." >&2
-  exit 1
+VIA="$(jq -r '.slack_via // empty' "$CFG" 2>/dev/null)"
+
+# ── Backend 2: Claude Code's Slack connector (the claude.ai Slack app) ──────────
+# Used when no raw token is configured, or slack_via is "claude". Each call is a
+# headless `claude -p` with ONLY the Slack tools it needs allowed, so Claude acts
+# as Tom in Slack through the connector — no token to manage here.
+if [ -z "$TOKEN" ] || [ "$VIA" = "claude" ]; then
+  CLAUDE_BIN="${MARGIE_CLAUDE_BIN:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
+  CMODEL="${MARGIE_SLACK_MODEL:-sonnet}"
+  T="mcp__claude_ai_Slack__"
+  ask() { # ask "<prompt>" <allowed tools csv>
+    local out; out="$(cd "$HOME" && "$CLAUDE_BIN" -p "$1" --model "$CMODEL" --output-format json --allowedTools "$2" 2>/dev/null | jq -r '.result // empty')"
+    [ -n "$out" ] && printf '%s\n' "$out" || { echo "Slack via Claude returned nothing, sir — is the Slack connector connected (claude mcp list)?" >&2; return 1; }
+  }
+  cmd="${1:-read}"; shift || true; args="$*"
+  case "$cmd" in
+    read|search|unread)
+      if [ -n "$args" ]; then Q="Search Tom's Slack for: $args."; else Q="Show Tom's most recent DMs and @mentions (last day or so)."; fi
+      ask "You are Margie's Slack reader; Tom's replies are spoken aloud, so be terse. $Q Use slack_search_public_and_private (and slack_read_thread / slack_read_channel only if needed for context). Output ONLY the matches, newest first, at most 8 lines, each formatted as: [#channel or DM] sender (date): text trimmed to ~140 chars. No commentary, no markdown. If nothing matches output exactly: No matches." \
+          "${T}slack_search_public_and_private,${T}slack_search_public,${T}slack_read_thread,${T}slack_read_channel,${T}slack_search_channels,${T}slack_search_users,${T}slack_list_user_channels,${T}slack_read_user_profile" ;;
+    send|reply|dm)
+      target="${args%%:*}"; msg="${args#*:}"; msg="$(printf '%s' "$msg" | sed 's/^ *//')"
+      if [ -z "$target" ] || [ -z "$msg" ] || [ "$target" = "$args" ]; then
+        echo "usage: slack.sh send \"<#channel|@user|name>: <message>\"" >&2; exit 1
+      fi
+      if [ "${MARGIE_SLACK_DRY:-0}" = "1" ]; then SENDTOOL="slack_send_message_draft"; VERB="Create a DRAFT (do not send) of"; else SENDTOOL="slack_send_message"; VERB="Send"; fi
+      ask "You are Margie's Slack sender, acting as Tom. $VERB exactly ONE Slack message to \"$target\" with this text VERBATIM (no additions, no rewording, no markdown, no signature): <<<$msg>>> Steps: 1) resolve \"$target\" — a #channel, @user, or a person's name — with slack_search_channels / slack_search_users (for a person, send a DM). 2) call $SENDTOOL once. 3) Output ONE line only: Sent to <resolved channel or person>. If the target is ambiguous or not found, send NOTHING and output one line: Could not resolve \"$target\"." \
+          "${T}${SENDTOOL},${T}slack_search_channels,${T}slack_search_users,${T}slack_list_user_channels,${T}slack_read_user_profile" ;;
+    channels)
+      ask "List the Slack channels Tom is a member of, one #name per line, nothing else." "${T}slack_list_user_channels" ;;
+    *) echo "usage: slack.sh read [\"<query>\"] | send \"<#channel|@user|name>: <message>\" | channels" >&2; exit 1 ;;
+  esac
+  exit $?
 fi
+# ── Backend 1: direct Slack Web API with tokens from config.json ───────────────
 case "$TOKEN" in xoxp-*) KIND="user" ;; *) KIND="bot" ;; esac
 
 api() { local method="$1"; shift; curl -sS -H "Authorization: Bearer $TOKEN" "$@" "https://slack.com/api/$method"; }

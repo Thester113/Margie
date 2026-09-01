@@ -2,10 +2,10 @@
 # jira.sh — Jira via the Atlassian REST API directly (no Claude, no connector).
 #
 # Reads credentials from ~/.margie/config.json:
-#   atlassian_email        e.g. tom@xerpa.ai
+#   atlassian_email        e.g. you@example.com
 #   atlassian_api_token    from id.atlassian.com/manage-profile/security/api-tokens
-#   jira_base_url          e.g. https://xerpa.atlassian.net
-#   jira_default_project   (optional) project key for `create`, e.g. XRP
+#   jira_base_url          e.g. https://yourorg.atlassian.net
+#   jira_default_project   (optional) project key for `create`, e.g. PROJ
 #
 # Usage:
 #   jira.sh read <KEY>
@@ -77,7 +77,7 @@ case "$cmd" in
   create)
     # create <PROJECT> "<summary>"  OR  create "<summary>" (uses default project)
     if [ $# -ge 2 ]; then PROJ="$1"; shift; SUMMARY="$*"; else PROJ="$DEFPROJ"; SUMMARY="$*"; fi
-    [ -z "$PROJ" ] && { echo "No project, sir — pass one (jira.sh create XRP \"...\") or set jira_default_project." >&2; exit 1; }
+    [ -z "$PROJ" ] && { echo "No project, sir — pass one (jira.sh create PROJ \"...\") or set jira_default_project." >&2; exit 1; }
     [ -z "$SUMMARY" ] && { echo "usage: jira.sh create [PROJECT] \"<summary>\"" >&2; exit 1; }
     BODY="$(jq -n --arg p "$PROJ" --arg s "$SUMMARY" \
       '{fields:{project:{key:$p},summary:$s,issuetype:{name:"Task"}}}')"
