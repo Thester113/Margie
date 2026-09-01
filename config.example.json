@@ -34,6 +34,28 @@
   "jira_base_url": "https://yourorg.atlassian.net",
   "jira_default_project": "KEY",
 
+  "notion_tickets_ds": "…32-hex data source id…",
+  "notion_tickets_db": "…database id…",
+  "notion_testcases_ds": "…",
+  "notion_usecases_ds": "…",
+  "notion_requirements_ds": "…",
+  "notion_decisions_db": "…",
+  "notion_open_questions_db": "…",
+  "notion_docs_parent": "",
+  "notion_ticket_defaults": { "Status": "Planning", "Team": "Product", "Labels": ["Claude"], "Priority": "Medium" },
+  "notion_assignee": "…notion person id…",
+  "ticket_prefix": "PT",
+  "branch_prefix": "margie",
+  "repo_subdirs": { "walt_ui": "backend" },
+  "planner_model": "",
+  "qa_model": "",
+  "_dispatch": "dispatch.sh: the ticket/test-case/use-case/requirements data sources and defaults for filing; repo_subdirs maps a repo to the sub-project sessions run in; planner_model/qa_model override the claude CLI default (empty = default). Connect every DB above to the Notion integration or the pipeline can't see them.",
+
+  "agent_identity": "Margie",
+  "agent_roster": "~/path/to/repo/.claude/agent-messages/roster.json",
+  "agent_messages_ds": "…data source id (defaults to the roster's db entry)…",
+  "_agent_messages": "agent-messages.sh: this harness's name in the shared Agent Messages Notion DB, the committed roster (owners, Slack/Notion ids), and the DB. Identity file ~/.claude/agent-messages-identity wins over agent_identity.",
+
   "contacts": { "wife": "+15551234567", "mom": "jane@icloud.com" },
   "_contacts": "Spoken alias → iMessage handle (phone/email is most reliable) for messages.sh."
 }
