@@ -109,6 +109,9 @@ const OUTWARD: RegExp[] = [
 ];
 const PENDING_TTL_MS = 3 * 60 * 1000;
 let pending: { cmd: string; at: number } | null = null;
+// Progress sink for the turn currently draining (daemon clients see tool/held
+// events; stdio and the app ignore them). Set by drain(), used by runBash*.
+let currentEmit: ((event: string, text: string) => void) | null = null;
 function outward(cmd: string): boolean {
   return OUTWARD.some((r) => r.test(cmd));
 }
@@ -141,6 +144,7 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
   if (!confirmed && outward(cmd)) {
     pending = { cmd, at: Date.now() };
     logBrain(`BASH HELD (awaiting Tom's yes): ${cmd}`);
+    currentEmit?.("held", cmd.slice(0, 120));
     let held =
       "HELD — NOTHING WAS DONE. This acts on Tom's behalf, so confirm first: in ONE sentence tell Tom exactly what is about to happen (quote any message text), then ask for his yes. Do not call any tool now. It runs only after he confirms.";
     // Margie's own scripts can say precisely what they WOULD do (side-effect
@@ -157,6 +161,7 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
 function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise<string> {
   return new Promise((resolve) => {
     logBrain(`BASH${extraEnv.MARGIE_DESCRIBE ? " (describe)" : ""}: ${cmd}`);
+    if (!extraEnv.MARGIE_DESCRIBE) currentEmit?.("tool", cmd.slice(0, 120));
     // Put Margie's scripts dir on PATH so bare names (messages.sh, slack.sh…)
     // resolve even when the model omits the full path.
     const env = {
@@ -634,6 +639,7 @@ export interface Turn {
   text: string;
   source?: string; // "stdio" | "app" | "cli"
   reply: (text: string) => void;
+  emit?: (event: string, text: string) => void; // tool/held progress (daemon clients)
 }
 
 const queue: Turn[] = [];
@@ -652,6 +658,7 @@ async function drain() {
     const turn = queue.shift()!;
     const { id, text } = turn;
     const started = Date.now();
+    currentEmit = turn.emit ?? null;
     // Confirm-first gate: a held outward command runs only on Tom's short "yes".
     if (pending && Date.now() - pending.at < PENDING_TTL_MS && isAffirmative(text)) {
       const held = pending;
@@ -677,10 +684,38 @@ async function drain() {
       turn.reply(out);
       continue;
     }
-    const out = await handleTurn(text, history);
+    let out: string;
+    try {
+      out = await Promise.race([
+        handleTurn(text, history),
+        new Promise<string>((_, rej) => setTimeout(() => rej(new Error("turn-watchdog")), 150000)),
+      ]);
+    } catch {
+      out = "That turn timed out on me, sir — give it another go.";
+    }
     trimHistory();
     logBrain(`MARGIE[${id}] (${Date.now() - started}ms): ${out}`);
     turn.reply(out);
+    currentEmit = null;
   }
   running = false;
+}
+
+// ── Hooks for the daemon (server.ts) ─────────────────────────────────────────
+/** Run one helper script exactly as the bash tool would (env, PATH, timeout). */
+export function runScript(cmd: string): Promise<string> {
+  return runBashRaw(cmd);
+}
+/** Record an unsolicited notice in history so "what was that?" works. */
+export function noteToHistory(text: string) {
+  history.push({ role: "assistant", content: text });
+  trimHistory();
+}
+export function brainStatus() {
+  return {
+    turns: Math.floor((history.length - 1) / 2),
+    busy: running,
+    queue: queue.length,
+    pending: pending ? { cmd: pending.cmd.slice(0, 120), ageMs: Date.now() - pending.at } : null,
+  };
 }

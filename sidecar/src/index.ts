@@ -27,4 +27,9 @@ function stdioMain() {
   rl.on("close", () => process.exit(0));
 }
 
-stdioMain();
+if (process.argv.includes("--daemon")) {
+  const entry = new URL(import.meta.url).pathname;
+  import("./server.js").then((m) => m.daemonMain(entry));
+} else {
+  stdioMain();
+}

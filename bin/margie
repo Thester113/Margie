@@ -1,0 +1,3 @@
+#!/bin/bash
+# margie — Warp/terminal client for the Margie brain daemon (see sidecar/src/cli.ts)
+exec node "$(dirname "$(readlink -f "$0")")/../sidecar/dist/cli.js" "$@"

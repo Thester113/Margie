@@ -3,10 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Margie's brain — Claude Agent SDK sidecar spoken to by the Tauri shell",
+  "description": "Margie's brain \u2014 Claude Agent SDK sidecar spoken to by the Tauri shell",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "link-cli": "mkdir -p ~/.local/bin && ln -sf \"$(cd .. && pwd)/bin/margie\" ~/.local/bin/margie && echo linked: ~/.local/bin/margie"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0"
