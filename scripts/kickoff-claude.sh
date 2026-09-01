@@ -26,10 +26,12 @@ ENGINE="${ENGINE:-claude}"
 # into PROMPT and silently falls back to grok — the reason Claude sessions
 # "didn't work".
 PRE=()
+SUBDIR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --engine | -e) ENGINE="${2:-claude}"; shift 2 ;;
     --engine=*) ENGINE="${1#*=}"; shift ;;
+    --subdir) SUBDIR="${2:-}"; shift 2 ;;    # monorepo: run the session in <dir>/<subdir>
     *) PRE+=("$1"); shift ;;
   esac
 done
@@ -100,7 +102,7 @@ else
 fi
 cat > "$INNER" <<INNEREOF
 #!/bin/bash
-cd "$DIR_ABS" || cd "\$HOME"
+cd "$DIR_ABS${SUBDIR:+/$SUBDIR}" || cd "\$HOME"
 $CLAUDE_LINE
 INNEREOF
 chmod +x "$INNER"

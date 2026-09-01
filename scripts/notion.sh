@@ -48,6 +48,68 @@ paragraphs_json() { # stdin: body text → children array of paragraph blocks
   jq -Rs 'split("\n") | map(select(length>0)) | map({object:"block", type:"paragraph", paragraph:{rich_text:[{type:"text", text:{content:.}}]}})'
 }
 
+
+LIBDIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Data-source layer (Notion-Version 2025-09-03) ────────────────────────────
+# The DB-aware subcommands below (schema/find/ticket/testcase/page) talk to
+# data sources — same API walt_ui's agent-messages hook uses. Legacy
+# search/recent/read/dbs/query/create/append stay on 2022-06-28 above.
+api2() { # api2 <METHOD> <path> [json-body]
+  local m="$1" p="$2" body="${3:-}"
+  if [ -n "$body" ]; then
+    curl -sS --max-time 15 -X "$m" -H "Authorization: Bearer $TOKEN" -H "Notion-Version: 2025-09-03" -H "Content-Type: application/json" --data "$body" "$API$p"
+  else
+    curl -sS --max-time 15 -X "$m" -H "Authorization: Bearer $TOKEN" -H "Notion-Version: 2025-09-03" "$API$p"
+  fi
+}
+# Alias -> data source id from config; raw ids / collection:// URLs pass through.
+ds_of() {
+  local a="$1" v=""
+  case "$a" in
+    tickets) v="$(cfg notion_tickets_ds)" ;;
+    testcases) v="$(cfg notion_testcases_ds)" ;;
+    usecases) v="$(cfg notion_usecases_ds)" ;;
+    requirements) v="$(cfg notion_requirements_ds)" ;;
+    agent_messages|messages) v="$(cfg agent_messages_ds)" ;;
+    *) v="$a" ;;
+  esac
+  [ -z "$v" ] && { echo "No data source configured for '$a', sir — add notion_${a}_ds to ~/.margie/config.json." >&2; return 1; }
+  printf '%s' "$v" | sed 's|^collection://||'
+}
+# Confirm-gate dry description: print one line and exit without touching Notion.
+desc() { if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then echo "$*"; exit 0; fi; }
+md_blocks() { jq -Rs -f "$LIBDIR/lib/md2blocks.jq" < "${1:-/dev/null}"; }
+append_blocks() { # append_blocks <block/page id> <children-json-array>
+  local id="$1" ch="$2" n i R
+  n="$(printf '%s' "$ch" | jq 'length')"
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    R="$(api2 PATCH "/blocks/$id/children" "$(printf '%s' "$ch" | jq -c --argjson i "$i" '{children: .[$i:$i+100]}')")"
+    fail_if_error "$R"
+    i=$((i + 100))
+  done
+}
+# Resolve "PT-296" / "296" (ticket unique id) or a page id/url -> "id<TAB>url<TAB>PT-n"
+pt_page() {
+  local x="$1" num ds R
+  if printf '%s' "$x" | grep -qE '^[A-Za-z]+-[0-9]+$|^[0-9]+$'; then
+    num="${x##*-}"
+    ds="$(ds_of tickets)" || return 1
+    R="$(api2 POST "/data_sources/$ds/query" "$(jq -n --argjson n "$num" '{filter:{property:"ID", unique_id:{equals:$n}}, page_size:1}')")"
+    fail_if_error "$R"
+    printf '%s' "$R" | jq -re '.results[0] | [.id, .url, ((.properties.ID.unique_id.prefix // "") + "-" + (.properties.ID.unique_id.number|tostring))] | @tsv' \
+      || { echo "Couldn't find ticket $x, sir." >&2; return 1; }
+  else
+    local id; id="$(nid "$x")"
+    [ -z "$id" ] && { echo "Not a ticket id: $x" >&2; return 1; }
+    R="$(api GET "/pages/$id")"
+    fail_if_error "$R"
+    printf '%s' "$R" | jq -re '[.id, .url, ((.properties.ID.unique_id.prefix // "T") + "-" + ((.properties.ID.unique_id.number // 0)|tostring))] | @tsv'
+  fi
+}
+now_iso() { date -u +%FT%TZ; }
+
 cmd="${1:-recent}"; shift || true
 
 case "$cmd" in
@@ -97,5 +159,189 @@ case "$cmd" in
     children="$(printf '%s' "$text" | paragraphs_json)"
     R="$(api PATCH "/blocks/$id/children" "$(jq -n --argjson c "$children" '{children:$c}')")"; fail_if_error "$R"
     echo "Appended to the page, sir." ;;
+  schema)
+    ds="$(ds_of "${1:-tickets}")" || exit 1
+    R="$(api2 GET "/data_sources/$ds")"; fail_if_error "$R"
+    printf '%s' "$R" | jq -r '(.schema // .properties) | to_entries[] |
+      [.key, .value.type,
+       ((.value.select.options // .value.multi_select.options // .value.status.options //
+         (.value | to_entries | map(select(.value|type=="object")) | map(.value.options // empty) | add) // [])
+        | map(.name) | join("|")),
+       (.value.unique_id.prefix // "")]
+      | map(select(. != "")) | join("  ")' ;;
+  find)
+    [ -z "${1:-}" ] && { echo "usage: notion.sh find <PT-###>" >&2; exit 1; }
+    IFS="$(printf '\t')" read -r pid purl ppt <<EOF2
+$(pt_page "$1")
+EOF2
+    [ -z "$pid" ] && exit 1
+    echo "$ppt  $purl  [$(printf '%s' "$pid" | tr -d '-')]" ;;
+  ticket)
+    sub="${1:-read}"; shift || true
+    case "$sub" in
+      read)
+        IFS="$(printf '\t')" read -r pid purl ppt <<EOF2
+$(pt_page "${1:-}")
+EOF2
+        [ -z "$pid" ] && exit 1
+        P="$(api GET "/pages/$pid")"; fail_if_error "$P"
+        printf '%s' "$P" | jq -r '"\(.properties.ID.unique_id.prefix // "")-\(.properties.ID.unique_id.number // "?") \(.properties.Title.title[0].plain_text // "(untitled)") — \(.properties.Status.status.name // "?"), \(.properties.Priority.select.name // "no priority"), labels: \((.properties.Labels.multi_select // []) | map(.name) | join(",") | if . == "" then "none" else . end)\n\(.url)"'
+        B="$(api GET "/blocks/$pid/children?page_size=${2:-60}")"; fail_if_error "$B"
+        printf '%s' "$B" | text_of_blocks ;;
+      create)
+        TITLE=""; MD=""; DESCR=""; STATUS=""; PRIO=""; LABELS=""; USECASE=""; ASSIGNEE=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --md) MD="${2:-}"; shift 2 ;;
+            --description) DESCR="${2:-}"; shift 2 ;;
+            --status) STATUS="${2:-}"; shift 2 ;;
+            --priority) PRIO="${2:-}"; shift 2 ;;
+            --labels) LABELS="${2:-}"; shift 2 ;;
+            --usecase) USECASE="${2:-}"; shift 2 ;;
+            --assignee) ASSIGNEE="${2:-}"; shift 2 ;;
+            *) [ -z "$TITLE" ] && TITLE="$1" || TITLE="$TITLE $1"; shift ;;
+          esac
+        done
+        [ -z "$TITLE" ] && { echo "usage: notion.sh ticket create \"<title>\" --md <file> [--status|--priority|--labels|--usecase|--assignee|--description]" >&2; exit 1; }
+        ds="$(ds_of tickets)" || exit 1
+        desc "would create a ticket \"$TITLE\" (status ${STATUS:-default}, labels ${LABELS:-default}) with the spec body from ${MD:-<none>} in the Tickets database"
+        DEFS="$(jq -c '.notion_ticket_defaults // {}' "$CFG" 2>/dev/null || echo '{}')"
+        [ -z "$ASSIGNEE" ] && ASSIGNEE="$(cfg notion_assignee)"
+        PROPS="$(jq -n --arg t "$TITLE" --argjson defs "$DEFS" --arg descr "$DESCR" --arg status "$STATUS" \
+                       --arg prio "$PRIO" --arg labels "$LABELS" --arg usecase "$(nid "${USECASE:-}" || true)" --arg assignee "$ASSIGNEE" '
+          def opt(f): if . == "" then empty else f end;
+          {Title: {title: [{type:"text", text:{content:$t}}]}}
+          + (($status  | opt({name:.}) ) // ($defs.Status  // "" | opt({name:.})) | if . then {Status:{status:.}} else {} end)
+          + (($prio    | opt({name:.}) ) // ($defs.Priority // "" | opt({name:.})) | if . then {Priority:{select:.}} else {} end)
+          + (($defs.Team // "" | opt({name:.})) | if . then {Team:{select:.}} else {} end)
+          + ((if $labels != "" then ($labels | split(",")) else ($defs.Labels // []) end)
+             | if length > 0 then {Labels:{multi_select: map({name:.})}} else {} end)
+          + ($descr | opt({Description:{rich_text:[{type:"text",text:{content:.}}]}}) // {})
+          + ($usecase | opt({"Use Cases":{relation:[{id:.}]}}) // {})
+          + ($assignee | opt({Assignee:{people:[{id:.}]}}) // {})')"
+        CH="$(md_blocks "$MD")"
+        R="$(api2 POST /pages "$(jq -n --arg ds "$ds" --argjson p "$PROPS" --argjson c "$CH" \
+              '{parent:{type:"data_source_id", data_source_id:$ds}, properties:$p, children: $c[0:100]}')")"
+        fail_if_error "$R"
+        PID="$(printf '%s' "$R" | jq -r .id)"; PURL="$(printf '%s' "$R" | jq -r .url)"
+        PT="$(printf '%s' "$R" | jq -r '(.properties.ID.unique_id.prefix // "T") + "-" + ((.properties.ID.unique_id.number // 0)|tostring)')"
+        REST="$(printf '%s' "$CH" | jq -c '.[100:]')"
+        [ "$(printf '%s' "$REST" | jq 'length')" -gt 0 ] && append_blocks "$PID" "$REST"
+        echo "Created $PT \"$TITLE\": $PURL"
+        jq -cn --arg pt "$PT" --arg id "$PID" --arg url "$PURL" '{pt:$pt, id:$id, url:$url}' ;;
+      status)
+        [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: notion.sh ticket status <PT> \"<Status>\"" >&2; exit 1; }
+        desc "would set ticket $1 to status \"$2\""
+        IFS="$(printf '\t')" read -r pid purl ppt <<EOF2
+$(pt_page "$1")
+EOF2
+        [ -z "$pid" ] && exit 1
+        EXTRA='{}'
+        case "$2" in
+          "In Progress") EXTRA="$(jq -cn --arg d "$(now_iso)" '{"Started At":{date:{start:$d}}}')" ;;
+          Done)          EXTRA="$(jq -cn --arg d "$(now_iso)" '{"Completed At":{date:{start:$d}}}')" ;;
+          Canceled)      EXTRA="$(jq -cn --arg d "$(now_iso)" '{"Canceled At":{date:{start:$d}}}')" ;;
+        esac
+        R="$(api2 PATCH "/pages/$pid" "$(jq -cn --arg st "$2" --argjson x "$EXTRA" '{properties: ({Status:{status:{name:$st}}} + $x)}')")"
+        fail_if_error "$R"
+        echo "$ppt is now $2, sir." ;;
+      append)
+        MD=""; TARGET=""
+        while [ $# -gt 0 ]; do case "$1" in --md) MD="${2:-}"; shift 2 ;; *) TARGET="$1"; shift ;; esac; done
+        [ -z "$TARGET" ] || [ -z "$MD" ] && { echo "usage: notion.sh ticket append <PT> --md <file>" >&2; exit 1; }
+        desc "would append $(wc -l < "$MD" | tr -d ' ') lines of notes to ticket $TARGET"
+        IFS="$(printf '\t')" read -r pid purl ppt <<EOF2
+$(pt_page "$TARGET")
+EOF2
+        [ -z "$pid" ] && exit 1
+        append_blocks "$pid" "$(md_blocks "$MD")"
+        echo "Appended to $ppt, sir." ;;
+      comment)
+        [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: notion.sh ticket comment <PT> \"<text>\"" >&2; exit 1; }
+        desc "would comment on ticket $1: \"$2\""
+        IFS="$(printf '\t')" read -r pid purl ppt <<EOF2
+$(pt_page "$1")
+EOF2
+        [ -z "$pid" ] && exit 1
+        R="$(api2 POST /comments "$(jq -cn --arg id "$pid" --arg t "$2" '{parent:{page_id:$id}, rich_text:[{type:"text",text:{content:$t}}]}')")"
+        fail_if_error "$R"
+        echo "Commented on $ppt, sir." ;;
+      *) echo "usage: notion.sh ticket read|create|status|append|comment ..." >&2; exit 1 ;;
+    esac ;;
+  testcase)
+    sub="${1:-}"; shift || true
+    case "$sub" in
+      add)
+        TARGET=""; JSONF=""
+        while [ $# -gt 0 ]; do case "$1" in --json) JSONF="${2:-}"; shift 2 ;; *) TARGET="$1"; shift ;; esac; done
+        [ -z "$TARGET" ] || [ -z "$JSONF" ] && { echo "usage: notion.sh testcase add <PT> --json <file>" >&2; exit 1; }
+        N="$(jq 'length' "$JSONF")"
+        desc "would add $N test cases to ticket $TARGET in the Test Cases database"
+        ds="$(ds_of testcases)" || exit 1
+        IFS="$(printf '\t')" read -r pid purl ppt <<EOF2
+$(pt_page "$TARGET")
+EOF2
+        [ -z "$pid" ] && exit 1
+        MAP='{}'
+        i=0
+        while [ "$i" -lt "$N" ]; do
+          TC="$(jq -c --argjson i "$i" '.[$i]' "$JSONF")"
+          R="$(api2 POST /pages "$(printf '%s' "$TC" | jq -c --arg ds "$ds" --arg tid "$pid" '
+            def rtp(v): if (v // "") == "" then empty else {rich_text:[{type:"text",text:{content:(v|tostring)[0:1900]}}]} end;
+            {parent:{type:"data_source_id", data_source_id:$ds},
+             properties: ({"Test Case": {title:[{type:"text",text:{content:(.title // "untitled")}}]},
+                           "Ticket": {relation:[{id:$tid}]},
+                           "Status": {select:{name:"Planned"}}}
+              + (if (.case_type // "") != "" then {"Case Type":{select:{name:.case_type}}} else {} end)
+              + (if .cannot_run_async == true then {"Cannot run async":{checkbox:true}} else {} end)
+              + (rtp(.setup)      | if . then {"Setup": .} else {} end)
+              + (rtp(.exercise)   | if . then {"Exercise (Call Under Test)": .} else {} end)
+              + (rtp(.assertions) | if . then {"Assertions": .} else {} end)
+              + (rtp(.cleanup)    | if . then {"Cleanup": .} else {} end)
+              + (rtp(.test_file)  | if . then {"Test File / Module": .} else {} end)
+              + (rtp(.sabotage // .notes) | if . then {"Notes": .} else {} end))}')")"
+          fail_if_error "$R"
+          MAP="$(printf '%s' "$MAP" | jq -c --arg k "$(printf '%s' "$TC" | jq -r '.title // "untitled"')" --arg v "$(printf '%s' "$R" | jq -r .id)" '. + {($k): $v}')"
+          i=$((i + 1))
+        done
+        echo "Added $N test cases to $ppt, sir."
+        printf '%s\n' "$MAP" ;;
+      status)
+        [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: notion.sh testcase status <id> <Planned|Written|Passing|Failing|Skipped> [--file <path>]" >&2; exit 1; }
+        TCID="$(nid "$1")"; ST="$2"; FILEP="${4:-}"
+        desc "would mark test case $1 as $ST"
+        R="$(api2 PATCH "/pages/$TCID" "$(jq -cn --arg st "$ST" --arg f "$FILEP" \
+          '{properties: ({Status:{select:{name:$st}}} + (if $f != "" then {"Test File / Module":{rich_text:[{type:"text",text:{content:$f}}]}} else {} end))}')")"
+        fail_if_error "$R"
+        echo "Test case marked $ST." ;;
+      *) echo "usage: notion.sh testcase add <PT> --json <file> | status <id> <Status> [--file <path>]" >&2; exit 1 ;;
+    esac ;;
+  page)
+    sub="${1:-}"; shift || true
+    case "$sub" in
+      create)
+        TITLE=""; MD=""; PARENT=""
+        while [ $# -gt 0 ]; do case "$1" in --md) MD="${2:-}"; shift 2 ;; --parent) PARENT="${2:-}"; shift 2 ;; *) [ -z "$TITLE" ] && TITLE="$1" || TITLE="$TITLE $1"; shift ;; esac; done
+        [ -z "$TITLE" ] || [ -z "$PARENT" ] && { echo "usage: notion.sh page create \"<title>\" --md <file> --parent <id|url>" >&2; exit 1; }
+        desc "would create a page \"$TITLE\" under $(printf '%.24s' "$PARENT")…"
+        PPID="$(nid "$PARENT")"
+        CH="$(md_blocks "$MD")"
+        R="$(api2 POST /pages "$(jq -n --arg p "$PPID" --arg t "$TITLE" --argjson c "$CH" \
+              '{parent:{page_id:$p}, properties:{title:{title:[{type:"text",text:{content:$t}}]}}, children: $c[0:100]}')")"
+        fail_if_error "$R"
+        PID="$(printf '%s' "$R" | jq -r .id)"
+        REST="$(printf '%s' "$CH" | jq -c '.[100:]')"
+        [ "$(printf '%s' "$REST" | jq 'length')" -gt 0 ] && append_blocks "$PID" "$REST"
+        echo "Created page \"$TITLE\": $(printf '%s' "$R" | jq -r .url)" ;;
+      append)
+        TARGET="${1:-}"; MD=""
+        shift || true
+        while [ $# -gt 0 ]; do case "$1" in --md) MD="${2:-}"; shift 2 ;; *) shift ;; esac; done
+        [ -z "$TARGET" ] || [ -z "$MD" ] && { echo "usage: notion.sh page append <id|url> --md <file>" >&2; exit 1; }
+        desc "would append notes to page $(printf '%.24s' "$TARGET")…"
+        append_blocks "$(nid "$TARGET")" "$(md_blocks "$MD")"
+        echo "Appended, sir." ;;
+      *) echo "usage: notion.sh page create \"<title>\" --md <file> --parent <id|url> | append <id|url> --md <file>" >&2; exit 1 ;;
+    esac ;;
   *) echo "usage: notion.sh whoami | search \"<q>\" | recent [n] | read <id|url> | dbs | query <db> [\"<text>\"] | create \"<title>: <body>\" [--parent <id>] | append <id|url> \"<text>\"" >&2; exit 1 ;;
 esac

@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "required": ["verdict", "acceptance", "tests", "test_run", "sabotage_record", "mr", "summary_spoken"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["pass", "fail", "blocked"]},
+    "acceptance": {"type": "array", "items": {"type": "object", "required": ["criterion", "status", "evidence"], "properties": {
+      "criterion": {"type": "string"},
+      "status": {"type": "string", "enum": ["pass", "fail", "unverified"]},
+      "evidence": {"type": "string", "description": "file:line, test name, or command output proving it"}}}},
+    "tests": {"type": "array", "items": {"type": "object", "required": ["title", "status"], "properties": {
+      "title": {"type": "string", "description": "must match the spec's test case title"},
+      "status": {"type": "string", "enum": ["Passing", "Failing", "Written", "Planned", "Skipped"]},
+      "test_file": {"type": "string"},
+      "sabotage_recorded": {"type": "boolean"}}}},
+    "test_run": {"type": "object", "required": ["command", "summary"], "properties": {
+      "command": {"type": "string"}, "passed": {"type": "integer"}, "failed": {"type": "integer"},
+      "summary": {"type": "string"}}},
+    "sabotage_record": {"type": "object", "required": ["present"], "properties": {
+      "present": {"type": "boolean"}, "path": {"type": "string"}, "matches_criteria": {"type": "boolean"}}},
+    "adr_findings": {"type": "array", "items": {"type": "object", "required": ["adr", "finding", "severity"], "properties": {
+      "adr": {"type": "string"}, "finding": {"type": "string"},
+      "severity": {"type": "string", "enum": ["blocker", "warn", "note"]}}}},
+    "mr": {"type": "object", "required": ["title", "description_markdown", "risk_label"], "properties": {
+      "title": {"type": "string"},
+      "description_markdown": {"type": "string", "description": "the FULL MR description, every template section filled, ending with exactly one /label line"},
+      "risk_label": {"type": "string", "enum": ["Low Risk", "Medium Risk", "High Risk"]}}},
+    "documentation_markdown": {"type": "string", "description": "developer/user documentation notes for the ticket"},
+    "followups": {"type": "array", "items": {"type": "string"}},
+    "summary_spoken": {"type": "string", "description": "ONE short sentence for Tom's ears"}
+  }
+}

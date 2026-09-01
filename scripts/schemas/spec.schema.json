@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "required": ["title", "slug", "subproject", "use_case", "goal", "scope", "out_of_scope",
+               "architecture", "acceptance_criteria", "test_cases", "security", "priority",
+               "labels", "estimate", "open_questions", "summary_spoken"],
+  "properties": {
+    "title": {"type": "string", "maxLength": 70},
+    "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,29}$"},
+    "subproject": {"type": "string", "description": "repo subdir the work lives in, e.g. backend, or . for the root"},
+    "use_case": {"type": "object", "required": ["actor", "story"], "properties": {
+      "actor": {"type": "string"},
+      "story": {"type": "string", "description": "As a … I want … so that …"},
+      "existing_use_case_match": {"type": ["string", "null"], "description": "exact Name of an existing Use Cases row this belongs to, else null"}}},
+    "goal": {"type": "string"},
+    "scope": {"type": "array", "items": {"type": "string"}},
+    "out_of_scope": {"type": "array", "items": {"type": "string"}},
+    "architecture": {"type": "object", "required": ["subsystems", "affected_paths", "approach", "adr_refs", "risks"], "properties": {
+      "subsystems": {"type": "array", "items": {"type": "string"}},
+      "affected_paths": {"type": "array", "items": {"type": "string"}},
+      "approach": {"type": "string"},
+      "adr_refs": {"type": "array", "items": {"type": "object", "required": ["ref", "how"], "properties": {
+        "ref": {"type": "string", "description": "e.g. ADR 017 §2"}, "how": {"type": "string"}}}},
+      "decision_refs": {"type": "array", "items": {"type": "string"}, "description": "Decisions/Open Questions refs like E05, EQ11"},
+      "risks": {"type": "array", "items": {"type": "object", "required": ["risk", "mitigation"], "properties": {
+        "risk": {"type": "string"}, "mitigation": {"type": "string"}}}},
+      "adr_impact": {"type": "string", "description": "\"none\" or which ADR needs amending and why"}}},
+    "acceptance_criteria": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "test_cases": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "object",
+      "required": ["title", "case_type", "setup", "exercise", "assertions", "cleanup", "sabotage"],
+      "properties": {
+        "title": {"type": "string"},
+        "case_type": {"type": "string", "description": "one of the live Case Type options given in the prompt"},
+        "setup": {"type": "string"}, "exercise": {"type": "string"},
+        "assertions": {"type": "string"}, "cleanup": {"type": "string"},
+        "cannot_run_async": {"type": "boolean"},
+        "test_file": {"type": "string"},
+        "sabotage": {"type": "string", "description": "what to break to watch this test fail (ADR 017)"}}}},
+    "security": {"type": "object", "required": ["risk_label"], "properties": {
+      "categories": {"type": "array", "items": {"type": "string"}},
+      "risk_label": {"type": "string", "enum": ["Low Risk", "Medium Risk", "High Risk"]},
+      "notes": {"type": "string"}}},
+    "priority": {"type": "string", "enum": ["Low", "Medium", "High", "Urgent"]},
+    "labels": {"type": "array", "items": {"type": "string"}},
+    "estimate": {"type": "string", "enum": ["S", "M", "L"]},
+    "open_questions": {"type": "array", "items": {"type": "string"}},
+    "summary_spoken": {"type": "string", "description": "ONE short sentence for Tom's ears"}
+  }
+}

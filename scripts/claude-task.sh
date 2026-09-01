@@ -5,12 +5,21 @@
 # background jobs Tom doesn't need to watch.
 #
 # Usage:
-#   claude-task.sh start <dir> "<task>"          run `claude -p` in <dir>, detached; prints the task id
+#   claude-task.sh start <dir> "<task>" [opts]   run `claude -p` in <dir>, detached; prints the task id
+#     --schema <file>   ask for structured output (--json-schema); read it with `result --json`
+#     --plan            read-only stage: --permission-mode plan instead of skip-permissions
+#     --allow <tools>   extra --allowedTools (comma list)
+#     --deny <tools>    --disallowedTools (comma list)
+#     --model <m>       model override (omit = CLI default)
+#     --tag <name>      label shown in status/notify (e.g. spec:d-123)
+#     --out <file>      copy .structured_output there once the task finishes
 #   claude-task.sh status                         every task from the last 2 days: id, state, age, gist
 #   claude-task.sh result [id|latest]             the finished task's full result text
 #   claude-task.sh followup <id|latest> "<text>"  continue that task's Claude session with a new prompt
 #   claude-task.sh log <id|latest> [n]            tail the raw log
 #   claude-task.sh stop <id|latest>               stop a running task
+#   claude-task.sh notify                         one line per task newly finished since last
+#                                                 call; SILENT otherwise (the daemon-poller contract)
 #
 # Each task lives in ~/.margie/tasks/<id>.{meta,log,json}. The json is Claude
 # Code's --output-format json result (result text, session_id, cost, turns).
@@ -38,26 +47,53 @@ age() {
   if [ $d -lt 90 ]; then echo "${d}s"; elif [ $d -lt 5400 ]; then echo "$((d/60))m"; else echo "$((d/3600))h"; fi
 }
 
-launch() { # launch <id> <dir> <prompt> [extra claude flags...]
+launch() { # launch <id> <dir> <prompt> [extra claude flags...]  (honors PERM/TAG/OUT set by start)
   local id="$1" dir="$2" prompt="$3"; shift 3
   local pf="$TASKS/$id.prompt"; printf '%s' "$prompt" > "$pf"
-  ( cd "$dir" && nohup "$CLAUDE_BIN" -p "$(cat "$pf")" --output-format json --dangerously-skip-permissions "$@" \
+  ( cd "$dir" && nohup "$CLAUDE_BIN" -p "$(cat "$pf")" --output-format json "${PERM[@]:---dangerously-skip-permissions}" "$@" \
       > "$TASKS/$id.json" 2> "$TASKS/$id.log" & echo $! > "$TASKS/$id.pid" )
   local pid; pid="$(cat "$TASKS/$id.pid")"; rm -f "$TASKS/$id.pid"
-  jq -n --arg id "$id" --arg dir "$dir" --arg task "$prompt" --argjson pid "$pid" --argjson started "$(date +%s)" \
-    '{id:$id, dir:$dir, task:$task, pid:$pid, started:$started}' > "$TASKS/$id.meta"
+  jq -n --arg id "$id" --arg dir "$dir" --arg task "$prompt" --arg tag "${TAG:-}" --arg out "${OUT:-}" \
+     --argjson pid "$pid" --argjson started "$(date +%s)" \
+    '{id:$id, dir:$dir, task:$task, tag:$tag, out:$out, pid:$pid, started:$started}' > "$TASKS/$id.meta"
+}
+# Copy structured output to its --out destination for any finished task that has one.
+harvest() {
+  local m id out j
+  for m in "$TASKS"/*.meta; do
+    [ -f "$m" ] || continue
+    id="$(basename "$m" .meta)"
+    out="$(meta "$id" out)"; [ -z "$out" ] && continue
+    [ -f "$out" ] && continue
+    running "$id" && continue
+    j="$TASKS/$id.json"
+    [ -s "$j" ] && jq -e '.structured_output' "$j" >/dev/null 2>&1 && jq '.structured_output' "$j" > "$out"
+  done
 }
 
 case "$cmd" in
   start)
-    dir="${1:-}"; shift || true; task="$*"
-    if [ -z "$dir" ] || [ -z "$task" ]; then echo "usage: claude-task.sh start <dir> \"<task>\"" >&2; exit 1; fi
+    PERM=(); TAG=""; OUT=""; EXTRA=(); dir=""; task=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --schema) EXTRA+=(--json-schema "$(cat "${2:?}")"); shift 2 ;;
+        --plan)   PERM=(--permission-mode plan); shift ;;
+        --allow)  EXTRA+=(--allowedTools "${2:?}"); shift 2 ;;
+        --deny)   EXTRA+=(--disallowedTools "${2:?}"); shift 2 ;;
+        --model)  EXTRA+=(--model "${2:?}"); shift 2 ;;
+        --tag)    TAG="${2:?}"; shift 2 ;;
+        --out)    OUT="${2:?}"; shift 2 ;;
+        *) if [ -z "$dir" ]; then dir="$1"; else task="${task:+$task }$1"; fi; shift ;;
+      esac
+    done
+    if [ -z "$dir" ] || [ -z "$task" ]; then echo "usage: claude-task.sh start <dir> \"<task>\" [--schema f] [--plan] [--allow t] [--deny t] [--model m] [--tag n] [--out f]" >&2; exit 1; fi
     dir_abs="$(cd "${dir/#\~/$HOME}" 2>/dev/null && pwd)" || { echo "No such directory '$dir', sir." >&2; exit 1; }
-    id="$(date +%s)-$(slugify "$task")"
-    launch "$id" "$dir_abs" "$task"
-    echo "Started background Claude task '$id' in $(basename "$dir_abs"), sir. Check it with: claude-task.sh status"
+    id="$(date +%s)-$(slugify "${TAG:-$task}")"
+    launch "$id" "$dir_abs" "$task" ${EXTRA[@]+"${EXTRA[@]}"}
+    echo "Started background Claude task '${TAG:-$id}' in $(basename "$dir_abs"), sir. Check it with: claude-task.sh status"
     ;;
   status|list)
+    harvest
     found=0
     for m in $(ls -t "$TASKS"/*.meta 2>/dev/null); do
       id="$(basename "$m" .meta)"; found=1
@@ -78,9 +114,15 @@ case "$cmd" in
     [ "$found" = 0 ] && echo "No background tasks, sir."
     ;;
   result)
+    JSON_OUT=0
+    ARGS2=()
+    for a in "$@"; do case "$a" in --json) JSON_OUT=1 ;; *) ARGS2+=("$a") ;; esac; done
+    set -- ${ARGS2[@]+"${ARGS2[@]}"}
     id="$(resolve_id "${1:-latest}")" || exit 1
+    harvest
     if running "$id"; then echo "Task '$id' is still running ($(age "$id")), sir."; exit 0; fi
     j="$TASKS/$id.json"
+    if [ "$JSON_OUT" = 1 ]; then jq -e '.structured_output' "$j" 2>/dev/null || { echo "Task '$id' produced no structured output, sir." >&2; exit 1; }; exit 0; fi
     if [ -s "$j" ] && jq -e . "$j" >/dev/null 2>&1; then
       jq -r '.result // "(no result text)"' "$j"
       printf '\n[%s turns, $%s, %ss, session %s]\n' \
@@ -110,8 +152,25 @@ case "$cmd" in
     id="$(resolve_id "${1:-latest}")" || exit 1
     if running "$id"; then kill "$(meta "$id" pid)" && echo "Stopped task '$id', sir."; else echo "Task '$id' isn't running, sir."; fi
     ;;
+  notify)
+    harvest
+    SEEN="$TASKS/.notified"
+    touch "$SEEN"
+    for m in $(ls -t "$TASKS"/*.meta 2>/dev/null); do
+      id="$(basename "$m" .meta)"
+      running "$id" && continue
+      grep -qxF "$id" "$SEEN" 2>/dev/null && continue
+      j="$TASKS/$id.json"
+      if [ -s "$j" ] && jq -e . "$j" >/dev/null 2>&1; then
+        if [ "$(jq -r '.is_error // false' "$j")" = "true" ]; then st="FAILED"; else st="DONE"; fi
+        gist="$(jq -r '.result // ""' "$j" | tr '\n' ' ' | cut -c1-110)"
+      else st="FAILED"; gist="$(tail -1 "$TASKS/$id.log" 2>/dev/null | cut -c1-110)"; fi
+      echo "Background task '$(meta "$id" tag | grep . || basename "$m" .meta)' finished: $st. $gist"
+      echo "$id" >> "$SEEN"
+    done
+    ;;
   *)
-    echo "usage: claude-task.sh start <dir> \"<task>\" | status | result [id] | followup <id> \"<text>\" | log [id] | stop [id]" >&2
+    echo "usage: claude-task.sh start <dir> \"<task>\" [opts] | status | result [id] [--json] | followup <id> \"<text>\" | log [id] | stop [id] | notify" >&2
     exit 1
     ;;
 esac
