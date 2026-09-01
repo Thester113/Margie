@@ -116,6 +116,12 @@ let currentEmit: ((event: string, text: string) => void) | null = null;
 function outward(cmd: string): boolean {
   return OUTWARD.some((r) => r.test(cmd));
 }
+/** A short, clear refusal of the held command — handled deterministically, no model call. */
+function isNegative(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[.!,]+$/, "");
+  if (t.split(/\s+/).length > 7) return false;
+  return /^(no|nope|nah|don'?t|do not|cancel|cancel (that|it)|never ?mind|stop|abort|hold off|not now|scratch that|forget it)\b/.test(t);
+}
 function isAffirmative(text: string): boolean {
   const t = text.trim().toLowerCase().replace(/[.!,]+$/, "");
   if (t.split(/\s+/).length > 6) return false;
@@ -690,7 +696,18 @@ async function drain() {
       turn.reply(spoken);
       continue;
     }
-    // Anything other than a yes drops the held command (Tom can re-ask or amend).
+    // A clear "no" cancels deterministically — no model turn, so nothing can be
+    // re-invoked under the guise of cancelling.
+    if (pending && isNegative(text)) {
+      logBrain(`HELD command CANCELLED by Tom: ${pending.cmd}`);
+      pending = null;
+      const spoken = "Cancelled, sir — nothing was done.";
+      history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
+      trimHistory();
+      turn.reply(spoken);
+      continue;
+    }
+    // Anything else drops the held command (Tom can re-ask or amend).
     if (pending) {
       logBrain(`HELD command dropped: ${pending.cmd}`);
       pending = null;

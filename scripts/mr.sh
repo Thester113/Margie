@@ -34,6 +34,7 @@ while [ $# -gt 0 ]; do
     --target) TARGET="${2:-main}"; shift 2 ;;
     --title) TITLE_OPT="${2:-}"; shift 2 ;;
     --description-file) DESC_FILE="${2:-}"; shift 2 ;;
+    --*) echo "Unknown option '$1', sir. Usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f]" >&2; exit 1 ;;
     *) [ -z "$REF" ] && REF="$1" || REF="$REF $1"; shift ;;
   esac
 done
