@@ -147,6 +147,7 @@ case "$cmd" in
     spec="${ARGS[*]:-}"; title="${spec%%:*}"; body="${spec#*:}"; [ "$title" = "$spec" ] && body=""
     title="$(printf '%s' "$title" | sed 's/^ *//;s/ *$//')"; body="$(printf '%s' "$body" | sed 's/^ *//')"
     [ -z "$title" ] && { echo "usage: notion.sh create \"<title>: <body>\" [--parent <id|url>]" >&2; exit 1; }
+    desc "would create a Notion page \"$title\" under ${PARENT:-the default parent page}"
     pid="$(nid "${PARENT:-$PARENT_DEFAULT}")"
     [ -z "$pid" ] && { echo "No parent page, sir — pass --parent <id|url> or set notion_parent_page in config (and connect that page to the Margie integration)." >&2; exit 1; }
     children="$(printf '%s' "$body" | paragraphs_json)"
@@ -156,9 +157,35 @@ case "$cmd" in
   append)
     id="$(nid "${1:-}")"; shift || true; text="$*"
     [ -z "$id" ] || [ -z "$text" ] && { echo "usage: notion.sh append <id|url> \"<text>\"" >&2; exit 1; }
+    desc "would append a paragraph to Notion page $(printf '%.24s' "$1")…"
     children="$(printf '%s' "$text" | paragraphs_json)"
     R="$(api PATCH "/blocks/$id/children" "$(jq -n --argjson c "$children" '{children:$c}')")"; fail_if_error "$R"
     echo "Appended to the page, sir." ;;
+  rows)
+    # rows <alias|ds|db> [n] — compact row list (title + status/date) for planner context.
+    # Aliases resolve to a data source; decisions|questions resolve their DB's first source.
+    a="${1:-tickets}"; n="${2:-30}"
+    case "$a" in
+      decisions) DB="$(cfg notion_decisions_db)" ;;
+      questions|open_questions) DB="$(cfg notion_open_questions_db)" ;;
+      *) DB="" ;;
+    esac
+    if [ -n "$DB" ]; then
+      R="$(api2 GET "/databases/$DB")"; fail_if_error "$R"
+      ds="$(printf '%s' "$R" | jq -r '.data_sources[0].id // empty')"
+      [ -z "$ds" ] && { echo "No data source on database $DB, sir." >&2; exit 1; }
+    else
+      ds="$(ds_of "$a")" || exit 1
+    fi
+    R="$(api2 POST "/data_sources/$ds/query" "$(jq -n --argjson n "$n" '{page_size:$n, sorts:[{timestamp:"last_edited_time", direction:"descending"}]}')")"
+    fail_if_error "$R"
+    printf '%s' "$R" | jq -r '.results[]? |
+      ((.properties | to_entries | map(select(.value.type=="title")) | .[0].value.title[0].plain_text) // "(untitled)")
+      + (if .properties.ID.unique_id then "  [" + (.properties.ID.unique_id.prefix // "") + "-" + (.properties.ID.unique_id.number|tostring) + "]" else "" end)
+      + (if .properties.Status.status then "  (" + .properties.Status.status.name + ")"
+         elif .properties.Status.select then "  (" + .properties.Status.select.name + ")"
+         elif .properties.Maturity.select then "  (" + .properties.Maturity.select.name + ")"
+         elif .properties.Ref then "  ref " + ((.properties.Ref.rich_text // [{plain_text:"?"}])[0].plain_text) else "" end)' ;;
   schema)
     ds="$(ds_of "${1:-tickets}")" || exit 1
     R="$(api2 GET "/data_sources/$ds")"; fail_if_error "$R"

@@ -103,6 +103,9 @@ const OUTWARD: RegExp[] = [
   /\bmessages\.sh\s+(send|sendchat)\b/,
   /\bjira\.sh\s+(create|comment)\b/,
   /\bnotion\.sh\s+(create|append)\b/,
+  /\bnotion\.sh\s+(ticket\s+(create|status|comment|append)|testcase\s+(add|status)|page\s+(create|append))\b/,
+  /\bdispatch\.sh\s+(file|go|close)\b/,
+  /\bagent-messages\.sh\s+(send|reply|ack)\b/,
 ];
 const PENDING_TTL_MS = 3 * 60 * 1000;
 let pending: { cmd: string; at: number } | null = null;
@@ -121,7 +124,7 @@ const BASH_TOOL = {
   function: {
     name: "bash",
     description:
-      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, worktree.sh, forge.sh, notion.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
+      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
     parameters: {
       type: "object",
       properties: { command: { type: "string", description: "The shell command to run." } },
@@ -130,24 +133,35 @@ const BASH_TOOL = {
   },
 };
 
-function runBash(cmd: string, confirmed = false): Promise<string> {
+async function runBash(cmd: string, confirmed = false): Promise<string> {
+  if (denied(cmd)) {
+    logBrain(`BASH DENIED: ${cmd}`);
+    return "DENIED: Margie is a dispatcher and may not run that command directly. Use a helper script (e.g. review-pr.sh, kickoff-claude.sh) to do it in a supervised Warp session instead.";
+  }
+  if (!confirmed && outward(cmd)) {
+    pending = { cmd, at: Date.now() };
+    logBrain(`BASH HELD (awaiting Tom's yes): ${cmd}`);
+    let held =
+      "HELD — NOTHING WAS DONE. This acts on Tom's behalf, so confirm first: in ONE sentence tell Tom exactly what is about to happen (quote any message text), then ask for his yes. Do not call any tool now. It runs only after he confirms.";
+    // Margie's own scripts can say precisely what they WOULD do (side-effect
+    // free under MARGIE_DESCRIBE=1) — so the read-back is accurate, not guessed.
+    if (/\b(dispatch|notion|agent-messages)\.sh\b/.test(cmd)) {
+      const described = await runBashRaw(cmd, { MARGIE_DESCRIBE: "1" });
+      if (described && !described.startsWith("[")) held += ` Exactly what it would do: ${described.split("\n")[0]}`;
+    }
+    return held;
+  }
+  return runBashRaw(cmd);
+}
+
+function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise<string> {
   return new Promise((resolve) => {
-    if (denied(cmd)) {
-      logBrain(`BASH DENIED: ${cmd}`);
-      resolve("DENIED: Margie is a dispatcher and may not run that command directly. Use a helper script (e.g. review-pr.sh, kickoff-claude.sh) to do it in a supervised Warp session instead.");
-      return;
-    }
-    if (!confirmed && outward(cmd)) {
-      pending = { cmd, at: Date.now() };
-      logBrain(`BASH HELD (awaiting Tom's yes): ${cmd}`);
-      resolve("HELD — NOTHING WAS SENT. This sends something on Tom's behalf, so confirm first: in ONE sentence tell Tom exactly what you're about to send and to whom (quote the message text), then ask for his yes. Do not call any tool now. It will be sent only after he confirms.");
-      return;
-    }
-    logBrain(`BASH: ${cmd}`);
+    logBrain(`BASH${extraEnv.MARGIE_DESCRIBE ? " (describe)" : ""}: ${cmd}`);
     // Put Margie's scripts dir on PATH so bare names (messages.sh, slack.sh…)
     // resolve even when the model omits the full path.
     const env = {
       ...process.env,
+      ...extraEnv,
       MARGIE_HOME,
       MARGIE_ENGINE: ENGINE,
       PATH: `${SCRIPTS}:${process.env.PATH || ""}`,
@@ -218,6 +232,26 @@ should be: pick the ONE right helper/command, run it, report one short sentence.
 ALWAYS confirm first (read it back in one sentence, wait for Tom's yes) before
 anything outward or irreversible: sending Slack/email, Jira or Notion writes, or
 any ${SITE}/git write. Never take those actions unprompted.
+
+BUILDING A FEATURE — PRODUCT, ARCHITECTURE AND QA FIRST. When Tom asks you to
+BUILD, ADD, or IMPLEMENT something non-trivial in a repo, do NOT kick off a
+session directly. Run the dispatch pipeline (one command per turn):
+    ${SCRIPTS}/dispatch.sh spec "<repo>" "<Tom's request, his words>"
+    → say: "I'm drafting the product spec, architecture notes and QA plan, sir —
+       a few minutes." (Add --subdir <dir> only if Tom names a sub-project.)
+"Is the spec ready / what's the plan?" → dispatch.sh show — read its lines aloud
+   (they're written to be spoken), especially any open questions.
+"Go / file it / do it" → dispatch.sh go   (it is HELD; read back what it says it
+   will do and wait for Tom's yes. That one yes covers the Notion ticket, the
+   test cases, the spec page and starting the Claude Code session.)
+"Run QA / verify it / is it correct?" → dispatch.sh qa <PT>  ("watch it" → --watch)
+"How's the ticket / dispatch?" → dispatch.sh status — one sentence.
+"What did QA find?" → dispatch.sh status <PT> then summarize; full text via
+   dispatch.sh open <PT> qa (opens in Warp — never read long reports aloud).
+"Cancel it" → dispatch.sh close <PT>  (held).
+A tiny fix Tom explicitly calls quick ("just patch", "one-liner") may skip the
+pipeline and use a plain kickoff — but when in doubt, spec first.
+"What's PT-296 about?" → notion.sh ticket read PT-296, summarize in a sentence.
 
 CODING SESSIONS IN WARP (the main thing Tom asks for). Use the tested helpers —
 never drive Warp with AppleScript keystrokes.
