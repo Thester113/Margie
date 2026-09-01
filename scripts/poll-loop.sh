@@ -15,6 +15,7 @@ n=0
 while true; do
   "$DIR/dispatch.sh" tick 2>>"$LOG" | say
   "$DIR/claude-task.sh" notify 2>>"$LOG" | say
+  MARGIE_POLLER=1 "$DIR/slack-watch.sh" 2>>"$LOG" | say
   if [ $((n % 5)) = 0 ]; then "$DIR/agent-messages.sh" check 2>>"$LOG" | say; fi
   n=$((n + 1))
   sleep 60
