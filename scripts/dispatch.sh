@@ -33,11 +33,17 @@ st() { # st <dir> [new-state]
   if [ $# -gt 1 ]; then printf '%s' "$2" > "$1/state"; else cat "$1/state" 2>/dev/null || echo "unknown"; fi
 }
 dmeta() { jq -r ".$2 // empty" "$1/d.json" 2>/dev/null; }
-resolve_d() { # id | PT-### | latest -> dispatch dir (follows the PT symlink)
-  local x="${1:-latest}" p
+resolve_d() { # id | PT-### | latest | fuzzy word -> dispatch dir (follows the PT symlink)
+  local x="${1:-latest}" p m
   [ "$x" = "latest" ] && { ls -td "$MDIR"/d-* 2>/dev/null | head -1; return; }
   p="$MDIR/$x"
   [ -e "$p" ] && { cd "$p" 2>/dev/null && pwd -P; return; }
+  # Fuzzy: newest dispatch whose id or spec title mentions the word ("healthz").
+  m="$(ls -td "$MDIR"/d-* 2>/dev/null | grep -i -- "$(printf '%s' "$x" | tr 'A-Z ' 'a-z-')" | head -1)"
+  [ -n "$m" ] && { echo "$m"; return; }
+  for p in $(ls -td "$MDIR"/d-* 2>/dev/null); do
+    jq -re --arg x "$x" '.title | ascii_downcase | contains($x | ascii_downcase)' "$p/spec.json" >/dev/null 2>&1 && { echo "$p"; return; }
+  done
   echo ""
 }
 need_d() {
@@ -273,6 +279,7 @@ case "$cmd" in
       echo "$LINE"
     done
     [ "$FOUND" = 0 ] && echo "No active dispatches, sir."
+    exit 0
     ;;
 
   tick)
