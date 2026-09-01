@@ -57,6 +57,17 @@
   config; bot named "Margie" in the Amby AI workspace). It sees only pages
   connected to it — an empty search usually means nothing is connected yet,
   not a bug.
+- **The brain is a shared daemon** (`~/.margie/brain.sock`, lock at
+  `brain.lock`): app + `margie` CLI share history and the held command. State
+  lives only in `sidecar/src/brain.ts`; stdio mode remains the smoke-test
+  surface. Rebuilding `sidecar/dist` makes the daemon drain and restart.
+- **Dispatch pipeline**: `dispatch.sh spec|show|file|implement|go|qa|status|
+  tick|open|close`. Planner/QA output is schema-validated JSON in
+  `~/.margie/dispatch/<id>/`; `file|go|close` are OUTWARD-held; `tick` is
+  bookkeeping under the `go` confirmation (including Done-on-merge, Tom's
+  explicit choice). Ticket/testcase/page writes go through `notion.sh`, whose
+  every write honors `MARGIE_DESCRIBE=1` — keep it that way, the gate's
+  read-back depends on it.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on a ≤6-word affirmative within 3 minutes; anything else

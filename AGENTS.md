@@ -70,6 +70,16 @@ npm run tauri dev              # run the app
 - Headless tasks live in `~/.margie/tasks/<id>.{meta,log,json}` and are
   managed only through `scripts/claude-task.sh` (start/status/result/followup/
   stop) — don't teach the brain raw `claude -p`.
+- The sidecar is now several modules: ALL shared state (history, `pending`,
+  gates, queue) lives in `brain.ts` only; `server.ts` is the socket daemon +
+  pollers; `index.ts` keeps the stdio mode for smoke tests; `client.ts`/
+  `cli.ts` are the `margie` terminal client. Never put brain state anywhere
+  but brain.ts. After `npm run build` the daemon drains and restarts itself.
+- dispatch.sh is the product/architecture/QA pipeline; its planner and QA
+  stages are headless Claude runs with JSON schemas (`scripts/schemas/`) and
+  prompts (`scripts/prompts/`). Notion writes go through notion.sh, which must
+  keep `MARGIE_DESCRIBE=1` side-effect-free on EVERY write subcommand — the
+  sidecar uses it to read back exactly what a held command will do.
 - The brain is a small, fast, non-reasoning model: it is unreliable with long
   piped one-liners and tends to open a Warp session instead. Anything she
   should do inline gets a tested helper script with trivial subcommands

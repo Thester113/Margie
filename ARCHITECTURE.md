@@ -97,6 +97,35 @@ The brain runs with an in-sidecar deny-list (no `git push/commit`, no forge
 writes, no `rm`/`sudo`) so anything outward happens only in those supervised
 sessions. `engine` in `~/.margie/config.json` can swap the session CLI.
 
+## The shared brain daemon
+
+The sidecar is a daemon on `~/.margie/brain.sock` (NDJSON, 0600).
+`sidecar/src/brain.ts` owns ALL shared state — conversation history, the held
+outward command, the DENY/OUTWARD gates, the single-writer turn queue — and
+`server.ts` serves it to every client: the Tauri shell (`brain.rs` connects,
+spawning `node dist/index.js --daemon` on demand) and any number of `margie`
+CLIs in Warp. Whoever asked gets the reply; a "yes" in any client confirms the
+one held command. Lifecycle: detaching launcher, `~/.margie/brain.lock`
+(O_EXCL) as the single-daemon arbiter, drain-and-exit when `dist/index.js` is
+rebuilt, stdio mode kept for smoke tests
+(`echo '{"id":1,"text":"hi"}' | node sidecar/dist/index.js`).
+
+The daemon also hosts the pollers: `dispatch.sh tick` and `claude-task.sh
+notify` every minute, `agent-messages.sh check` every five — each silent when
+idle; any output becomes a notice (into history, broadcast to clients, and a
+spoken announcement via `~/.margie/announce/` while the app is connected).
+
+## The dispatch pipeline (product → architecture → QA)
+
+`scripts/dispatch.sh` drives one feature from words to merged MR:
+`spec` (headless Claude planner in the repo, JSON-schema'd output) → `show`
+(spoken summary + open questions) → `go` [held for Tom's yes] = `file` (Notion
+ticket in the team Tickets DB, Test Cases rows, spec child page) + `implement`
+(worktree branch `margie/PT-###-…`, watchable session seeded with the spec) →
+`qa` (read-only verifier: per-criterion evidence, test run, sabotage record,
+ADR findings, full MR text draft) → `tick` (writes QA back to Notion, flips
+ticket status, detects the merged MR → Done). State in `~/.margie/dispatch/`.
+
 ## Security notes
 
 - Camera/mic permission strings: `src-tauri/Info.plist`.

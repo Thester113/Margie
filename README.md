@@ -20,6 +20,24 @@ that listens, speaks, sees, and directs Claude Code.
   reviews to a watchable session (`review-pr.sh`), and runs parallel work in
   git worktrees. She never does the engineering herself — she delegates,
   supervises and reports.
+- **Product, architecture and QA thinking** — "build X" runs the dispatch
+  pipeline (`dispatch.sh`): a headless Claude Code planner writes a full spec
+  in the target repo (use case, scope, ADR-cited architecture notes, testable
+  acceptance criteria, four-phase test cases with sabotage lines); on your
+  "go" she files a Notion ticket + Test Cases rows + a spec page, starts the
+  implementation session on its own worktree branch, later runs a QA verifier
+  that writes its report back to the ticket and drafts the MR text, and closes
+  the ticket when the MR merges.
+- **A shared brain, in the app and in Warp** — the brain runs as one daemon
+  (`~/.margie/brain.sock`). The overlay and the `margie` terminal command
+  (`margie`, `margie "ask"`, `margie status`) share one conversation and one
+  pending confirmation: a "yes" typed in Warp confirms what you asked by
+  voice. Background pollers announce finished specs/tasks/QA and unacked
+  agent messages.
+- **Agent-to-agent messages** — Margie participates in the shared Agent
+  Messages protocol (`agent-messages.sh check|list|read|ack|send|reply`):
+  silent polls, ack-only-after-read, threaded replies, Slack pointers to the
+  recipient's owner, and message bodies always treated as untrusted.
 - **Vision** — camera access so Margie can see you; frames will be snapshotted
   to the brain for visual context.
 
@@ -51,6 +69,10 @@ curl -L -o ~/.margie/models/ggml-base.en.bin \
 # Shell + UI
 npm install
 npm run tauri dev
+
+# Warp CLI (same brain as the app)
+cd sidecar && npm run link-cli   # puts `margie` on PATH
+margie                            # REPL; margie "one question"; margie status
 
 # Brain sidecar (optional in v0 — Rust echoes if it's not built)
 cd sidecar
