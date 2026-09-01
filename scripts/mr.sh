@@ -114,14 +114,14 @@ case "$cmd" in
     if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then
       # Describe without kicking a draft: say what's known.
       if [ -s "$STATE/qa.json" ] || [ -s "$STATE/mr-draft.json" ] || [ -n "$DESC_FILE" ]; then ensure_description >/dev/null 2>&1; fi
-      desc "would push branch $BRANCH and open a${DRAFT:+ draft} merge request${TITLE:+ \"$TITLE\"}${RISK:+ ($RISK)} into $TARGET in $(repo_name)${PT:+, linked to $PT}"
+      desc "would push branch $BRANCH and open a$([ "$DRAFT" = 1 ] && echo " draft") merge request${TITLE:+ \"$TITLE\"}${RISK:+ ($RISK)} into $TARGET in $(repo_name)${PT:+, linked to $PT}"
     fi
     ensure_description || exit 0
     N="$(git -C "$WT" rev-list --count "origin/$TARGET..HEAD" 2>/dev/null || echo "?")"
     [ "$N" = "0" ] && { echo "Branch $BRANCH has no commits beyond $TARGET yet, sir — nothing to open."; exit 1; }
     if [ "${DRY_RUN:-0}" = "1" ]; then
       echo "DRY RUN — would run in $WT:"; echo "  git push -u origin $BRANCH"
-      echo "  glab mr create --source-branch $BRANCH --target-branch $TARGET --title \"$TITLE\" --description @$DESCF --yes${DRAFT:+ --draft}"
+      echo "  glab mr create --source-branch $BRANCH --target-branch $TARGET --title \"$TITLE\" --description @$DESCF --yes$([ "$DRAFT" = 1 ] && echo " --draft")"
       exit 0
     fi
     git -C "$WT" push -u origin "$BRANCH" >/dev/null 2>&1 || { echo "Couldn't push $BRANCH, sir — check the remote/auth." >&2; exit 1; }
@@ -139,7 +139,7 @@ case "$cmd" in
       "$DIR/notion.sh" ticket append "$PT" --md "$STATE/mr-note.md" >/dev/null 2>&1 || true
       "$DIR/notion.sh" ticket status "$PT" "In Review" >/dev/null 2>&1 || true
     fi
-    echo "Opened ${DRAFT:+draft }MR \"$TITLE\" ($RISK): $URL${PT:+ — linked on $PT}" ;;
+    echo "Opened $([ "$DRAFT" = 1 ] && echo "draft ")MR \"$TITLE\" ($RISK): $URL${PT:+ — linked on $PT}" ;;
   update)
     [ -n "$REF" ] || { echo "usage: mr.sh update <PT|!n> [--title <t>] [--description-file <f>]" >&2; exit 1; }
     desc "would update MR $REF${TITLE_OPT:+ title → \"$TITLE_OPT\"}${DESC_FILE:+ and replace its description}"
