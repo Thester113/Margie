@@ -157,10 +157,13 @@ case "$cmd" in
       read_member_channels "$args"
     fi
     ;;
-  send|reply)
+  send|reply|dm)
     target="${args%%:*}"; text="${args#*:}"
     target="$(echo "$target" | sed 's/^ *//;s/ *$//')"; text="$(echo "$text" | sed 's/^ *//;s/ *$//')"
-    if [ -z "$target" ] || [ -z "$text" ]; then echo "usage: slack.sh $cmd \"<#channel|@user|name>: <message>\"" >&2; exit 1; fi
+    if [ -z "$target" ] || [ -z "$text" ] || [ "$target" = "$args" ]; then
+      echo "FORMAT ERROR — nothing sent. The argument must be \"<target>: <message>\" with a colon after the target, e.g. slack.sh send \"@Tom: hello\" or slack.sh send \"#team-engineering: hello\". Retry with a target." >&2
+      exit 1
+    fi
     cid="$(resolve_target "$target")"
     [ -z "$cid" ] && { echo "Couldn't find '$target' on Slack, sir (bot must be a member of the channel)." >&2; exit 1; }
     RESP="$(api chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$text")"
