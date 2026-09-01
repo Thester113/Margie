@@ -7,6 +7,9 @@ SPEC
 {{SPEC}}
 
 CONVENTIONS
+- Before changing anything, read the repo-root adrs/ (horizontal rules that
+  apply to every subproject) and then this subproject's adrs/; the ADR review
+  bot holds changes against both.
 - You are on branch {{BRANCH}} in an isolated worktree; commit as you go using
   the repo's commit format with "({{PT}})" in the subject.
 - Every acceptance criterion above must end up demonstrably true, covered by
