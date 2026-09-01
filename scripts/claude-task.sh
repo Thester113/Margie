@@ -94,6 +94,11 @@ case "$cmd" in
       esac
     done
     if [ -z "$dir" ] || [ -z "$task" ]; then echo "usage: claude-task.sh start <dir> \"<task>\" [--schema f] [--plan] [--allow t] [--deny t] [--model m] [--tag n] [--out f]" >&2; exit 1; fi
+    # Default model for dispatched runs (claude_model in config) unless --model was given.
+    if ! printf '%s\n' ${EXTRA[@]+"${EXTRA[@]}"} | grep -qx -- --model; then
+      DM="$(jq -r '.claude_model // empty' "$HOME/.margie/config.json" 2>/dev/null)"
+      [ -n "$DM" ] && EXTRA+=(--model "$DM")
+    fi
     dir_abs="$(cd "${dir/#\~/$HOME}" 2>/dev/null && pwd)" || { echo "No such directory '$dir', sir." >&2; exit 1; }
     id="$(date +%s)-$(slugify "${TAG:-$task}")"
     launch "$id" "$dir_abs" "$task" ${EXTRA[@]+"${EXTRA[@]}"}

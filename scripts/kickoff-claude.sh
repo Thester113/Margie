@@ -89,7 +89,10 @@ INNER="$TASK_DIR/inner-$STAMP.sh"
 # Pick the CLI binary. Claude Code unless grok was explicitly requested.
 case "$(printf '%s' "$ENGINE" | tr 'A-Z' 'a-z')" in
   grok*) ENGINE_BIN="grok" ;;
-  *) ENGINE_BIN="claude" ;;
+  *) ENGINE_BIN="claude"
+     # Default model for dispatched sessions (claude_model in ~/.margie/config.json).
+     DM="$(jq -r '.claude_model // empty' "$HOME/.margie/config.json" 2>/dev/null)"
+     [ -n "$DM" ] && ENGINE_BIN="claude --model '$DM'" ;;
 esac
 if [ -n "${MARGIE_TEST_CMD:-}" ]; then
   CLAUDE_LINE="$MARGIE_TEST_CMD"

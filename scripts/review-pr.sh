@@ -70,7 +70,8 @@ if [ "$REVIEWER" = "grok" ]; then
   REV_CMD="grok --always-approve \"$PROMPT\""
 else
   REVIEWER="claude"
-  REV_CMD="claude --dangerously-skip-permissions \"$PROMPT\""
+  DM="$(cfg claude_model)"
+  REV_CMD="claude${DM:+ --model '$DM'} --dangerously-skip-permissions \"$PROMPT\""
 fi
 
 INNER="$TASK_DIR/inner-$STAMP.sh"
