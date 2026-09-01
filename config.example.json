@@ -18,8 +18,10 @@
   "_xai": "Margie's conversational brain (sidecar/src/index.ts) runs on the xAI chat API. Required for her to answer at all.",
 
   "slack_via": "claude",
+  "slack_send_as": "margie",
   "slack_user_token": "xoxp-...",
   "slack_token": "xoxb-...",
+  "_slack2": "slack_send_as: 'margie' (default when a bot token exists) posts as the Margie Slack app; 'tom' sends as you via the connector/user token. Reads/search always use the richest available backend.",
   "_slack": "slack.sh read/send default to Claude Code's Slack connector (the claude.ai Slack app — run `claude mcp list` to confirm it's connected) when no token is set; slack_via: 'claude' forces it even with tokens. Tokens: user token = direct Web API as Tom; bot token = posts as @margie and is REQUIRED for the slack-watch.sh @mention watcher (that one doesn't use the connector).",
 
   "gmail_address": "you@example.com",

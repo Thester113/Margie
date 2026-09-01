@@ -30,12 +30,19 @@ BTOK="$(jq -r '.slack_token // empty' "$CFG" 2>/dev/null)"
 # Prefer the user token; fall back to the bot token.
 TOKEN="${UTOK:-$BTOK}"
 VIA="$(jq -r '.slack_via // empty' "$CFG" 2>/dev/null)"
+SEND_AS="$(jq -r '.slack_send_as // empty' "$CFG" 2>/dev/null)"
+# Sends default to the @Margie BOT identity whenever a bot token exists
+# (slack_send_as: "tom" reverts to sending as Tom via the connector/user token).
+BOT_SEND=0
+case "${1:-read}" in
+  send|reply|dm) [ -n "$BTOK" ] && [ "$SEND_AS" != "tom" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;
+esac
 
 # ── Backend 2: Claude Code's Slack connector (the claude.ai Slack app) ──────────
 # Used when no raw token is configured, or slack_via is "claude". Each call is a
 # headless `claude -p` with ONLY the Slack tools it needs allowed, so Claude acts
 # as Tom in Slack through the connector — no token to manage here.
-if [ -z "$TOKEN" ] || [ "$VIA" = "claude" ]; then
+if [ "$BOT_SEND" = 0 ] && { [ -z "$TOKEN" ] || [ "$VIA" = "claude" ]; }; then
   CLAUDE_BIN="${MARGIE_CLAUDE_BIN:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
   CMODEL="${MARGIE_SLACK_MODEL:-sonnet}"
   T="mcp__claude_ai_Slack__"
@@ -125,7 +132,11 @@ resolve_target() { # -> channel id to post to
   case "$t" in
     \#*) name="${t#\#}" ;;
     @*)  name="${t#@}"
-         local uid; uid="$(api users.list -d "limit=1000" | jq -r --arg n "$name" '.members[]? | select((.name==$n) or (.profile.display_name==$n) or (.real_name==$n)) | .id' | head -1)"
+         local uid
+         case "$name" in
+           U[A-Z0-9]*) uid="$name" ;;
+           *) uid="$(api users.list -d "limit=1000" | jq -r --arg n "$name" '.members[]? | select((.name==$n) or (.profile.display_name==$n) or (.real_name==$n)) | .id' | head -1)" ;;
+         esac
          [ -z "$uid" ] && { echo ""; return; }
          # Prefer an EXISTING DM (only needs im:read); posting there needs just
          # chat:write. Fall back to conversations.open (needs im:write) if none.

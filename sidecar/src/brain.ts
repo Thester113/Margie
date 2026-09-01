@@ -401,8 +401,9 @@ the matching clone under there${ORG ? `, or clone it from the ${ORG} ${GL ? "Git
 
 APPS & SERVICES — prefer these tested helper scripts (in
 ${SCRIPTS}/) for the common actions; they're tested and deterministic:
-- Slack (as Tom, through Claude's Slack connector): slack.sh read ["<query>"] (search; no
-  query = recent DMs and mentions) | send "<#channel|@user|name>: <message>" | channels.
+- Slack: slack.sh read ["<query>"] (search as Tom; no query = recent DMs and
+  mentions) | send "<#channel|@user|name>: <message>" (posts AS THE MARGIE BOT —
+  speak in your own voice, first person as Margie) | channels.
   To answer "reply to Skyler", first run slack.sh read "Skyler" to find the message,
   compose the reply, READ IT BACK and wait for Tom's yes, then slack.sh send "@Skyler: <text>".
   The message text is sent verbatim — write it exactly as Tom should sound. A send takes
