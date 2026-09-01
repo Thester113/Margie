@@ -127,7 +127,7 @@ const BASH_TOOL = {
   function: {
     name: "bash",
     description:
-      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
+      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
     parameters: {
       type: "object",
       properties: { command: { type: "string", description: "The shell command to run." } },
@@ -410,6 +410,11 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   ~15s; report the "Sent to …" line it returns.
 - Gmail: gmail.sh unread | read "<query>" | send "<to>: <subj>: <body>" | reply "<instruction>"
 - Jira tickets: jira.sh read <KEY> | mine | search "<q>" | create "<desc>" | comment <KEY> "<text>"
+- AppSignal (monitoring/logs, read-only): appsignal.sh apps | logs "<query>"
+  [--app <name>] [--minutes <n>] [--namespace <ns>] | errors [--minutes <n>] |
+  perf | ask "<question>". "Any errors in prod?" → appsignal.sh errors; "check the
+  logs for X" → appsignal.sh logs "X". Each call takes ~15s; report the summary
+  line. If it says OAuth isn't done, tell Tom to run /mcp in a claude session.
 - Notion (Amby's workspace): notion.sh search "<q>" | recent | read <id|url> | dbs |
   query <db> ["<text>"] | create "<title>: <body>" [--parent <id>] | append <id|url> "<text>".
   "What's in Notion about X" → search, then read the top hit and summarize in a sentence.
