@@ -193,11 +193,21 @@ EOF2
     printf '%s' "$R" | jq -e '.object == "page"' >/dev/null || { echo "Notion refused the message, sir: $(printf '%s' "$R" | jq -r '.message // "?"')" >&2; exit 1; }
     MURL="$(printf '%s' "$R" | jq -r .url)"
     echo "Posted \"$SUBJ\" to $TO: $MURL"
-    # Slack pointer to each recipient's OWNER — ≤3 sentences, the row is the record.
+    # Slack pointer to each recipient's OWNER — ≤3 sentences, the row is the
+    # record. Sent AS the @Margie bot when a bot token exists (per protocol, the
+    # agent pings the owner); otherwise through slack.sh's default backend.
+    BTOK="$(cfg slack_token)"
     for t in $(printf '%s' "$TO" | tr ',' ' '); do
       SLACK="$(owner_of "$t" slack_user_id)"
       [ -z "$SLACK" ] && continue
-      "$DIR/slack.sh" send "@$SLACK: Margie left an agent message for $t: \"$SUBJ\". $MURL" | tail -1
+      PTR="Margie left an agent message for $t: \"$SUBJ\". $MURL"
+      if [ -n "$BTOK" ]; then
+        PR="$(curl -sS --max-time 8 -X POST -H "Authorization: Bearer $BTOK" -H "Content-Type: application/json" \
+          --data "$(jq -cn --arg ch "$SLACK" --arg t "$PTR" '{channel:$ch, text:$t}')" https://slack.com/api/chat.postMessage)"
+        printf '%s' "$PR" | jq -e '.ok == true' >/dev/null && echo "DM'd $t's owner as @Margie." || echo "Pointer DM to $t's owner failed: $(printf '%s' "$PR" | jq -r '.error // "?"')"
+      else
+        "$DIR/slack.sh" send "@$SLACK: $PTR" | tail -1
+      fi
     done
     ;;
   *)
