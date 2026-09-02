@@ -17,6 +17,8 @@ export interface WireIn {
   id?: number;
   text?: string;
   source?: string;
+  conv?: string;     // Slack conversation id the turn came from (isolation key)
+  speaker?: string;  // who actually said it ("Cody Poll"); default: the owner
   op?: "hello" | "status" | "ping" | "stop";
   build?: number;
 }

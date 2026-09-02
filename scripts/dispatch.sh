@@ -195,17 +195,28 @@ case "$cmd" in
     esac
     # Supersede any previous planner run for this dispatch: stop it if running and
     # detach its --out so a finished one can't re-deposit the old spec.
+    # A planner that started less than 10 minutes ago is replaced on the spot (little
+    # is lost and nothing would be running otherwise); an older one runs to completion
+    # and the new context is folded into the next re-plan.
+    LAST="$(cat "$D/planner-started" 2>/dev/null || echo 0)"
+    RESTART=0
     if [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" = "RUNNING" ]; then
-      "$DIR/claude-task.sh" stop "spec:$(basename "$D")" >/dev/null 2>&1 || true
+      if [ $(( $(date +%s) - LAST )) -lt 600 ]; then
+        "$DIR/claude-task.sh" stop "spec:$(basename "$D")" >/dev/null 2>&1 || true; RESTART=1
+      else
+        printf '\n\nADDENDUM (%s): %s' "$(date -u +%FT%TZ)" "$EXTRA" >> "$D/request.txt"
+        touch "$D/replan-pending"
+        echo "Noted, dearie — the current planning run is well along, so I've added that to the request and will re-plan in one go once it finishes."
+        exit 0
+      fi
     fi
     while [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "NONE" ]; do
       "$DIR/claude-task.sh" detach "spec:$(basename "$D")" >/dev/null 2>&1 || break
     done
     printf '\n\nADDENDUM (%s): %s' "$(date -u +%FT%TZ)" "$EXTRA" >> "$D/request.txt"
     # Coalesce: each planner run is a multi-minute Claude session. If one ran in the
-    # last 20 minutes, just queue the context — tick re-plans once things go quiet.
-    LAST="$(cat "$D/planner-started" 2>/dev/null || echo 0)"
-    if [ $(( $(date +%s) - LAST )) -lt 1200 ]; then
+    # last 20 minutes (and we didn't just replace it), queue the context — tick re-plans once things go quiet.
+    if [ "$RESTART" = 0 ] && [ $(( $(date +%s) - LAST )) -lt 1200 ]; then
       touch "$D/replan-pending"
       echo "Noted, dearie — I've added that to the spec's request; I'll re-plan in one go shortly rather than start another run right now."
       exit 0

@@ -243,14 +243,15 @@ async function repl() {
   safePrompt();
 }
 
-async function oneShot(text: string, quiet: boolean) {
+async function oneShot(text: string, quiet: boolean, extra: Record<string, unknown> = {}) {
   const c = await ensureDaemon();
   const spin = new Spinner();
-  if (quiet) { c.onEvent = () => { /* silent */ }; console.log(await c.request(text)); c.close(); return; }
+  const source = (process.env.MARGIE_SOURCE as string) || "cli";
+  if (quiet) { c.onEvent = () => { /* silent */ }; console.log(await c.request(text, source, extra)); c.close(); return; }
   // Progress to stderr so stdout stays the reply (pipeable).
   const errSpin = new (class extends Spinner { start() { /* no spinner on stderr */ } stop() { /* noop */ } clear() { /* noop */ } })();
   c.onEvent = (m) => renderEvent(m, errSpin, process.stderr);
-  const reply = await c.request(text);
+  const reply = await c.request(text, source, extra);
   spin.stop();
   console.log(TTY ? renderReply(reply) : reply);
   c.close();
@@ -259,7 +260,15 @@ async function oneShot(text: string, quiet: boolean) {
 async function main() {
   const args = process.argv.slice(2);
   const quiet = args.includes("-q");
-  const rest = args.filter((a) => a !== "-q");
+  // --conv <id> / --speaker <name>: set by the Slack watcher so the brain knows where a turn came from and who spoke.
+  const extra: Record<string, unknown> = {};
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-q") continue;
+    if (args[i] === "--conv") { extra.conv = args[++i]; continue; }
+    if (args[i] === "--speaker") { extra.speaker = args[++i]; continue; }
+    rest.push(args[i]);
+  }
   const cmd = rest[0];
 
   if (cmd === "status") { await cmdStatus(); return; }
@@ -276,7 +285,7 @@ async function main() {
     return;
   }
   if (cmd === "log") { spawnSync("tail", ["-40", `${HOME}/.margie/brain.log`], { stdio: "inherit" }); return; }
-  if (rest.length > 0) { await oneShot(rest.join(" "), quiet); return; }
+  if (rest.length > 0) { await oneShot(rest.join(" "), quiet, extra); return; }
   await repl();
 }
 

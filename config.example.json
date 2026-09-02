@@ -33,6 +33,7 @@
   "_standup": "Margie drafts the owner's daily standup from git/MR/ticket evidence on weekdays at standup_time: mode draft = DM the draft and wait for 'post my standup'; post = post it herself; off.",
   "slack_owner_id": "U0AAAAAAAAA",
   "owner_first_name": "Tom",
+  "pronouns": { "Cody Poll": "they/them" },
   "_slack_watch": "Watcher for @Margie and @<owner> mentions in channels the bot is in: off | preview (drafts DM'd to the owner, nothing posted) | live (replies in-thread as the owner's assistant). slack_owner_id: the owner's Slack user id (falls back to the agent roster).",
   "slack_user_token": "xoxp-...",
   "slack_token": "xoxb-...",

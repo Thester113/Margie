@@ -33,6 +33,7 @@ install_daemon() {
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$LABEL</string>
+  <key>AbandonProcessGroup</key><true/>
   <key>ProgramArguments</key>
   <array>
     <string>$NODE</string>

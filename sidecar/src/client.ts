@@ -95,12 +95,12 @@ export class Client {
     }
   }
 
-  request(text: string, source = "cli"): Promise<string> {
+  request(text: string, source = "cli", extra: Record<string, unknown> = {}): Promise<string> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       if (this.dead || this.sock.destroyed) { reject(new Error("daemon connection closed")); return; }
       this.waiters.set(id, { resolve, reject });
-      this.sock.write(JSON.stringify({ id, text, source }) + "\n", (err) => { if (err) this.failAll(err); });
+      this.sock.write(JSON.stringify({ id, text, source, ...extra }) + "\n", (err) => { if (err) this.failAll(err); });
     });
   }
 

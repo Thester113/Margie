@@ -84,6 +84,18 @@
   `MARGIE_DAEMON_CHILD=1`; `ai.margie.app` opens /Applications/Margie.app).
   Don't use AppleScript Login Items — they trigger macOS Automation prompts
   that hang non-interactive shells.
+- **Conversations are isolated in the brain.** Every turn carries `conv`
+  (Slack conversation id) and `speaker`; a colleague's turn sees only that
+  conversation's history and may run only `dispatch.sh show|status|amend|qa`,
+  `notion.sh ticket read|find|rows`, `forge.sh`, `appsignal.sh` (deterministic
+  allowlist in `brain.ts` — no `slack.sh read`, so nobody can pump her for
+  another chat). Tom's own turns see everything, labelled by conversation.
+  Replies are passed through `neutralize()` (they/them); stated pronouns live
+  in config `pronouns`.
+- **Headless tasks run in their own session** (`claude-task.sh launch()` via
+  perl `setsid`) and the launchd plist sets `AbandonProcessGroup` — the daemon
+  is a launchd job, and launchd kills a job's process group on exit, which
+  silently killed planners on every rebuild.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on a ≤6-word affirmative within 3 minutes; anything else

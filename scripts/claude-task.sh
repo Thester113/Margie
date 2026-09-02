@@ -58,9 +58,16 @@ age() {
 launch() { # launch <id> <dir> <prompt> [extra claude flags...]  (honors PERM/TAG/OUT set by start)
   local id="$1" dir="$2" prompt="$3"; shift 3
   local pf="$TASKS/$id.prompt"; printf '%s' "$prompt" > "$pf"
-  ( cd "$dir" && nohup "$CLAUDE_BIN" -p "$(cat "$pf")" --output-format json "${PERM[@]:---dangerously-skip-permissions}" "$@" \
-      > "$TASKS/$id.json" 2> "$TASKS/$id.log" & echo $! > "$TASKS/$id.pid" )
-  local pid; pid="$(cat "$TASKS/$id.pid")"; rm -f "$TASKS/$id.pid"
+  # A wrapper records claude's exit code so a silent death is diagnosable. It runs
+  # in its OWN session (perl setsid — macOS has no setsid binary): the launcher is
+  # often the launchd-managed brain daemon, and launchd kills a job's whole process
+  # group when the job exits, which silently took every planner with each rebuild.
+  rm -f "$TASKS/$id.pid"
+  ( cd "$dir" && LOGF="$TASKS/$id.log" PIDF="$TASKS/$id.pid" nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- bash -c 'echo $$ > "$PIDF"; CLAUDE_BIN="$1"; PF="$2"; OUT="$3"; shift 3; "$CLAUDE_BIN" -p "$(cat "$PF")" --output-format json "$@" > "$OUT" 2>> "$LOGF" < /dev/null; echo "[claude exited $?]" >> "$LOGF"' _ "$CLAUDE_BIN" "$pf" "$TASKS/$id.json" "${PERM[@]:---dangerously-skip-permissions}" "$@" \
+      >> "$TASKS/$id.log" 2>&1 < /dev/null & )
+  # The wrapper records its own pid (the exec chain may not preserve $!).
+  local pid="" i; for i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TASKS/$id.pid" ] && { pid="$(cat "$TASKS/$id.pid")"; break; }; sleep 0.3; done
+  rm -f "$TASKS/$id.pid"; [ -z "$pid" ] && pid=0
   jq -n --arg id "$id" --arg dir "$dir" --arg task "$prompt" --arg tag "${TAG:-}" --arg out "${OUT:-}" \
      --argjson pid "$pid" --argjson started "$(date +%s)" \
     '{id:$id, dir:$dir, task:$task, tag:$tag, out:$out, pid:$pid, started:$started}' > "$TASKS/$id.meta"

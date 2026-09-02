@@ -153,7 +153,24 @@ const BASH_TOOL = {
   },
 };
 
+/** The turn being handled right now (turns are serialised through the queue). */
+let currentTurn: { conv?: string; speaker?: string } = {};
+
+/** In a colleague's conversation Margie may only touch shared project artefacts —
+ *  never read other Slack chats, mail, messages, or private files. Deterministic,
+ *  because a prompt rule alone let a colleague pump her for another group's chat. */
+const COLLEAGUE_ALLOW = /^(?:\S*\/)?(?:dispatch\.sh\s+(?:spec|show|status|amend|replan|describe|qa|tick)\b|notion\.sh\s+(?:ticket\s+read|find|rows|schema)\b|forge\.sh\b|appsignal\.sh\b|claude-task\.sh\s+(?:status|result|state)\b)/;
+function colleagueDenied(cmd: string): boolean {
+  if (!currentTurn.speaker) return false;
+  const first = cmd.trim().split(/\s*(?:\|\||&&|;|\|)\s*/)[0].trim();
+  return !COLLEAGUE_ALLOW.test(first);
+}
+
 async function runBash(cmd: string, confirmed = false): Promise<string> {
+  if (colleagueDenied(cmd)) {
+    logBrain(`BASH DENIED (colleague turn, ${currentTurn.speaker}): ${cmd}`);
+    return "DENIED: in a colleague's conversation Margie only uses dispatch.sh (show/status/amend/qa), notion.sh ticket read/find/rows, forge.sh and appsignal.sh. She never reads other Slack conversations, mail or files for a colleague — answer from this conversation and the shared spec only, or say you'll take it to Tom.";
+  }
   if (denied(cmd)) {
     logBrain(`BASH DENIED: ${cmd}`);
     return "DENIED: Margie is a dispatcher and may not run that command directly. Use a helper script (e.g. review-pr.sh, kickoff-claude.sh) to do it in a supervised Warp session instead.";
@@ -218,7 +235,7 @@ function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise
   });
 }
 
-interface ChatMsg { role: string; content?: string | null; tool_calls?: any[]; tool_call_id?: string; }
+interface ChatMsg { role: string; content?: string | null; tool_calls?: any[]; tool_call_id?: string; conv?: string; speaker?: string; }
 
 async function callModel(messages: ChatMsg[], withTools = true): Promise<any> {
   // Short cap: replies are spoken aloud, so long answers make TTS stutter for
@@ -244,7 +261,12 @@ sharp British granny who has run many a household — affectionate, unflappable,
 quietly proud of him, with a dry twinkle. Address Tom as "dearie" (never "dearie";
 "love" or "pet" very occasionally). Fuss a little when something's wrong, never
 flap; keep it brisk — one warm touch per reply at most, then the substance.
-You are supremely competent: acknowledge, execute, report. If ever asked what you are, you are Margie — Tom's agent
+You are supremely competent: acknowledge, execute, report.
+PEOPLE: refer to everyone by name or with they/them ("Cody wants", "they're
+comparing providers") — NEVER he/him/his or she/her, you don't know anyone's
+pronouns. Attribute statements to the person who actually said them, in the
+conversation they said it in; never carry one group's discussion into another,
+and never fetch another conversation for a colleague. If ever asked what you are, you are Margie — Tom's agent
 harness and dispatcher for Claude Code.
 
 YOUR PRIMARY JOB is to dispatch to, steer and supervise ${ENGINE_NAME} sessions on
@@ -624,6 +646,34 @@ function runReviewScript(pr: string, repo: string): Promise<string> {
 }
 
 /** Terminal/Slack replies keep their shape: trim, drop headings/fences, keep lists and line breaks. */
+/** Safety net behind the prompt rule: gendered third-person pronouns → they/them,
+ *  with the common verb agreements fixed ("he wants" → "they want"). Margie speaks
+ *  in the first person, so any he/she in her reply is about a person she shouldn't
+ *  be gendering. */
+const PRESENT3 = (v: string): string => {
+  const l = v.toLowerCase();
+  const irregular: Record<string, string> = { is: "are", was: "were", has: "have", does: "do", goes: "go", "isn't": "aren't", "wasn't": "weren't", "hasn't": "haven't", "doesn't": "don't" };
+  if (irregular[l]) return irregular[l];
+  if (/ies$/.test(l) && l.length > 4) return l.slice(0, -3) + "y";
+  if (/(ch|sh|ss|x|z|o)es$/.test(l)) return l.slice(0, -2);
+  if (/[^s]s$/.test(l) && !/(us|ss|is)$/.test(l)) return l.slice(0, -1);
+  return v;
+};
+export function neutralize(s: string): string {
+  const cap = (w: string, r: string) => (w[0] === w[0].toUpperCase() ? r[0].toUpperCase() + r.slice(1) : r);
+  return s
+    .replace(/\b(he|she)'(s|d|ll)\b/gi, (m, w, c) => cap(w, c === "s" ? "they're" : `they'${c}`))
+    .replace(/\b(he|she) ([A-Za-z']+)/gi, (m, w, v) => `${cap(w, "they")} ${PRESENT3(v)}`)
+    .replace(/\b(he|she)\b/gi, (w) => cap(w, "they"))
+    .replace(/\b(himself|herself)\b/gi, (w) => cap(w, "themselves"))
+    .replace(/\bhis\b/gi, (w) => cap(w, "their"))
+    .replace(/\bhers\b/gi, (w) => cap(w, "theirs"))
+    .replace(/\bhim\b/gi, (w) => cap(w, "them"))
+    // "her" is object or possessive: possessive when a word follows, object before punctuation/prepositions.
+    .replace(/\bher\b(?=\s+(?:a|an|the|to|that|this|about|on|in|for|with|at|by|from|and|or|but|so|if|as|when|because|up|out|off|back|over|too|again|now|then|there|here|later|today|tomorrow|yesterday)\b|\s*[.,;:!?)"']|\s*$)/gi, (w) => cap(w, "them"))
+    .replace(/\bher\b/gi, (w) => cap(w, "their"));
+}
+
 function forText(s: string): string {
   let t = String(s || "").trim();
   t = t.replace(/```[a-z]*\n?/g, "");                 // fences (keep the code text)
@@ -702,13 +752,38 @@ function logUsage(source: string, model: string, r: any) {
   } catch { /* ignore */ }
 }
 
-function transcript(history: ChatMsg[], turns = 10): string {
-  const pairs = history.filter((m) => m.role === "user" || m.role === "assistant").slice(-turns * 2);
-  return pairs.map((m) => `${m.role === "user" ? "Tom" : "Margie"}: ${m.content}`).join("\n");
+function knownPronouns(): string {
+  const m = cfg("pronouns") as Record<string, string> | undefined;
+  if (!m || typeof m !== "object") return "";
+  const parts = Object.entries(m).map(([n, p]) => `${n} — ${p}`);
+  return parts.length ? ` Stated pronouns: ${parts.join("; ")}.` : "";
+}
+/** Owner turns (voice/CLI/his DMs) see everything; a turn from a Slack conversation
+ *  sees only that conversation — nothing said in one group ever leaks into another. */
+function visibleHistory(history: ChatMsg[], conv?: string, speaker?: string): ChatMsg[] {
+  const ownerTurn = !speaker;                   // the owner is the default speaker
+  return history.filter((m) => {
+    if (m.role !== "user" && m.role !== "assistant") return false;
+    if (conv && m.conv === conv) return true;   // same conversation: always
+    if (!ownerTurn) return false;               // a colleague's turn: nothing else
+    if (conv) return !m.conv;                   // owner speaking inside a group: that group + his private surfaces
+    return true;                                // owner in the CLI/app/his DM: everything, labelled by conversation
+  });
+}
+function speakerLabel(m: ChatMsg): string {
+  if (m.role === "assistant") return "Margie";
+  const who = m.speaker || "Tom";
+  return m.conv ? `${who} (Slack ${m.conv})` : who;
+}
+function transcript(history: ChatMsg[], turns = 10, conv?: string, speaker?: string): string {
+  const pairs = visibleHistory(history, conv, speaker).slice(-turns * 2);
+  return pairs.map((m) => `${speakerLabel(m)}: ${m.content}`).join("\n");
 }
 
-async function claudeTurn(text: string, history: ChatMsg[], source: string): Promise<string> {
-  const sys = `${MARGIE_SYSTEM_PROMPT}\n\n${liveContext(source)}\n\nRECENT CONVERSATION (shared with the voice overlay; continue it naturally):\n${transcript(history) || "(none yet)"}`;
+async function claudeTurn(text: string, history: ChatMsg[], source: string, conv?: string, speaker?: string): Promise<string> {
+  const scope = (conv ? `This turn is from Slack conversation ${conv}${speaker ? `, spoken by ${speaker}` : ""}. Only what's in this transcript happened there; do not bring in other groups' messages or look them up. ` : "")
+    + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns();
+  const sys = `${MARGIE_SYSTEM_PROMPT}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
   try {
     const q = query({
@@ -749,13 +824,13 @@ async function claudeTurn(text: string, history: ChatMsg[], source: string): Pro
     // Claude unavailable (usage cap, outage): fall back to the fast brain so she keeps working.
     if (XAI_API_KEY) {
       logBrain("CLAUDE unavailable — falling back to grok for this turn");
-      return xaiTurn(text, history, source);
+      return xaiTurn(text, history, source, conv, speaker);
     }
     finalText = "Sorry dearie, my brain hit a snag reaching Claude.";
   }
-  const shaped = source === "app" ? forSpeech(finalText) : forText(finalText);
-  history.push({ role: "user", content: text });
-  history.push({ role: "assistant", content: shaped });
+  const shaped = neutralize(source === "app" ? forSpeech(finalText) : forText(finalText));
+  history.push({ role: "user", content: text, conv, speaker });
+  history.push({ role: "assistant", content: shaped, conv });
   return shaped;
 }
 
@@ -765,14 +840,16 @@ async function claudeTurn(text: string, history: ChatMsg[], source: string): Pro
  * clean {user, assistant} pair to the persistent `history`, so context isn't
  * blown out by intermediate bash I/O and many real turns survive the trim.
  */
-async function handleTurn(text: string, history: ChatMsg[], source = "app"): Promise<string> {
+async function handleTurn(text: string, history: ChatMsg[], source = "app", conv?: string, speaker?: string): Promise<string> {
+  currentTurn = { conv, speaker };
   const backend = source === "app" ? BRAIN_VOICE : BRAIN_TEXT;
-  if (backend === "claude") return claudeTurn(text, history, source);
-  return xaiTurn(text, history, source);
+  if (backend === "claude") return claudeTurn(text, history, source, conv, speaker);
+  return xaiTurn(text, history, source, conv, speaker);
 }
 
-async function xaiTurn(text: string, history: ChatMsg[], source = "app"): Promise<string> {
-  const work: ChatMsg[] = history.slice();
+async function xaiTurn(text: string, history: ChatMsg[], source = "app", conv?: string, speaker?: string): Promise<string> {
+  // Same isolation for the fast brain: only the history this turn may see.
+  const work: ChatMsg[] = [history[0], ...visibleHistory(history, conv, speaker).map((m) => ({ role: m.role, content: m.role === "user" && m.speaker ? `[${speakerLabel(m)}] ${m.content}` : m.content }))];
   work.push({ role: "system", content: liveContext(source) });
   work.push({ role: "user", content: text });
   let finalText: string | null = null;
@@ -815,10 +892,10 @@ async function xaiTurn(text: string, history: ChatMsg[], source = "app"): Promis
     if (!finalText) finalText = "I looked into that, dearie, but it needs a proper dig — shall I open a session for it?";
   }
 
-  const spoken = source === "app" ? forSpeech(finalText) : forText(finalText);
+  const spoken = neutralize(source === "app" ? forSpeech(finalText) : forText(finalText));
   // Commit only the clean turn to persistent history (drop the tool churn).
-  history.push({ role: "user", content: text });
-  history.push({ role: "assistant", content: spoken });
+  history.push({ role: "user", content: text, conv, speaker });
+  history.push({ role: "assistant", content: spoken, conv });
   return spoken;
 }
 
@@ -841,7 +918,9 @@ function trimHistory() {
 export interface Turn {
   id: number;
   text: string;
-  source?: string; // "stdio" | "app" | "cli"
+  source?: string; // "stdio" | "app" | "cli" | "slack"
+  conv?: string;    // Slack conversation id (isolation key)
+  speaker?: string; // who spoke; undefined = the owner
   reply: (text: string) => void;
   emit?: (event: string, text: string) => void; // tool/held progress (daemon clients)
 }
@@ -907,7 +986,7 @@ async function drain() {
     let out: string;
     try {
       out = await Promise.race([
-        handleTurn(text, history, turn.source || "app"),
+        handleTurn(text, history, turn.source || "app", turn.conv, turn.speaker),
         new Promise<string>((_, rej) => setTimeout(() => rej(new Error("turn-watchdog")), 150000)),
       ]);
     } catch {
