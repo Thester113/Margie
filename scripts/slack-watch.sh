@@ -1,8 +1,8 @@
 #!/bin/bash
 # slack-watch.sh — one polling cycle of Margie's Slack watcher.
 #
-# Two kinds of mentions, in the channels the @Margie bot is a member of
-# (plus DMs sent to the bot):
+# Three things, in the channels the @Margie bot is a member of (plus DMs to the bot):
+#   0. Tom DMs @Margie             → routed to her full brain (shared daemon); reply in the DM.
 #   1. @Margie mentioned            → she answers as herself.
 #   2. @Tom (the owner) mentioned   → she answers IN-THREAD, AS @MARGIE, openly
 #      as Tom's assistant (never impersonating him): uses the thread as context,
@@ -137,8 +137,21 @@ dm_owner() { # dm_owner "<text>"
   sapi chat.postMessage --get --data-urlencode "channel=$OWNER" --data-urlencode "text=$1" >/dev/null 2>&1 || true
 }
 
+MARGIE_CLI="$(cd "$(dirname "$0")/.." && pwd)/bin/margie"
 SPOKEN_ITEMS=()
 while IFS=$'\t' read -r kind cid label ts thread user text; do
+  # Tom DMing Margie = talking to her. Full brain, same history and confirmation
+  # gate as voice/CLI; the reply goes back into the DM. Detached so a long turn
+  # (tool calls, held commands) can't stall the poller.
+  if [ "$kind" = "im" ] && [ -n "$OWNER" ] && [ "$user" = "$OWNER" ]; then
+    echo "${NOW}|${ts}" >> "$HANDLED"
+    logl "owner DM → brain: $(printf '%s' "$text" | cut -c1-80)"
+    ( REPLY="$(MARGIE_SOURCE=slack "$MARGIE_CLI" -q "$text" 2>/dev/null)"
+      [ -z "$REPLY" ] && REPLY="Sorry sir, I didn't catch that — my brain didn't answer."
+      sapi chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$REPLY" >/dev/null 2>&1
+      logl "owner DM ← brain: $(printf '%s' "$REPLY" | cut -c1-80)" ) >/dev/null 2>&1 &
+    continue
+  fi
   who="$(uname_of "$user")"
   clean="$(printf '%s' "$text" | sed "s/<@$BOTID>//g; s/<@${OWNER:-__none__}>/@$OWNER_NAME/g" | sed 's/^ *//;s/ *$//')"
   if [ "$kind" = "owner" ]; then
