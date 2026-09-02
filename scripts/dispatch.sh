@@ -428,6 +428,8 @@ case "$cmd" in
         BB="$(for d in $(tr ',' ' ' <<<"$DEPS"); do jq -r --arg k "$d" '.[] | select(.key==$k) | .pt' "$D/tickets.json"; done | paste -sd, -)"
         [ -n "$BB" ] && "$DIR/notion.sh" ticket relate "$CPT" --blocked-by "$BB" >/dev/null && echo "$CPT blocked by $BB"
       done
+      # the umbrella's test-case map is the union of the children's (QA updates statuses through it)
+      jq -s 'add // {}' "$D"/child-*-tcmap.json > "$D/tcmap.json" 2>/dev/null || echo '{}' > "$D/tcmap.json"
       { echo "## Tickets"; cat "$D/tickets.md"; } > "$D/umbrella-tickets.md"
       "$DIR/notion.sh" ticket append "$PT" --md "$D/umbrella-tickets.md" >/dev/null 2>&1 || true
       cat "$D/breakdown.md" >> "$D/spec.md"
