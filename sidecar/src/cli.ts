@@ -62,8 +62,9 @@ async function repl() {
       rl.prompt(true);
     };
     client.onClose = () => {
-      process.stdout.write(`\r\x1b[2K${DIM}(daemon restarted — reconnecting on next message)${RESET}\n`);
-      rl.prompt(true);
+      process.stdout.write(`\r\x1b[2K${DIM}(daemon restarted — reconnecting…)${RESET}\n`);
+      // Reconnect eagerly so the next line goes straight through.
+      ensureDaemon().then((nc) => { c = nc; hook(c); rl.prompt(true); }).catch(() => rl.prompt(true));
     };
   };
   hook(c);

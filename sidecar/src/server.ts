@@ -195,6 +195,7 @@ function startPollers() {
     ["tasks", "claude-task.sh notify", 60000],
     ["agent-messages", "agent-messages.sh check", 300000],
     ["slack-watch", "slack-watch.sh", 60000],
+    ["standup", "standup.sh auto", 60000],
   ];
   let extra: Array<{ name?: string; cmd?: string; every?: unknown }> = [];
   try {

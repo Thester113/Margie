@@ -107,6 +107,7 @@ const OUTWARD: RegExp[] = [
   /\bdispatch\.sh\s+(file|go|close)\b/,
   /\bagent-messages\.sh\s+(send|reply|ack)\b/,
   /\bmr\.sh\s+(create|update)\b/,
+  /\bstandup\.sh\s+post\b/,
 ];
 const PENDING_TTL_MS = 3 * 60 * 1000;
 let pending: { cmd: string; at: number } | null = null;
@@ -134,7 +135,7 @@ const BASH_TOOL = {
   function: {
     name: "bash",
     description:
-      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, mr.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
+      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, mr.sh, standup.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
     parameters: {
       type: "object",
       properties: { command: { type: "string", description: "The shell command to run." } },
@@ -257,6 +258,12 @@ session directly. Run the dispatch pipeline (one command per turn):
        a few minutes." (Add --subdir <dir> only if Tom names a sub-project.)
 "Is the spec ready / what's the plan?" → dispatch.sh show — read its lines aloud
    (they're written to be spoken), especially any open questions.
+REFINEMENTS while planning ("also use X", "it's a monorepo", "actually target Y",
+   "add this constraint") are NOT a new dispatch — NEVER run dispatch.sh spec
+   again. Run: dispatch.sh amend latest "<the extra context, Tom's words>" — it
+   re-plans the same dispatch with the request extended. Nothing exists in Notion
+   until Tom says go: if he asks for the Notion link before that, say the spec is
+   local until he files it and offer dispatch.sh open to read it.
 "Go / file it / do it" → dispatch.sh go   (it is HELD; read back what it says it
    will do and wait for Tom's yes. That one yes covers the Notion ticket, the
    test cases, the spec page and starting the Claude Code session.)
@@ -436,6 +443,10 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   create/append are writes — read back title + gist and wait for Tom's yes. Pages must
   be connected to the Margie integration to be visible; if a search finds nothing,
   say so and suggest connecting the page.
+- Standup: standup.sh draft ("draft my standup" — from his commits, MRs, tickets and
+  dispatches; read the bullets back briefly) | show | edit "<change>" ("drop the
+  second bullet", "add that I met with Homie") | post (held — "post my standup").
+  Every weekday at standup_time she drafts it herself and DMs Tom.
 - Calendar: calendar.sh [week|day] opens Tom's Google Calendar and prints a
   screenshot PATH — then Read that image to answer ("what's on my calendar",
   "next meeting"). (Google Calendar is read visually.)
@@ -525,6 +536,10 @@ do at most a FEW quick searches (a couple of rg/grep/cat), then give your best
 concise SPOKEN answer from what you found — do not exhaustively grep the whole
 codebase. If it genuinely needs a deep dig, say so in one sentence and offer to
 open a session (kickoff-claude.sh) rather than grinding through many searches.
+
+NEVER CLAIM SUCCESS THE TOOL DIDN'T REPORT. If a tool result contains
+"Couldn't", "No such", "usage:", "error", "failed" or "DENIED", say exactly that
+in one sentence and what you'd need — never "done", "launched" or "updated".
 
 CRITICAL — your replies are spoken aloud, so be extremely brief. Default to ONE
 short sentence. Only go longer if Tom explicitly asks for detail. Never read

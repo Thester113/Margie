@@ -51,8 +51,9 @@ export class Client {
   private sock: Socket;
   private buf = "";
   private nextId = 1;
-  private waiters = new Map<number, (text: string) => void>();
-  private ctrlWaiters: Array<(msg: WireOut) => void> = [];
+  private waiters = new Map<number, { resolve: (text: string) => void; reject: (e: Error) => void }>();
+  private ctrlWaiters: Array<{ resolve: (msg: WireOut) => void; reject: (e: Error) => void }> = [];
+  private dead = false;
   onEvent: ((msg: WireOut) => void) | null = null;   // tool/held for in-flight ids
   onNotice: ((text: string) => void) | null = null;  // unsolicited broadcasts
   onClose: (() => void) | null = null;
@@ -60,8 +61,18 @@ export class Client {
   constructor(sock: Socket) {
     this.sock = sock;
     sock.on("data", (d) => this.feed(d.toString()));
-    sock.on("close", () => this.onClose?.());
-    sock.on("error", () => { /* surfaced via close */ });
+    sock.on("close", () => { this.failAll(new Error("daemon connection closed")); this.onClose?.(); });
+    sock.on("error", (e) => this.failAll(e));
+  }
+
+  /** The socket is gone: every in-flight request must fail, never hang. */
+  private failAll(e: Error) {
+    if (this.dead) return;
+    this.dead = true;
+    for (const w of this.waiters.values()) w.reject(e);
+    this.waiters.clear();
+    for (const c of this.ctrlWaiters) c.reject(e);
+    this.ctrlWaiters = [];
   }
 
   private feed(chunk: string) {
@@ -73,30 +84,32 @@ export class Client {
       if (!line) continue;
       let msg: WireOut;
       try { msg = JSON.parse(line); } catch { continue; }
-      if (msg.op) { this.ctrlWaiters.shift()?.(msg); continue; }
+      if (msg.op) { this.ctrlWaiters.shift()?.resolve(msg); continue; }
       if (msg.event === "notice") { this.onNotice?.(msg.text || ""); continue; }
       if (msg.event) { this.onEvent?.(msg); continue; }
       if (typeof msg.id === "number" && this.waiters.has(msg.id)) {
         const w = this.waiters.get(msg.id)!;
         this.waiters.delete(msg.id);
-        w(msg.text || "");
+        w.resolve(msg.text || "");
       }
     }
   }
 
   request(text: string, source = "cli"): Promise<string> {
     const id = this.nextId++;
-    return new Promise((resolve) => {
-      this.waiters.set(id, resolve);
-      this.sock.write(JSON.stringify({ id, text, source }) + "\n");
+    return new Promise((resolve, reject) => {
+      if (this.dead || this.sock.destroyed) { reject(new Error("daemon connection closed")); return; }
+      this.waiters.set(id, { resolve, reject });
+      this.sock.write(JSON.stringify({ id, text, source }) + "\n", (err) => { if (err) this.failAll(err); });
     });
   }
 
   control(op: string, extra: Record<string, unknown> = {}): Promise<WireOut> {
     return new Promise((resolve, reject) => {
+      if (this.dead || this.sock.destroyed) { reject(new Error("daemon connection closed")); return; }
       const t = setTimeout(() => reject(new Error(`${op} timed out`)), 4000);
-      this.ctrlWaiters.push((msg) => { clearTimeout(t); resolve(msg); });
-      this.sock.write(JSON.stringify({ op, ...extra }) + "\n");
+      this.ctrlWaiters.push({ resolve: (msg) => { clearTimeout(t); resolve(msg); }, reject: (e) => { clearTimeout(t); reject(e); } });
+      this.sock.write(JSON.stringify({ op, ...extra }) + "\n", (err) => { if (err) this.failAll(err); });
     });
   }
 

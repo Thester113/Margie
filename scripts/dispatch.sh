@@ -7,6 +7,7 @@
 # verified by a headless QA pass, and closed when the MR merges.
 #
 #   dispatch.sh spec <repo> "<request>" [--subdir backend]   start the planner (minutes)
+#   dispatch.sh amend <id|latest> "<more context>"   re-plan the SAME dispatch with the request extended
 #   dispatch.sh show [id|PT|latest]        the spec in <=6 spoken lines
 #   dispatch.sh file <id>                  [held] ticket + test cases + spec page
 #   dispatch.sh implement <id|PT>          kickoff worktree session; ticket -> In Progress
@@ -99,6 +100,28 @@ render_md() { # render_md <dir>
                            test_file: (.test_file // ""), sabotage}]' "$d/spec.json" > "$d/testcases.json"
 }
 
+launch_planner() { # launch_planner <dispatch dir> <workdir> "<request text>"
+  local D="$1" WORKDIR="$2" REQ="$3" REPO
+  REPO="$(dmeta "$D" repo)"
+    CASE_TYPES="$("$DIR/notion.sh" schema testcases 2>/dev/null | awk -F'  +' '$1=="Case Type"{print $3}')"
+    [ -z "$CASE_TYPES" ] && CASE_TYPES="ExUnit.Case|DataCase|ConnCase|Property-based|CommonTest"
+    LABELS="$("$DIR/notion.sh" schema tickets 2>/dev/null | awk -F'  +' '$1=="Labels"{print $3}')"
+    [ -z "$LABELS" ] && LABELS="Claude"
+
+    P="$(cat "$DIR/prompts/spec-planner.md")"
+    P="${P//'{{REQUEST}}'/$REQ}"
+    P="${P//'{{CONTEXT}}'/$(cat "$D/context.md")}"
+    P="${P//'{{CASE_TYPES}}'/$CASE_TYPES}"
+    P="${P//'{{LABELS}}'/$LABELS}"
+    printf '%s' "$P" > "$D/planner-prompt.txt"
+
+    MODEL_OPT=(); M="$(cfg planner_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
+    "$DIR/claude-task.sh" start "$WORKDIR" "$(cat "$D/planner-prompt.txt")" \
+      --plan --schema "$DIR/schemas/spec.schema.json" \
+      --allow "mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-search,mcp__claude_ai_Notion__notion-query-data-sources" \
+      --tag "spec:$(basename "$D")" --out "$D/spec.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null
+}
+
 spec_ready() { [ -s "$1/spec.json" ] && jq -e '.title and .goal and .acceptance_criteria and .test_cases' "$1/spec.json" >/dev/null 2>&1; }
 
 cmd="${1:-status}"; shift || true
@@ -115,6 +138,12 @@ case "$cmd" in
     [ -z "$SUBDIR" ] && SUBDIR="$(jq -r --arg r "$(basename "$REPO")" '.repo_subdirs[$r] // empty' "$CFG" 2>/dev/null)"
     WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     [ -d "$WORKDIR" ] || { echo "No such directory $WORKDIR, sir." >&2; exit 1; }
+    # One planner per repo at a time: a refinement is `amend`, not a new dispatch.
+    for other in "$MDIR"/d-*; do
+      [ -d "$other" ] && [ "$(st "$other")" = "spec-running" ] && [ "$(dmeta "$other" repo)" = "$REPO" ] && {
+        echo "A spec is already being drafted for $(basename "$REPO") ($(basename "$other")), sir. To add context: dispatch.sh amend $(basename "$other") \"…\"; to replace it: dispatch.sh close $(basename "$other") first."
+        exit 1; }
+    done
     ID="d-$(date +%s)-$(slug "$REQ")"
     D="$MDIR/$ID"; mkdir -p "$D"
     printf '%s' "$REQ" > "$D/request.txt"
@@ -136,27 +165,27 @@ case "$cmd" in
       git -C "$REPO" log --oneline -15 2>/dev/null
     } > "$D/context.md"
 
-    CASE_TYPES="$("$DIR/notion.sh" schema testcases 2>/dev/null | awk -F'  +' '$1=="Case Type"{print $3}')"
-    [ -z "$CASE_TYPES" ] && CASE_TYPES="ExUnit.Case|DataCase|ConnCase|Property-based|CommonTest"
-    LABELS="$("$DIR/notion.sh" schema tickets 2>/dev/null | awk -F'  +' '$1=="Labels"{print $3}')"
-    [ -z "$LABELS" ] && LABELS="Claude"
-
-    P="$(cat "$DIR/prompts/spec-planner.md")"
-    P="${P//'{{REQUEST}}'/$REQ}"
-    P="${P//'{{CONTEXT}}'/$(cat "$D/context.md")}"
-    P="${P//'{{CASE_TYPES}}'/$CASE_TYPES}"
-    P="${P//'{{LABELS}}'/$LABELS}"
-    printf '%s' "$P" > "$D/planner-prompt.txt"
-
-    MODEL_OPT=(); M="$(cfg planner_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
-    "$DIR/claude-task.sh" start "$WORKDIR" "$(cat "$D/planner-prompt.txt")" \
-      --plan --schema "$DIR/schemas/spec.schema.json" \
-      --allow "mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-search,mcp__claude_ai_Notion__notion-query-data-sources" \
-      --tag "spec:$ID" --out "$D/spec.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null
+    launch_planner "$D" "$WORKDIR" "$REQ"
     st "$D" spec-running
     echo "Drafting the spec for '$ID' in $(basename "$REPO")${SUBDIR:+/$SUBDIR}, sir — product, architecture and QA. A few minutes; check with: dispatch.sh show"
     ;;
-
+  amend)
+    need_d "${1:-latest}"; shift || true
+    EXTRA="$*"; [ -z "$EXTRA" ] && { echo "usage: dispatch.sh amend <id|latest> \"<more context>\"" >&2; exit 1; }
+    case "$(st "$D")" in
+      spec-running|spec-ready|spec-failed) ;;
+      *) echo "That dispatch is already past planning ($(st "$D")), sir — amendments go to the session or the ticket." >&2; exit 1 ;;
+    esac
+    if [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" = "RUNNING" ]; then
+      "$DIR/claude-task.sh" stop "$(basename "$D" | sed 's/^/spec:/')" >/dev/null 2>&1 || true
+    fi
+    printf '\n\nADDENDUM (%s): %s' "$(date -u +%FT%TZ)" "$EXTRA" >> "$D/request.txt"
+    rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+    REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
+    launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
+    st "$D" spec-running
+    echo "Amended and re-planning '$(basename "$D")' with the extra context, sir — a few minutes; check with: dispatch.sh show"
+    ;;
   show)
     need_d "${1:-latest}"
     if ! spec_ready "$D"; then
