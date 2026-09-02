@@ -527,10 +527,39 @@ case "$cmd" in
             st "$D" qa-failed-to-run
             announce "The QA run on $(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null) failed to complete, dearie."
           fi ;;
+        qa-fail)
+          # Hand the findings back to the coding session once; it fixes and re-signals.
+          if [ -s "$D/impl.json" ] && [ ! -f "$D/qa-fail-sent" ]; then
+            BR="$(jq -r .branch "$D/impl.json")"; PT="$(jq -r .pt "$D/ticket.json")"
+            touch "$D/qa-fail-sent"; rm -f "$D/qa-auto"
+            MSG="QA verification FAILED for $PT. Findings: $(jq -r '[.acceptance[] | select(.status!="pass") | .criterion + " — " + .status + ": " + .evidence] | join(" | ")' "$D/qa.json" | cut -c1-1500). Fix these, keep the tests green, commit, then print MARGIE_READY_FOR_QA on its own line again."
+            "$DIR/session.sh" send "$MSG" --branch "$BR" >/dev/null 2>&1 && { st "$D" implementing; mv "$D/qa.json" "$D/qa-failed-$(date +%H%M).json"; announce "QA failed on $PT — I've sent the findings back into the session to fix, dearie."; }
+          fi ;;
         implementing|qa-pass)
-          # Merge detection: MR for the branch merged -> ticket Done, dispatch closed.
           if [ -s "$D/impl.json" ]; then
             BR="$(jq -r .branch "$D/impl.json")"; WT="$(jq -r .worktree "$D/impl.json")"
+            PT="$(jq -r .pt "$D/ticket.json")"
+            SCREEN="$("$DIR/session.sh" read 80 --branch "$BR" 2>/dev/null || true)"
+            # Coding session signalled completion (or clearly finished and stopped) -> run QA once.
+            if [ "$S" = implementing ] && [ ! -s "$D/qa.json" ] && [ ! -f "$D/qa-auto" ] && [ -n "$SCREEN" ]; then
+              if printf '%s' "$SCREEN" | grep -q "MARGIE_READY_FOR_QA" \
+                 || { printf '%s' "$SCREEN" | grep -qE "· done [0-9]" && ! printf '%s' "$SCREEN" | grep -q "esc to interrupt" \
+                      && printf '%s' "$SCREEN" | grep -qiE "ready for QA|tests? (are|is) (complete|green|passing)|(work|implementation) (is|and tests are) complete"; }; then
+                touch "$D/qa-auto"; rm -f "$D/qa-fail-sent"
+                "$0" qa "$(basename "$D")" >/dev/null 2>&1 && announce "Coding on $PT reports done — running QA now, dearie." && S=qa-running
+              fi
+            fi
+            # QA passed -> tell the session to open the MR (once); the merge closes it.
+            if [ "$S" = qa-pass ] && [ ! -f "$D/mr-nudged" ]; then
+              touch "$D/mr-nudged"
+              if printf '%s' "$SCREEN" | grep -qE "MR !?[0-9]+|MARGIE_MR_OPEN"; then
+                announce "QA passed on $PT and the session already has an MR open — MR text at $D/mr.md if it needs updating (mr.sh update), dearie."
+              else
+                "$DIR/session.sh" send "QA passed — open the MR now with the repo's /merge-request skill, using the prepared description at $D/mr.md (title on the first line). When it's open print MARGIE_MR_OPEN <url>." --branch "$BR" >/dev/null 2>&1 \
+                  && announce "QA passed on $PT — I've told the session to open the MR, dearie."
+              fi
+            fi
+            # Merge detection: MR for the branch merged -> ticket Done, dispatch closed.
             if [ -d "$WT" ]; then
               MRSTATE="$(cd "$WT" && glab mr view "$BR" -F json 2>/dev/null | jq -r '.state // empty')"
               if [ "$MRSTATE" = "merged" ]; then

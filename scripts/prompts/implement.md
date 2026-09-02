@@ -17,8 +17,12 @@ CONVENTIONS
   fail (sabotage) and record it under test/sabotage_records/ before you call
   it done.
 - Do NOT open the merge request yet. When the work and tests are complete,
-  say so and stop — QA verification runs next, and the MR text will be
-  prepared for you at {{MR_FILE}} (use it with the repo's /merge-request skill
-  only after Tom's go-ahead).
+  print exactly this line on its own and then stop and wait:
+  MARGIE_READY_FOR_QA
+  Margie's QA verifier runs automatically. If it passes you will be told
+  "QA passed — open the MR" with the prepared description at {{MR_FILE}}; open
+  it then with the repo's /merge-request skill and print MARGIE_MR_OPEN <url>.
+  If it fails you will be given the findings; fix them, then print
+  MARGIE_READY_FOR_QA again.
 - If the spec turns out to be wrong or an open question blocks you, say so
   plainly and stop rather than improvising around it.

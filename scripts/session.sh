@@ -87,8 +87,13 @@ case "$cmd" in
       if [ "$PREV" != "$H" ]; then echo "$H" > "$ST/$S.hash"; echo "$NOW" > "$ST/$S.since"; SINCE="$NOW"; fi
       IDLE=$(( NOW - SINCE ))
       WHY=""
+      # Claude Code's chrome (status bar, separators, the input box, update banner) is not content.
+      CONTENT="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|^ *⏵⏵|^ *───|Update installed|esc to interrupt|^ *❯' )"
+      LAST="$(printf '%s' "$CONTENT" | tail -1)"
+      WORKING=0; printf '%s' "$TAIL" | grep -q "esc to interrupt" && WORKING=1
       if printf '%s' "$TAIL" | grep -qE 'Enter to confirm|Esc to cancel|Do you want to|Yes, I trust|Yes, and don.t ask|\(y/n\)|\[Y/n\]|\[y/N\]|No, and tell Claude|Allow (once|always)|Press Enter|❯ *1\.|^ *1\. Yes'; then WHY="waiting on a prompt"
-      elif [ "$IDLE" -ge 180 ] && printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | tail -1 | grep -q '?$'; then WHY="asked a question and has been idle $((IDLE/60)) min"
+      elif printf '%s' "$PANE" | grep -q "MARGIE_READY_FOR_QA" && [ "$WORKING" = 0 ]; then WHY="finished coding and is ready for QA"
+      elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 120 ] && printf '%s' "$LAST" | grep -qiE '\?$|\b(shall i|should i|want me to|would you like|let me know|say the word|ready to|waiting for)\b'; then WHY="asked a question and has been idle $((IDLE/60)) min"
       fi
       [ -z "$WHY" ] && continue
       [ "$(cat "$ST/$S.told" 2>/dev/null || true)" = "$H" ] && continue   # already announced this screen
