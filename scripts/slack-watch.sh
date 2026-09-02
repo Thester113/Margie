@@ -99,7 +99,7 @@ while IFS=$'\t' read -r kind cid label; do
   [ -z "$cid" ] && continue
   H="$(sapi conversations.history --get --data-urlencode "channel=$cid" -d "limit=15")"
   echo "$H" | jq -e '.ok==true' >/dev/null 2>&1 || continue
-  echo "$H" | jq -r --arg bot "$BOTID" --arg owner "${OWNER:-__none__}" --arg kind "$kind" --arg cid "$cid" --arg label "$label" '
+  echo "$H" | jq -r --arg bot "$BOTID" --arg owner "${OWNER:-__none__}" --arg kind "$kind" --arg cid "$cid" --arg label "$label" --argjson now "$NOW" '
     .messages as $all
     | range(0; ($all | length)) as $i
     | $all[$i]
@@ -109,10 +109,10 @@ while IFS=$'\t' read -r kind cid label; do
     | (($prev.user // "") == $bot and (($prev.text // "") | test("\\?\\s*$")) and ((.ts|tonumber) - ($prev.ts|tonumber) < 600)) as $answering_her
     | (if $kind=="im" then "im"
        elif (($t | contains("<@"+$bot+">")) and ((.user // "") == $owner)) then "ownerask"
-       elif ($answering_her and ((.user // "") == $owner)) then "ownerask"
+       elif ($answering_her and ((.user // "") == $owner) and (($now - (.ts|tonumber)) < 1800)) then "ownerask"
        elif ($t | contains("<@"+$bot+">")) then "bot"
        elif ($owner != "__none__" and ($t | contains("<@"+$owner+">")) and ((.user // "") != $owner)) then "owner"
-       elif ($kind=="mpim" and ((.user // "") != $owner)) then "colleague"
+       elif ($kind=="mpim" and ((.user // "") != $owner) and (($now - (.ts|tonumber)) < 1800)) then "colleague"
        else "" end) as $k
     | select($k != "")
     | [$k, $cid, $label, .ts, (.thread_ts // .ts), (.user // "?"), ($t | gsub("\t";" ") | gsub("\n";" "))]
@@ -145,7 +145,7 @@ done < "$NEW"
 if [ "$COUNT" = "0" ]; then logl "no new mentions"; rm -f "$NEW" "$NEW.todo"; exit 0; fi
 logl "$COUNT new mention(s)"
 
-uname_of() { sapi users.info --get --data-urlencode "user=$1" | jq -r '.user.profile.display_name // .user.real_name // .user.name // "?"' 2>/dev/null; }
+uname_of() { local n; n="$(sapi users.info --get --data-urlencode "user=$1" | jq -r '.user.profile.display_name // .user.real_name // .user.name // empty' 2>/dev/null)"; printf '%s' "${n:-a colleague}"; }
 # Recent thread (or channel) messages as "Name: text" lines — UNTRUSTED context for the composer.
 thread_context() { # thread_context <cid> <thread_ts>
   local R; R="$(sapi conversations.replies --get --data-urlencode "channel=$1" --data-urlencode "ts=$2" -d "limit=12")"
