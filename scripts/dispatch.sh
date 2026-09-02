@@ -49,7 +49,7 @@ resolve_d() { # id | PT-### | latest | fuzzy word -> dispatch dir (follows the P
 }
 need_d() {
   D="$(resolve_d "${1:-latest}")"
-  [ -n "$D" ] && [ -d "$D" ] || { echo "No such dispatch${1:+ '$1'}, dear." >&2; exit 1; }
+  [ -n "$D" ] && [ -d "$D" ] || { echo "No such dispatch${1:+ '$1'}, dearie." >&2; exit 1; }
 }
 announce() { # announce "<spoken sentence>"  (file drop only with --announce / MARGIE_ANNOUNCE=1)
   echo "$1"
@@ -153,11 +153,11 @@ case "$cmd" in
     REPO="$("$DIR/resolve-repo.sh" "$REPO_ARG")" || exit 1
     [ -z "$SUBDIR" ] && SUBDIR="$(jq -r --arg r "$(basename "$REPO")" '.repo_subdirs[$r] // empty' "$CFG" 2>/dev/null)"
     WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
-    [ -d "$WORKDIR" ] || { echo "No such directory $WORKDIR, dear." >&2; exit 1; }
+    [ -d "$WORKDIR" ] || { echo "No such directory $WORKDIR, dearie." >&2; exit 1; }
     # One planner per repo at a time: a refinement is `amend`, not a new dispatch.
     for other in "$MDIR"/d-*; do
       [ -d "$other" ] && [ "$(st "$other")" = "spec-running" ] && [ "$(dmeta "$other" repo)" = "$REPO" ] && {
-        echo "A spec is already being drafted for $(basename "$REPO") ($(basename "$other")), dear. To add context: dispatch.sh amend $(basename "$other") \"…\"; to replace it: dispatch.sh close $(basename "$other") first."
+        echo "A spec is already being drafted for $(basename "$REPO") ($(basename "$other")), dearie. To add context: dispatch.sh amend $(basename "$other") \"…\"; to replace it: dispatch.sh close $(basename "$other") first."
         exit 1; }
     done
     ID="d-$(date +%s)-$(slug "$REQ")"
@@ -183,14 +183,14 @@ case "$cmd" in
 
     launch_planner "$D" "$WORKDIR" "$REQ"
     st "$D" spec-running
-    echo "Drafting the spec for '$ID' in $(basename "$REPO")${SUBDIR:+/$SUBDIR}, dear — product, architecture and QA. A few minutes; check with: dispatch.sh show"
+    echo "Drafting the spec for '$ID' in $(basename "$REPO")${SUBDIR:+/$SUBDIR}, dearie — product, architecture and QA. A few minutes; check with: dispatch.sh show"
     ;;
   amend)
     need_d "${1:-latest}"; shift || true
     EXTRA="$*"; [ -z "$EXTRA" ] && { echo "usage: dispatch.sh amend <id|latest> \"<more context>\"" >&2; exit 1; }
     case "$(st "$D")" in
       spec-running|spec-ready|spec-failed) ;;
-      *) echo "That dispatch is already past planning ($(st "$D")), dear — amendments go to the session or the ticket." >&2; exit 1 ;;
+      *) echo "That dispatch is already past planning ($(st "$D")), dearie — amendments go to the session or the ticket." >&2; exit 1 ;;
     esac
     # Supersede any previous planner run for this dispatch: stop it if running and
     # detach its --out so a finished one can't re-deposit the old spec.
@@ -206,15 +206,15 @@ case "$cmd" in
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
     st "$D" spec-running
-    echo "Amended and re-planning '$(basename "$D")' with the extra context, dear — a few minutes; check with: dispatch.sh show"
+    echo "Amended and re-planning '$(basename "$D")' with the extra context, dearie — a few minutes; check with: dispatch.sh show"
     ;;
   show)
     need_d "${1:-latest}"
     if ! spec_ready "$D"; then
       case "$(st "$D")" in
-        spec-running) echo "The spec is still being drafted, dear." ;;
-        spec-failed)  echo "The spec run failed, dear — see claude-task.sh log." ;;
-        *) echo "No spec on this dispatch yet, dear." ;;
+        spec-running) echo "The spec is still being drafted, dearie." ;;
+        spec-failed)  echo "The spec run failed, dearie — see claude-task.sh log." ;;
+        *) echo "No spec on this dispatch yet, dearie." ;;
       esac
       exit 0
     fi
@@ -225,14 +225,14 @@ case "$cmd" in
       "Story: " + .use_case.story,
       ("Scope: " + ((.scope | length | tostring)) + " items, " + ((.acceptance_criteria | length | tostring)) + " acceptance criteria, " + ((.test_cases | length | tostring)) + " test cases"),
       (if (.open_questions | length) > 0 then "Open questions: " + (.open_questions | join(" | ")) else "No open questions." end),
-      "Say \"go\" to file the ticket and start Claude, dear."
+      "Say \"go\" to file the ticket and start Claude, dearie."
     ' "$D/spec.json"
     [ -s "$D/draft-page.url" ] && echo "Read the full draft in Notion: $(cat "$D/draft-page.url")"
     ;;
 
   file)
     need_d "${1:-latest}"
-    spec_ready "$D" || { echo "The spec isn't ready yet, dear." >&2; exit 1; }
+    spec_ready "$D" || { echo "The spec isn't ready yet, dearie." >&2; exit 1; }
     TITLE="$(jq -r .title "$D/spec.json")"
     NTC="$(jq '.test_cases | length' "$D/spec.json")"
     RISK="$(jq -r .security.risk_label "$D/spec.json")"
@@ -259,12 +259,12 @@ case "$cmd" in
     printf '%s' "$DOCS" | grep -oE 'https://[^ ]+' | head -1 > "$D/docs-page.url" || true
     ln -sfn "$D" "$MDIR/$PT"
     st "$D" filed
-    echo "Filed $PT, dear: $TURL"
+    echo "Filed $PT, dearie: $TURL"
     ;;
 
   implement)
     need_d "${1:-latest}"
-    [ -s "$D/ticket.json" ] || { echo "File the ticket first, dear (dispatch.sh file)." >&2; exit 1; }
+    [ -s "$D/ticket.json" ] || { echo "File the ticket first, dearie (dispatch.sh file)." >&2; exit 1; }
     PT="$(jq -r .pt "$D/ticket.json")"; TURL="$(jq -r .url "$D/ticket.json")"
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"
     BRANCH="$(cfg branch_prefix)"; BRANCH="${BRANCH:-margie}/$PT-$(jq -r .slug "$D/spec.json")"
@@ -284,7 +284,7 @@ case "$cmd" in
 
   go)
     need_d "${1:-latest}"
-    spec_ready "$D" || { echo "The spec isn't ready yet, dear." >&2; exit 1; }
+    spec_ready "$D" || { echo "The spec isn't ready yet, dearie." >&2; exit 1; }
     TITLE="$(jq -r .title "$D/spec.json")"
     desc "would file Notion ticket \"$TITLE\" with $(jq '.test_cases|length' "$D/spec.json") test cases and a spec page, then start a Claude Code session on branch $(cfg branch_prefix | grep . || echo margie)/PT-…-$(jq -r .slug "$D/spec.json") in a worktree"
     "$0" file "$(basename "$D")" && "$0" implement "$(basename "$D")"
@@ -294,10 +294,10 @@ case "$cmd" in
     WATCH=0; ARGS=()
     for a in "$@"; do case "$a" in --watch) WATCH=1 ;; *) ARGS+=("$a") ;; esac; done
     need_d "${ARGS[0]:-latest}"
-    [ -s "$D/impl.json" ] || { echo "Nothing implemented to verify on this dispatch, dear." >&2; exit 1; }
+    [ -s "$D/impl.json" ] || { echo "Nothing implemented to verify on this dispatch, dearie." >&2; exit 1; }
     PT="$(jq -r .pt "$D/ticket.json")"; TURL="$(jq -r .url "$D/ticket.json")"
     WT="$(jq -r .worktree "$D/impl.json")"; SUBDIR="$(dmeta "$D" subdir)"
-    [ -d "$WT" ] || { echo "The worktree is gone, dear ($WT)." >&2; exit 1; }
+    [ -d "$WT" ] || { echo "The worktree is gone, dearie ($WT)." >&2; exit 1; }
     P="$(cat "$DIR/prompts/qa-verifier.md")"
     P="${P//'{{PT}}'/$PT}"
     P="${P//'{{TICKET_URL}}'/$TURL}"
@@ -310,13 +310,13 @@ case "$cmd" in
         --deny "Edit,Write,NotebookEdit" --schema "$DIR/schemas/qa.schema.json" \
         --tag "qa:$(basename "$D")" --out "$D/qa.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null
       st "$D" qa-running
-      echo "QA verification is running on $PT, dear — I'll report the verdict."
+      echo "QA verification is running on $PT, dearie — I'll report the verdict."
     fi
     ;;
 
   status)
     if [ -n "${1:-}" ]; then DIRS="$(resolve_d "$1")"; else DIRS="$(ls -td "$MDIR"/d-* 2>/dev/null)"; fi
-    [ -z "$DIRS" ] && { echo "No dispatches, dear."; exit 0; }
+    [ -z "$DIRS" ] && { echo "No dispatches, dearie."; exit 0; }
     FOUND=0
     for D in $DIRS; do
       [ -d "$D" ] || continue
@@ -333,7 +333,7 @@ case "$cmd" in
       spec_ready "$D" && LINE="$LINE — $(jq -r .title "$D/spec.json" | cut -c1-60)"
       echo "$LINE"
     done
-    [ "$FOUND" = 0 ] && echo "No active dispatches, dear."
+    [ "$FOUND" = 0 ] && echo "No active dispatches, dearie."
     exit 0
     ;;
 
@@ -347,10 +347,10 @@ case "$cmd" in
           if spec_ready "$D"; then
             st "$D" spec-ready
             publish_draft "$D"
-            announce "The spec for \"$(jq -r .title "$D/spec.json")\" is ready, dear — $(jq '.acceptance_criteria|length' "$D/spec.json") criteria, $(jq '.test_cases|length' "$D/spec.json") tests, $(jq -r .security.risk_label "$D/spec.json").$( [ -s "$D/draft-page.url" ] && echo " The draft is in Notion." )"
+            announce "The spec for \"$(jq -r .title "$D/spec.json")\" is ready, dearie — $(jq '.acceptance_criteria|length' "$D/spec.json") criteria, $(jq '.test_cases|length' "$D/spec.json") tests, $(jq -r .security.risk_label "$D/spec.json").$( [ -s "$D/draft-page.url" ] && echo " The draft is in Notion." )"
           elif [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" = "FAILED" ]; then
             st "$D" spec-failed
-            announce "The spec run for $(basename "$D") failed, dear."
+            announce "The spec run for $(basename "$D") failed, dearie."
           fi ;;
         qa-running)
           if [ -s "$D/qa.json" ] && jq -e .verdict "$D/qa.json" >/dev/null 2>&1; then
@@ -383,7 +383,7 @@ case "$cmd" in
             announce "QA on $PT: $(jq -r .summary_spoken "$D/qa.json")"
           elif [ "$("$DIR/claude-task.sh" state "qa:$(basename "$D")")" = "FAILED" ]; then
             st "$D" qa-failed-to-run
-            announce "The QA run on $(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null) failed to complete, dear."
+            announce "The QA run on $(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null) failed to complete, dearie."
           fi ;;
         implementing|qa-pass)
           # Merge detection: MR for the branch merged -> ticket Done, dispatch closed.
@@ -395,7 +395,7 @@ case "$cmd" in
                 PT="$(jq -r .pt "$D/ticket.json")"
                 "$DIR/notion.sh" ticket status "$PT" "Done" >/dev/null 2>&1
                 st "$D" closed
-                announce "$PT merged and closed, dear."
+                announce "$PT merged and closed, dearie."
               fi
             fi
           fi ;;
@@ -408,7 +408,7 @@ case "$cmd" in
     need_d "${1:-latest}"
     WHAT="${2:-spec}"
     F="$D/$WHAT.md"; [ -f "$F" ] || F="$D/spec.md"
-    [ -f "$F" ] || { echo "Nothing to open yet, dear." >&2; exit 1; }
+    [ -f "$F" ] || { echo "Nothing to open yet, dearie." >&2; exit 1; }
     "$DIR/warp-run.sh" "$D" "less -R '$F'" | tail -1
     ;;
 
@@ -418,7 +418,7 @@ case "$cmd" in
     desc "would cancel ${PT:-this dispatch}'s ticket and close the dispatch"
     [ -n "$PT" ] && "$DIR/notion.sh" ticket status "$PT" "Canceled" | tail -1
     st "$D" closed
-    echo "Dispatch closed, dear."
+    echo "Dispatch closed, dearie."
     ;;
 
   __resolve)

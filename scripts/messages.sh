@@ -24,7 +24,7 @@ DB="$HOME/Library/Messages/chat.db"
 
 need_db() {
   [ -r "$DB" ] && return 0
-  echo "I can't read Messages, dear — grant Full Disk Access to the app (System Settings → Privacy & Security → Full Disk Access), then try again." >&2
+  echo "I can't read Messages, dearie — grant Full Disk Access to the app (System Settings → Privacy & Security → Full Disk Access), then try again." >&2
   exit 1
 }
 
@@ -64,9 +64,9 @@ end tell
 OSA
 )"
     if [ $? -eq 0 ]; then
-      echo "Sent to $who ($target), dear: \"$msg\""
+      echo "Sent to $who ($target), dearie: \"$msg\""
     else
-      echo "Couldn't send to $who ($target), dear: ${out:0:160}. Is the handle a phone/email? Set an alias in config.contacts." >&2
+      echo "Couldn't send to $who ($target), dearie: ${out:0:160}. Is the handle a phone/email? Set an alias in config.contacts." >&2
       exit 1
     fi
     ;;
@@ -121,14 +121,14 @@ OSA
       *\;*) guid="$id" ;;
       *) need_db; guid="$(sqlite3 "file:$DB?mode=ro" "SELECT guid FROM chat WHERE ROWID=$id;" 2>/dev/null)" ;;
     esac
-    [ -z "$guid" ] && { echo "No group chat with id $id, dear — run messages.sh groups to find it." >&2; exit 1; }
+    [ -z "$guid" ] && { echo "No group chat with id $id, dearie — run messages.sh groups to find it." >&2; exit 1; }
     esc_msg="$(printf '%s' "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g')"
     esc_guid="$(printf '%s' "$guid" | sed 's/\\/\\\\/g; s/"/\\"/g')"
     out="$(osascript -e "tell application \"Messages\" to send \"$esc_msg\" to chat id \"$esc_guid\"" 2>&1)"
     if [ $? -eq 0 ]; then
-      echo "Sent to the group (chat $id), dear: \"$msg\""
+      echo "Sent to the group (chat $id), dearie: \"$msg\""
     else
-      echo "Couldn't send to the group (chat $id), dear: ${out:0:160}" >&2; exit 1
+      echo "Couldn't send to the group (chat $id), dearie: ${out:0:160}" >&2; exit 1
     fi
     ;;
   list)

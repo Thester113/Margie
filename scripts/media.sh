@@ -12,6 +12,6 @@ case "$cmd" in
   volume)          [ -n "$arg" ] && { osa "to set sound volume to $arg"; echo "Volume $arg."; } ;;
   current|now)
     t="$(osascript -e 'tell application "Spotify" to (name of current track) & " by " & (artist of current track)' 2>/dev/null)"
-    [ -n "$t" ] && echo "$t" || echo "Nothing playing, dear." ;;
+    [ -n "$t" ] && echo "$t" || echo "Nothing playing, dearie." ;;
   *) echo "usage: media.sh current|play|pause|next|prev|volume <0-100>" >&2; exit 1 ;;
 esac

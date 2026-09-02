@@ -63,13 +63,13 @@ case "$FORGE" in
     ;;
 esac
 if [ -z "$full" ]; then
-  echo "Couldn't find a repo matching '$token' locally$WHERE, dear." >&2
+  echo "Couldn't find a repo matching '$token' locally$WHERE, dearie." >&2
   exit 1
 fi
 dst="$REPOS_DIR/${full##*/}"
 if ! git -C "$dst" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   mkdir -p "$REPOS_DIR"
-  echo "Cloning $full (first time), dear…" >&2
-  "${CLONE[@]}" "$dst" >/dev/null 2>&1 || { echo "Couldn't clone $full, dear." >&2; exit 1; }
+  echo "Cloning $full (first time), dearie…" >&2
+  "${CLONE[@]}" "$dst" >/dev/null 2>&1 || { echo "Couldn't clone $full, dearie." >&2; exit 1; }
 fi
 echo "$dst"

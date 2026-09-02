@@ -15,7 +15,7 @@ cmd="${1:-list}"; repo_arg="${2:-$PWD}"; branch="${3:-}"
 
 # Resolve <repo> to a git dir (local clone, or GitHub clone on demand).
 REPO="$("$(dirname "$0")/resolve-repo.sh" "$repo_arg" 2>/dev/null)"
-[ -z "$REPO" ] && { echo "Couldn't find repo '$repo_arg', dear." >&2; exit 1; }
+[ -z "$REPO" ] && { echo "Couldn't find repo '$repo_arg', dearie." >&2; exit 1; }
 
 slug() { printf '%s' "$1" | tr '/ ' '--'; }
 wtdir() { echo "$WT_ROOT/$(basename "$REPO")__$(slug "$branch")"; }

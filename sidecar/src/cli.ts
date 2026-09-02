@@ -165,7 +165,7 @@ function page(text: string) {
   return Promise.resolve();
 }
 
-const HELP = `${PINK}✿${RESET} ${NAME} ${GREY}— your assistant, dear. One brain across voice and every terminal; just talk.${RESET}
+const HELP = `${PINK}✿${RESET} ${NAME} ${GREY}— your assistant, dearie. One brain across voice and every terminal; just talk.${RESET}
   ${CYAN}/status${RESET}   daemon, held command, sessions, tasks, dispatches
   ${CYAN}/held${RESET}     what's waiting for your yes      ${CYAN}/yes${RESET}  ${CYAN}/no${RESET}   answer it
   ${CYAN}/spec${RESET}     latest spec in full             ${CYAN}/qa${RESET}   ${CYAN}/mr${RESET}    latest QA report / MR text

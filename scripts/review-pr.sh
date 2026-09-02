@@ -43,7 +43,7 @@ set -e
 if [ "$RC" -ne 0 ]; then
   # One line, no ANSI/box-drawing noise: the brain speaks the LAST line of our output.
   PRCHECK="$(printf '%s' "$PRCHECK" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tr '\n' ' ' | tr -s ' ' | sed 's/^ *//;s/ *$//')"
-  echo "Couldn't find $NOUN $REF$PR in $(basename "$DIR_ABS"), dear: ${PRCHECK:0:160}"
+  echo "Couldn't find $NOUN $REF$PR in $(basename "$DIR_ABS"), dearie: ${PRCHECK:0:160}"
   exit 1
 fi
 
@@ -119,4 +119,4 @@ fi
 open "warp://launch/$NAME"
 sleep 1.5
 open -a Warp
-echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — up in Warp, dear."
+echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — up in Warp, dearie."

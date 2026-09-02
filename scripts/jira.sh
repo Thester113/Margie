@@ -25,7 +25,7 @@ DEFPROJ="$(cfg jira_default_project)"
 BASE="${BASE%/}"
 
 if [ -z "$EMAIL" ] || [ -z "$TOKEN" ] || [ -z "$BASE" ]; then
-  echo "Jira isn't configured yet, dear — add atlassian_email, atlassian_api_token and jira_base_url to ~/.margie/config.json." >&2
+  echo "Jira isn't configured yet, dearie — add atlassian_email, atlassian_api_token and jira_base_url to ~/.margie/config.json." >&2
   exit 1
 fi
 
@@ -54,13 +54,13 @@ case "$cmd" in
                "Assignee: "+(.fields.assignee.displayName // "Unassigned"),
                "Priority: "+(.fields.priority.name // "?"),
                "URL: '"$BASE"'/browse/"+.key' 2>/dev/null \
-      || echo "Couldn't read $KEY, dear."
+      || echo "Couldn't read $KEY, dearie."
     ;;
   mine)
     JQL='assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC'
     api GET "/rest/api/3/search/jql?maxResults=20&fields=summary,status&jql=$(jq -rn --arg j "$JQL" '$j|@uri')" \
       | jq -r '.issues[]? | "["+.key+"] "+.fields.summary+" — "+(.fields.status.name // "?")' \
-      || echo "Couldn't list your issues, dear."
+      || echo "Couldn't list your issues, dearie."
     ;;
   search)
     Q="$*"
@@ -72,27 +72,27 @@ case "$cmd" in
     esac
     api GET "/rest/api/3/search/jql?maxResults=20&fields=summary,status&jql=$(jq -rn --arg j "$JQL" '$j|@uri')" \
       | jq -r '.issues[]? | "["+.key+"] "+.fields.summary+" — "+(.fields.status.name // "?")' \
-      || echo "Search failed, dear."
+      || echo "Search failed, dearie."
     ;;
   create)
     # create <PROJECT> "<summary>"  OR  create "<summary>" (uses default project)
     if [ $# -ge 2 ]; then PROJ="$1"; shift; SUMMARY="$*"; else PROJ="$DEFPROJ"; SUMMARY="$*"; fi
-    [ -z "$PROJ" ] && { echo "No project, dear — pass one (jira.sh create PROJ \"...\") or set jira_default_project." >&2; exit 1; }
+    [ -z "$PROJ" ] && { echo "No project, dearie — pass one (jira.sh create PROJ \"...\") or set jira_default_project." >&2; exit 1; }
     [ -z "$SUMMARY" ] && { echo "usage: jira.sh create [PROJECT] \"<summary>\"" >&2; exit 1; }
     BODY="$(jq -n --arg p "$PROJ" --arg s "$SUMMARY" \
       '{fields:{project:{key:$p},summary:$s,issuetype:{name:"Task"}}}')"
     RESP="$(api POST "/rest/api/3/issue" "$BODY")"
     NEWKEY="$(echo "$RESP" | jq -r '.key // empty')"
-    if [ -n "$NEWKEY" ]; then echo "Created $NEWKEY, dear: $BASE/browse/$NEWKEY";
-    else echo "Create failed, dear: $(echo "$RESP" | jq -rc '.errors // .errorMessages // .' 2>/dev/null | head -c 200)"; fi
+    if [ -n "$NEWKEY" ]; then echo "Created $NEWKEY, dearie: $BASE/browse/$NEWKEY";
+    else echo "Create failed, dearie: $(echo "$RESP" | jq -rc '.errors // .errorMessages // .' 2>/dev/null | head -c 200)"; fi
     ;;
   comment)
     KEY="$1"; shift || true; TEXT="$*"
     [ -z "$KEY" ] || [ -z "$TEXT" ] && { echo "usage: jira.sh comment <KEY> \"<text>\"" >&2; exit 1; }
     BODY="$(jq -n --argjson b "$(adf "$TEXT")" '{body:$b}')"
     RESP="$(api POST "/rest/api/3/issue/$KEY/comment" "$BODY")"
-    if echo "$RESP" | jq -e '.id' >/dev/null 2>&1; then echo "Commented on $KEY, dear.";
-    else echo "Comment failed, dear: $(echo "$RESP" | jq -rc '.errors // .errorMessages // .' 2>/dev/null | head -c 200)"; fi
+    if echo "$RESP" | jq -e '.id' >/dev/null 2>&1; then echo "Commented on $KEY, dearie.";
+    else echo "Comment failed, dearie: $(echo "$RESP" | jq -rc '.errors // .errorMessages // .' 2>/dev/null | head -c 200)"; fi
     ;;
   *)
     echo "usage: jira.sh read <KEY>|mine|search <q>|create [PROJECT] <summary>|comment <KEY> <text>" >&2

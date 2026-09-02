@@ -22,7 +22,7 @@ IMAP_HOST="$(cfg gmail_imap_host)"; IMAP_HOST="${IMAP_HOST:-imap.gmail.com}"
 SMTP_HOST="$(cfg gmail_smtp_host)"; SMTP_HOST="${SMTP_HOST:-smtp.gmail.com}"
 
 if [ -z "$ADDR" ] || [ -z "$PASS" ]; then
-  echo "Gmail isn't configured yet, dear — add gmail_address and gmail_app_password to ~/.margie/config.json (create an app password at myaccount.google.com/apppasswords)." >&2
+  echo "Gmail isn't configured yet, dearie — add gmail_address and gmail_app_password to ~/.margie/config.json (create an app password at myaccount.google.com/apppasswords)." >&2
   exit 1
 fi
 
@@ -57,7 +57,7 @@ try:
             typ,data=M.search(None,"ALL")
     ids=data[0].split()[-12:][::-1]  # most recent up to 12
     if not ids:
-        print("No matching messages, dear."); M.logout(); sys.exit(0)
+        print("No matching messages, dearie."); M.logout(); sys.exit(0)
     for i in ids:
         # PEEK so we don't mark unread mail as read
         typ,md=M.fetch(i,"(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
@@ -66,9 +66,9 @@ try:
         print(f"• {frm} — {subj}  ({date})")
     M.logout()
 except imaplib.IMAP4.error as e:
-    print(f"Gmail login/read failed, dear: {e}. If your Workspace blocks app passwords/IMAP, that's the cause.", file=sys.stderr); sys.exit(1)
+    print(f"Gmail login/read failed, dearie: {e}. If your Workspace blocks app passwords/IMAP, that's the cause.", file=sys.stderr); sys.exit(1)
 except Exception as e:
-    print(f"Gmail error, dear: {e}", file=sys.stderr); sys.exit(1)
+    print(f"Gmail error, dearie: {e}", file=sys.stderr); sys.exit(1)
 PY
     ;;
   send)
@@ -85,9 +85,9 @@ msg=EmailMessage(); msg["From"]=os.environ["MG_ADDR"]; msg["To"]=to; msg["Subjec
 try:
     s=smtplib.SMTP(os.environ["MG_SMTP"],587); s.starttls()
     s.login(os.environ["MG_ADDR"], os.environ["MG_PASS"]); s.send_message(msg); s.quit()
-    print(f"Sent to {to}, dear: “{subj}”.")
+    print(f"Sent to {to}, dearie: “{subj}”.")
 except Exception as e:
-    print(f"Send failed, dear: {e}", file=sys.stderr); sys.exit(1)
+    print(f"Send failed, dearie: {e}", file=sys.stderr); sys.exit(1)
 PY
     ;;
   *)

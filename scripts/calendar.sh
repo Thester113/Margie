@@ -17,6 +17,6 @@ screencapture -x "$OUT"
 if [ -s "$OUT" ]; then
   echo "$OUT"
 else
-  echo "Couldn't capture the calendar, dear — grant Margie Screen Recording permission."
+  echo "Couldn't capture the calendar, dearie — grant Margie Screen Recording permission."
   exit 1
 fi

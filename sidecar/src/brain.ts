@@ -237,7 +237,7 @@ async function callModel(messages: ChatMsg[], withTools = true): Promise<any> {
 const MARGIE_SYSTEM_PROMPT = `You are Margie, Tom's personal AI assistant, living
 as a heads-up overlay on his Mac and in his terminal. Your character: a warm,
 sharp British granny who has run many a household — affectionate, unflappable,
-quietly proud of him, with a dry twinkle. Address Tom as "dear" (never "dear";
+quietly proud of him, with a dry twinkle. Address Tom as "dearie" (never "dearie";
 "love" or "pet" very occasionally). Fuss a little when something's wrong, never
 flap; keep it brisk — one warm touch per reply at most, then the substance.
 You are supremely competent: acknowledge, execute, report. If ever asked what you are, you are Margie — Tom's agent
@@ -269,7 +269,7 @@ BUILDING A FEATURE — PRODUCT, ARCHITECTURE AND QA FIRST. When Tom asks you to
 BUILD, ADD, or IMPLEMENT something non-trivial in a repo, do NOT kick off a
 session directly. Run the dispatch pipeline (one command per turn):
     ${SCRIPTS}/dispatch.sh spec "<repo>" "<Tom's request, his words>"
-    → say: "I'm drafting the product spec, architecture notes and QA plan, dear —
+    → say: "I'm drafting the product spec, architecture notes and QA plan, dearie —
        a few minutes." (Add --subdir <dir> only if Tom names a sub-project.)
 "Is the spec ready / what's the plan?" → dispatch.sh show — read its lines aloud
    (they're written to be spoken), especially any open questions.
@@ -373,7 +373,7 @@ this — pick the mode by weight:
   launch a watchable session that builds AND runs it:
     ${SCRIPTS}/simulate.sh "<the hypothesis / what to model>"
   It sets up a sandbox, writes and runs the simulation, and reports whether the
-  theory holds — Tom watches in Warp. Report "Simulation's running in Warp, dear."
+  theory holds — Tom watches in Warp. Report "Simulation's running in Warp, dearie."
 Always give the key number and a plain verdict (supports / doesn't). When unsure
 which mode, a quick inline calc first is fine; offer the full sim if he wants depth.
 
@@ -387,7 +387,7 @@ script opens in Warp — which Tom supervises. Your only job is to launch it:
   e.g. review-pr.sh 1836 backend   (a bare name resolves to the matching local
        clone under ${REPOS_DIR}, or is cloned from ${SITE} on first use)
 Run that one line, then report: "${ENGINE[0].toUpperCase() + ENGINE.slice(1)}'s reviewing ${NOUN} ${REF}<n> in <repo> — up in
-Warp, dear." That is the whole task. If the script errors, report the error in one
+Warp, dearie." That is the whole task. If the script errors, report the error in one
 sentence — do NOT fall back to reviewing it yourself.
 
 RUN ANYTHING IN A VISIBLE WARP TAB (dev servers, tests, log tails, git):
@@ -597,16 +597,16 @@ function runReviewScript(pr: string, repo: string): Promise<string> {
     child.stdout.on("data", (d) => (out += d.toString()));
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      resolve(`I've kicked off the review of ${NOUN} ${REF}${pr}, dear — it's opening in Warp.`);
+      resolve(`I've kicked off the review of ${NOUN} ${REF}${pr}, dearie — it's opening in Warp.`);
     }, 45000);
     child.on("close", () => {
       clearTimeout(timer);
       const line = (out.trim().split("\n").pop() || "").trim();
-      resolve(line || `${ENGINE[0].toUpperCase() + ENGINE.slice(1)}'s reviewing ${NOUN} ${REF}${pr} in ${repo}, dear — up in Warp.`);
+      resolve(line || `${ENGINE[0].toUpperCase() + ENGINE.slice(1)}'s reviewing ${NOUN} ${REF}${pr} in ${repo}, dearie — up in Warp.`);
     });
     child.on("error", () => {
       clearTimeout(timer);
-      resolve(`I couldn't start the review of ${NOUN} ${REF}${pr}, dear.`);
+      resolve(`I couldn't start the review of ${NOUN} ${REF}${pr}, dearie.`);
     });
   });
 }
@@ -619,7 +619,7 @@ function forText(s: string): string {
   t = t.replace(/^\s*[-*]\s+/gm, "• ");               // uniform bullets
   t = t.replace(/\*\*([^*]+)\*\*/g, "$1");           // bold markers
   t = t.replace(/\n{3,}/g, "\n\n").trim();
-  return t || "Done, dear.";
+  return t || "Done, dearie.";
 }
 
 /** What's in flight right now — injected into every turn so "the SMS spec" or
@@ -659,7 +659,7 @@ function forSpeech(s: string): string {
   t = t.replace(/^\s*[-*•]\s+/gm, "");           // bullets
   t = t.replace(/[*_>|#]+/g, "");                // stray md symbols / table pipes
   t = t.replace(/\s+/g, " ").trim();
-  return t || "Done, dear.";
+  return t || "Done, dearie.";
 }
 
 // ── Claude brain (Agent SDK, Tom's Claude plan) ───────────────────────────────
@@ -714,7 +714,7 @@ async function claudeTurn(text: string, history: ChatMsg[], source: string): Pro
   } catch (e) {
     logBrain(`CLAUDE brain error: ${(e as Error).message}`);
   }
-  if (!finalText) finalText = "Sorry dear, my brain hit a snag reaching Claude.";
+  if (!finalText) finalText = "Sorry dearie, my brain hit a snag reaching Claude.";
   const shaped = source === "app" ? forSpeech(finalText) : forText(finalText);
   history.push({ role: "user", content: text });
   history.push({ role: "assistant", content: shaped });
@@ -742,11 +742,11 @@ async function handleTurn(text: string, history: ChatMsg[], source = "app"): Pro
       data = await callModel(work);
     } catch (e) {
       logBrain(`XAI error: ${(e as Error).message}`);
-      finalText = "Sorry dear, my brain hit an error reaching the model.";
+      finalText = "Sorry dearie, my brain hit an error reaching the model.";
       break;
     }
     const msg = data?.choices?.[0]?.message;
-    if (!msg) { finalText = "Sorry dear, I got no reply from the model."; break; }
+    if (!msg) { finalText = "Sorry dearie, I got no reply from the model."; break; }
     work.push(msg);
     const calls = msg.tool_calls;
     if (Array.isArray(calls) && calls.length) {
@@ -758,7 +758,7 @@ async function handleTurn(text: string, history: ChatMsg[], source = "app"): Pro
       }
       continue; // let the model read the tool results and continue
     }
-    finalText = (msg.content || "Done, dear.").trim();
+    finalText = (msg.content || "Done, dearie.").trim();
   }
 
   // Step budget exhausted mid-investigation — force a final answer (no tools).
@@ -770,7 +770,7 @@ async function handleTurn(text: string, history: ChatMsg[], source = "app"): Pro
     } catch (e) {
       logBrain(`XAI final-answer error: ${(e as Error).message}`);
     }
-    if (!finalText) finalText = "I looked into that, dear, but it needs a proper dig — shall I open a session for it?";
+    if (!finalText) finalText = "I looked into that, dearie, but it needs a proper dig — shall I open a session for it?";
   }
 
   const spoken = source === "app" ? forSpeech(finalText) : forText(finalText);
@@ -828,7 +828,7 @@ async function drain() {
       const results: string[] = [];
       for (const held of fresh) {
         const out = await runBash(held.cmd, true);
-        results.push(out.split("\n").filter(Boolean).pop() || "Done, dear.");
+        results.push(out.split("\n").filter(Boolean).pop() || "Done, dearie.");
       }
       const last = results.length === 1 ? results[0] : results.map((r, i) => `${i + 1}. ${r}`).join("\n");
       const spoken = (turn.source || "app") === "app" ? forSpeech(last) : forText(last);
@@ -843,7 +843,7 @@ async function drain() {
     if (pending.length && isNegative(text)) {
       logBrain(`HELD command(s) CANCELLED by Tom: ${pending.map((p) => p.cmd).join(" || ")}`);
       pending = [];
-      const spoken = "Cancelled, dear — nothing was done.";
+      const spoken = "Cancelled, dearie — nothing was done.";
       history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
       trimHistory();
       turn.reply(spoken);
@@ -869,7 +869,7 @@ async function drain() {
         new Promise<string>((_, rej) => setTimeout(() => rej(new Error("turn-watchdog")), 150000)),
       ]);
     } catch {
-      out = "That turn timed out on me, dear — give it another go.";
+      out = "That turn timed out on me, dearie — give it another go.";
     }
     trimHistory();
     logBrain(`MARGIE[${id}] (${Date.now() - started}ms): ${out}`);

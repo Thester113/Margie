@@ -8,7 +8,7 @@ case "$cmd" in
     [ -z "$url" ] && url="$(osascript -e 'tell application "Safari" to get URL of front document' 2>/dev/null)"
     ttl="$(osascript -e 'tell application "Google Chrome" to get title of active tab of front window' 2>/dev/null)"
     [ -z "$ttl" ] && ttl="$(osascript -e 'tell application "Safari" to get name of front document' 2>/dev/null)"
-    [ -n "$url" ] && echo "${ttl:-page}: $url" || echo "No open browser tab, dear." ;;
+    [ -n "$url" ] && echo "${ttl:-page}: $url" || echo "No open browser tab, dearie." ;;
   open)   open "$arg"; echo "Opened $arg" ;;
   search) open "https://www.google.com/search?q=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$arg")"; echo "Searching: $arg" ;;
   *) echo "usage: browser.sh current|open <url>|search <query>" >&2; exit 1 ;;
