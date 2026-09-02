@@ -132,19 +132,28 @@ launch_planner() { # launch_planner <dispatch dir> <workdir> "<request text>"
       --tag "spec:$(basename "$D")" --out "$D/spec.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null
 }
 
+# Superseded drafts stay visible under notion_drafts_parent (Tom wants the
+# history in Notion): they are renamed, never archived.
+supersede_draft() { # supersede_draft <dispatch dir> <label>   e.g. "Superseded 12:51" | "Filed as PT-812"
+  local d="$1" label="$2" old title
+  old="$(cat "$d/draft-page.id" 2>/dev/null)"; [ -z "$old" ] && return 0
+  title="$(cat "$d/draft-page.title" 2>/dev/null)"; [ -z "$title" ] && title="Draft"
+  "$DIR/notion.sh" page rename "$old" "$label — ${title#Draft — }" >/dev/null 2>&1 || true
+  rm -f "$d/draft-page.id" "$d/draft-page.url" "$d/draft-page.title"
+}
+
 # Publish the finished spec as a read-only draft page under notion_drafts_parent
-# so Tom can read the plan in Notion before "go". Replaces any earlier draft.
+# so Tom can read the plan in Notion before "go". Earlier drafts are kept, renamed.
 publish_draft() { # publish_draft <dispatch dir>
   local d="$1" parent title old url
   parent="$(cfg notion_drafts_parent)"; [ -z "$parent" ] && return 0
   spec_ready "$d" || return 0
   [ -s "$d/spec.md" ] || render_md "$d"
   title="Draft — $(jq -r .title "$d/spec.json")"
-  old="$(cat "$d/draft-page.id" 2>/dev/null)"
+  supersede_draft "$d" "Superseded $(date +%b\ %-d\ %H:%M)"
   url="$("$DIR/notion.sh" page create "$title" --md "$d/spec.md" --parent "$parent" 2>/dev/null | grep -oE 'https://[^ ]+' | head -1)"
   [ -z "$url" ] && return 0
-  printf '%s' "$url" > "$d/draft-page.url"; printf '%s' "$url" | grep -oE '[0-9a-f]{32}' | tail -1 > "$d/draft-page.id"
-  [ -n "$old" ] && "$DIR/notion.sh" page archive "$old" >/dev/null 2>&1
+  printf '%s' "$url" > "$d/draft-page.url"; printf '%s' "$url" | grep -oE '[0-9a-f]{32}' | tail -1 > "$d/draft-page.id"; printf '%s' "$title" > "$d/draft-page.title"
   return 0
 }
 
@@ -231,7 +240,7 @@ case "$cmd" in
       exit 0
     fi
     [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
-    [ -s "$D/draft-page.id" ] && { "$DIR/notion.sh" page archive "$(cat "$D/draft-page.id")" >/dev/null 2>&1; rm -f "$D/draft-page.id" "$D/draft-page.url"; }
+    supersede_draft "$D" "Superseded $(date +%b\ %-d\ %H:%M)"
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
     st "$D" spec-running
@@ -283,8 +292,8 @@ case "$cmd" in
     PT="$(jq -r .pt "$D/ticket.json")"; TURL="$(jq -r .url "$D/ticket.json")"; TID="$(jq -r .id "$D/ticket.json")"
     "$DIR/notion.sh" testcase add "$PT" --json "$D/testcases.json" | { read -r line1; echo "$line1"; cat > "$D/tcmap.json"; }
     DOCS="$("$DIR/notion.sh" page create "$PT — Spec & QA plan" --md "$D/spec.md" --parent "$TID")" && echo "$DOCS"
-    # The draft page is superseded by the ticket's own spec page.
-    [ -s "$D/draft-page.id" ] && "$DIR/notion.sh" page archive "$(cat "$D/draft-page.id")" >/dev/null 2>&1 && rm -f "$D/draft-page.id" "$D/draft-page.url"
+    # The draft page is superseded by the ticket's own spec page; it stays, renamed.
+    supersede_draft "$D" "Filed as $PT"
     printf '%s' "$DOCS" | grep -oE 'https://[^ ]+' | head -1 > "$D/docs-page.url" || true
     ln -sfn "$D" "$MDIR/$PT"
     st "$D" filed

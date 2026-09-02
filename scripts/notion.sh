@@ -373,7 +373,18 @@ EOF2
         desc "would archive Notion page $(printf '%.24s' "$1")…"
         R="$(api2 PATCH "/pages/$(nid "$1")" '{"archived": true}')"; fail_if_error "$R"
         echo "Archived, dearie." ;;
-      *) echo "usage: notion.sh page create \"<title>\" --md <file> --parent <id|url> | append <id|url> --md <file> | archive <id|url>" >&2; exit 1 ;;
+      restore)
+        [ -z "${1:-}" ] && { echo "usage: notion.sh page restore <id|url>" >&2; exit 1; }
+        desc "would restore Notion page $(printf '%.24s' "$1")… from the trash"
+        R="$(api2 PATCH "/pages/$(nid "$1")" '{"archived": false}')"; fail_if_error "$R"
+        echo "Restored: $(printf '%s' "$R" | jq -r .url)" ;;
+      rename)
+        TARGET="${1:-}"; NEWT="${2:-}"
+        { [ -z "$TARGET" ] || [ -z "$NEWT" ]; } && { echo "usage: notion.sh page rename <id|url> \"<new title>\"" >&2; exit 1; }
+        desc "would rename Notion page $(printf '%.24s' "$TARGET")… to \"$NEWT\""
+        R="$(api2 PATCH "/pages/$(nid "$TARGET")" "$(jq -n --arg t "$NEWT" '{properties:{title:{title:[{type:"text",text:{content:$t}}]}}}')")"; fail_if_error "$R"
+        echo "Renamed to \"$NEWT\", dearie." ;;
+      *) echo "usage: notion.sh page create \"<title>\" --md <file> --parent <id|url> | append <id|url> --md <file> | archive <id|url> | restore <id|url> | rename <id|url> \"<title>\"" >&2; exit 1 ;;
     esac ;;
   *) echo "usage: notion.sh whoami | search \"<q>\" | recent [n] | read <id|url> | dbs | query <db> [\"<text>\"] | create \"<title>: <body>\" [--parent <id>] | append <id|url> \"<text>\"" >&2; exit 1 ;;
 esac
