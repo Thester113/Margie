@@ -103,6 +103,15 @@ elif [ -n "$PROMPT" ]; then
 else
   CLAUDE_LINE="$ENGINE_BIN ${CLAUDE_FLAG}"
 fi
+# Pre-trust the session folder for Claude Code (its per-folder "Quick safety
+# check" otherwise stops every fresh worktree until a human presses Enter).
+trust_dir() { # trust_dir <abs path>
+  local f="$HOME/.claude.json" d="$1"
+  [ -f "$f" ] || return 0
+  jq --arg d "$d" '.projects = ((.projects // {}) | .[$d] = ((.[$d] // {}) + {hasTrustDialogAccepted: true, hasClaudeMdExternalIncludesApproved: true, hasClaudeMdExternalIncludesWarningShown: true}))' "$f" > "$f.tmp.$$" && mv "$f.tmp.$$" "$f"
+}
+trust_dir "$DIR_ABS"; [ -n "$SUBDIR" ] && trust_dir "$DIR_ABS/$SUBDIR"
+
 cat > "$INNER" <<INNEREOF
 #!/bin/bash
 cd "$DIR_ABS${SUBDIR:+/$SUBDIR}" || cd "\$HOME"
