@@ -58,7 +58,7 @@ if [ "$FORGE" = "gitlab" ]; then
   case "$cmd" in
     whoami) glab api user | jq -r '"\(.username) (\(.name)) on \(env.GITLAB_HOST // "gitlab.com")"' ;;
     projects)
-      OUT="$(list_projects)"; [ -n "$OUT" ] && echo "$OUT" || echo "No projects found${ORG:+ in $ORG}, sir." ;;
+      OUT="$(list_projects)"; [ -n "$OUT" ] && echo "$OUT" || echo "No projects found${ORG:+ in $ORG}, dear." ;;
     mrs)
       which="${1:-review}"
       ME="$(glab api user 2>/dev/null | jq -r .username)"
@@ -71,23 +71,23 @@ if [ "$FORGE" = "gitlab" ]; then
       if [ -n "$ORG" ]; then Q="groups/$(urlenc "$ORG")/merge_requests?state=opened&scope=all&per_page=50&order_by=updated_at$F"
       else Q="merge_requests?state=opened&scope=all&per_page=50&order_by=updated_at$F"; fi
       OUT="$(glab api "$Q" 2>/dev/null | jq -r '.[]? | "!\(.iid) \(.title) — \(.references.full | split("!")[0]), by \(.author.username)\(if .draft then " (draft)" else "" end)"')"
-      [ -n "$OUT" ] && echo "$OUT" || echo "No open merge requests ($which)${ORG:+ in $ORG}, sir." ;;
+      [ -n "$OUT" ] && echo "$OUT" || echo "No open merge requests ($which)${ORG:+ in $ORG}, dear." ;;
     mr)
       n="${1:-}"; [ -z "$n" ] && { echo "usage: forge.sh mr <n> [repo]" >&2; exit 1; }
-      spec="$(repo_spec "${2:-}")" || { echo "Couldn't resolve repo '${2:-}', sir." >&2; exit 1; }
+      spec="$(repo_spec "${2:-}")" || { echo "Couldn't resolve repo '${2:-}', dear." >&2; exit 1; }
       glab api "projects/$(urlenc "$spec")/merge_requests/$n" | jq -r '
         "!\(.iid) \(.title) — by \(.author.username), \(.state)\(if .draft then " (draft)" else "" end), \(.source_branch) → \(.target_branch), \(.user_notes_count) comments, \(.merge_status // .detailed_merge_status // "?"), \(.web_url)"' \
-        || echo "Couldn't find MR !$n in $spec, sir." ;;
+        || echo "Couldn't find MR !$n in $spec, dear." ;;
     pipelines|ci)
-      spec="$(repo_spec "${1:-}")" || { echo "Couldn't resolve repo '${1:-}', sir." >&2; exit 1; }
+      spec="$(repo_spec "${1:-}")" || { echo "Couldn't resolve repo '${1:-}', dear." >&2; exit 1; }
       glab api "projects/$(urlenc "$spec")/pipelines?per_page=${2:-5}" | jq -r '.[]? | "#\(.id) \(.status) on \(.ref) (\(.updated_at))"' \
-        || echo "No pipelines for $spec, sir." ;;
+        || echo "No pipelines for $spec, dear." ;;
     *) echo "usage: forge.sh projects | mrs [review|mine|assigned|all] | mr <n> [repo] | pipelines [repo] [n] | whoami" >&2; exit 1 ;;
   esac
 else
   case "$cmd" in
     whoami) gh api user --jq '"\(.login) (\(.name // ""))"' ;;
-    projects) OUT="$(list_projects)"; [ -n "$OUT" ] && echo "$OUT" || echo "No repos found${ORG:+ in $ORG}, sir." ;;
+    projects) OUT="$(list_projects)"; [ -n "$OUT" ] && echo "$OUT" || echo "No repos found${ORG:+ in $ORG}, dear." ;;
     mrs)
       which="${1:-review}"
       case "$which" in
@@ -97,17 +97,17 @@ else
         all|*)          F=() ;;
       esac
       OUT="$(gh search prs --state=open ${ORG:+--owner "$ORG"} ${F[@]+"${F[@]}"} -L 50 --json number,title,repository,author --jq '.[] | "#\(.number) \(.title) — \(.repository.nameWithOwner), by \(.author.login)"' 2>/dev/null)"
-      [ -n "$OUT" ] && echo "$OUT" || echo "No open pull requests ($which)${ORG:+ in $ORG}, sir." ;;
+      [ -n "$OUT" ] && echo "$OUT" || echo "No open pull requests ($which)${ORG:+ in $ORG}, dear." ;;
     mr|pr)
       n="${1:-}"; [ -z "$n" ] && { echo "usage: forge.sh mr <n> [repo]" >&2; exit 1; }
-      spec="$(repo_spec "${2:-}")" || { echo "Couldn't resolve repo '${2:-}', sir." >&2; exit 1; }
+      spec="$(repo_spec "${2:-}")" || { echo "Couldn't resolve repo '${2:-}', dear." >&2; exit 1; }
       gh pr view "$n" -R "$spec" --json number,title,author,state,isDraft,headRefName,baseRefName,reviewDecision,url \
         --jq '"#\(.number) \(.title) — by \(.author.login), \(.state)\(if .isDraft then " (draft)" else "" end), \(.headRefName) → \(.baseRefName), review: \(.reviewDecision // "none"), \(.url)"' \
-        || echo "Couldn't find PR #$n in $spec, sir." ;;
+        || echo "Couldn't find PR #$n in $spec, dear." ;;
     pipelines|ci)
-      spec="$(repo_spec "${1:-}")" || { echo "Couldn't resolve repo '${1:-}', sir." >&2; exit 1; }
+      spec="$(repo_spec "${1:-}")" || { echo "Couldn't resolve repo '${1:-}', dear." >&2; exit 1; }
       gh run list -R "$spec" -L "${2:-5}" --json databaseId,status,conclusion,headBranch,updatedAt --jq '.[] | "#\(.databaseId) \(.conclusion // .status) on \(.headBranch) (\(.updatedAt))"' \
-        || echo "No runs for $spec, sir." ;;
+        || echo "No runs for $spec, dear." ;;
     *) echo "usage: forge.sh projects | mrs [review|mine|assigned|all] | mr <n> [repo] | pipelines [repo] [n] | whoami" >&2; exit 1 ;;
   esac
 fi

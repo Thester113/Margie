@@ -37,7 +37,7 @@ if [ -z "$SESSION" ]; then
 fi
 
 if ! "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then
-  echo "No running Claude session to follow up on, sir — start one first with kickoff-claude.sh."
+  echo "No running Claude session to follow up on, dear — start one first with kickoff-claude.sh."
   exit 1
 fi
 

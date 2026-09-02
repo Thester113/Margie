@@ -32,7 +32,7 @@ ask() { # ask "<prompt>"
   local out
   out="$(cd "$HOME" && "$CLAUDE_BIN" -p "$1" --model "$CMODEL" --output-format json --allowedTools "$ALLOW" 2>&1 | jq -r '.result // empty' 2>/dev/null)"
   if [ -z "$out" ]; then
-    echo "AppSignal didn't answer, sir — if this is the first use, the OAuth sign-in hasn't been done yet: run 'claude' in Warp, then /mcp, pick appsignal, and authenticate with your work email." >&2
+    echo "AppSignal didn't answer, dear — if this is the first use, the OAuth sign-in hasn't been done yet: run 'claude' in Warp, then /mcp, pick appsignal, and authenticate with your work email." >&2
     return 1
   fi
   printf '%s\n' "$out"

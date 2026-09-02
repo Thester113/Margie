@@ -48,7 +48,7 @@ if [ "$BOT_SEND" = 0 ] && { [ -z "$TOKEN" ] || [ "$VIA" = "claude" ]; }; then
   T="mcp__claude_ai_Slack__"
   ask() { # ask "<prompt>" <allowed tools csv>
     local out; out="$(cd "$HOME" && "$CLAUDE_BIN" -p "$1" --model "$CMODEL" --output-format json --allowedTools "$2" 2>/dev/null | jq -r '.result // empty')"
-    [ -n "$out" ] && printf '%s\n' "$out" || { echo "Slack via Claude returned nothing, sir — is the Slack connector connected (claude mcp list)?" >&2; return 1; }
+    [ -n "$out" ] && printf '%s\n' "$out" || { echo "Slack via Claude returned nothing, dear — is the Slack connector connected (claude mcp list)?" >&2; return 1; }
   }
   cmd="${1:-read}"; shift || true; args="$*"
   case "$cmd" in
@@ -83,9 +83,9 @@ cmd="${1:-read}"; shift || true; args="$*"
 
 read_via_search() { # user token only
   local RESP; RESP="$(api search.messages --get --data-urlencode "query=$1" -d "count=15" -d "sort=timestamp")"
-  echo "$RESP" | ok || { echo "Slack search failed, sir: $(echo "$RESP" | jq -r '.error // "unknown"')"; return 1; }
+  echo "$RESP" | ok || { echo "Slack search failed, dear: $(echo "$RESP" | jq -r '.error // "unknown"')"; return 1; }
   echo "$RESP" | jq -r '.messages.matches[]? | "• #"+(.channel.name // "?")+" — "+(.username // .user // "?")+": "+((.text // "") | gsub("\n";" "))' | head -20
-  echo "$RESP" | jq -e '.messages.matches | length>0' >/dev/null 2>&1 || echo "Nothing matching '$1', sir."
+  echo "$RESP" | jq -e '.messages.matches | length>0' >/dev/null 2>&1 || echo "Nothing matching '$1', dear."
 }
 
 read_member_channels() { # bot (or user) token: recent history from channels we're in + DMs
@@ -121,9 +121,9 @@ read_member_channels() { # bot (or user) token: recent history from channels we'
     done < <(echo "$IMS" | jq -r '.channels[]? | .id+" "+(.user // "?")')
   fi
   if [ "$any_src" = "0" ]; then
-    echo "I'm not in any channels yet, sir — /invite @margie to the channels you'd like me to watch (DMs to me work already)."
+    echo "I'm not in any channels yet, dear — /invite @margie to the channels you'd like me to watch (DMs to me work already)."
   elif [ "$found" = "0" ]; then
-    echo "Nothing recent${query:+ matching '$query'}, sir."
+    echo "Nothing recent${query:+ matching '$query'}, dear."
   fi
 }
 
@@ -165,10 +165,10 @@ case "$cmd" in
       exit 1
     fi
     cid="$(resolve_target "$target")"
-    [ -z "$cid" ] && { echo "Couldn't find '$target' on Slack, sir (bot must be a member of the channel)." >&2; exit 1; }
+    [ -z "$cid" ] && { echo "Couldn't find '$target' on Slack, dear (bot must be a member of the channel)." >&2; exit 1; }
     RESP="$(api chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$text")"
-    if echo "$RESP" | ok; then echo "Sent to $target, sir$([ "$KIND" = bot ] && echo " (as the margie bot)").";
-    else echo "Send failed, sir: $(echo "$RESP" | jq -r '.error // "unknown"')"; exit 1; fi
+    if echo "$RESP" | ok; then echo "Sent to $target, dear$([ "$KIND" = bot ] && echo " (as the margie bot)").";
+    else echo "Send failed, dear: $(echo "$RESP" | jq -r '.error // "unknown"')"; exit 1; fi
     ;;
   *)
     echo "usage: slack.sh read [query] | send \"<target>: msg\" | reply \"<target>: msg\"" >&2

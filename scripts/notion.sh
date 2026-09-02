@@ -21,7 +21,7 @@ set -uo pipefail
 CFG="$HOME/.margie/config.json"
 cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
 TOKEN="${NOTION_TOKEN:-$(cfg notion_token)}"
-[ -z "$TOKEN" ] && { echo "Notion isn't configured yet, sir — add notion_token to ~/.margie/config.json." >&2; exit 1; }
+[ -z "$TOKEN" ] && { echo "Notion isn't configured yet, dear — add notion_token to ~/.margie/config.json." >&2; exit 1; }
 PARENT_DEFAULT="$(cfg notion_parent_page)"
 API="https://api.notion.com/v1"
 
@@ -74,7 +74,7 @@ ds_of() {
     agent_messages|messages) v="$(cfg agent_messages_ds)" ;;
     *) v="$a" ;;
   esac
-  [ -z "$v" ] && { echo "No data source configured for '$a', sir — add notion_${a}_ds to ~/.margie/config.json." >&2; return 1; }
+  [ -z "$v" ] && { echo "No data source configured for '$a', dear — add notion_${a}_ds to ~/.margie/config.json." >&2; return 1; }
   printf '%s' "$v" | sed 's|^collection://||'
 }
 # Confirm-gate dry description: print one line and exit without touching Notion.
@@ -99,7 +99,7 @@ pt_page() {
     R="$(api2 POST "/data_sources/$ds/query" "$(jq -n --argjson n "$num" '{filter:{property:"ID", unique_id:{equals:$n}}, page_size:1}')")"
     fail_if_error "$R"
     printf '%s' "$R" | jq -re '.results[0] | [.id, .url, ((.properties.ID.unique_id.prefix // "") + "-" + (.properties.ID.unique_id.number|tostring))] | @tsv' \
-      || { echo "Couldn't find ticket $x, sir." >&2; return 1; }
+      || { echo "Couldn't find ticket $x, dear." >&2; return 1; }
   else
     local id; id="$(nid "$x")"
     [ -z "$id" ] && { echo "Not a ticket id: $x" >&2; return 1; }
@@ -120,11 +120,11 @@ case "$cmd" in
     q="$*"; [ -z "$q" ] && { echo "usage: notion.sh search \"<query>\"" >&2; exit 1; }
     R="$(api POST /search "$(jq -n --arg q "$q" '{query:$q, page_size:15}')")"; fail_if_error "$R"
     OUT="$(printf '%s' "$R" | jq -r ".results[]? | \"\(.object): \($TITLE_JQ)  [\(.id | gsub(\"-\";\"\"))]\"")"
-    [ -n "$OUT" ] && echo "$OUT" || echo "No Notion pages match '$q', sir — has that page been connected to the Margie integration?" ;;
+    [ -n "$OUT" ] && echo "$OUT" || echo "No Notion pages match '$q', dear — has that page been connected to the Margie integration?" ;;
   recent)
     R="$(api POST /search "$(jq -n --argjson n "${1:-10}" '{page_size:$n, sort:{direction:"descending", timestamp:"last_edited_time"}}')")"; fail_if_error "$R"
     OUT="$(printf '%s' "$R" | jq -r ".results[]? | \"\(.object): \($TITLE_JQ)  (\(.last_edited_time[:10]))  [\(.id | gsub(\"-\";\"\"))]\"")"
-    [ -n "$OUT" ] && echo "$OUT" || echo "The Margie integration can't see any pages yet, sir — connect a page to it (page → ··· → Connections → Margie)." ;;
+    [ -n "$OUT" ] && echo "$OUT" || echo "The Margie integration can't see any pages yet, dear — connect a page to it (page → ··· → Connections → Margie)." ;;
   read)
     id="$(nid "${1:-}")"; [ -z "$id" ] && { echo "usage: notion.sh read <id|url> [n]" >&2; exit 1; }
     P="$(api GET "/pages/$id")"; fail_if_error "$P"
@@ -134,13 +134,13 @@ case "$cmd" in
   dbs)
     R="$(api POST /search '{"filter":{"property":"object","value":"database"},"page_size":30}')"; fail_if_error "$R"
     OUT="$(printf '%s' "$R" | jq -r ".results[]? | \"\($TITLE_JQ)  [\(.id | gsub(\"-\";\"\"))]\"")"
-    [ -n "$OUT" ] && echo "$OUT" || echo "No databases visible to the Margie integration, sir." ;;
+    [ -n "$OUT" ] && echo "$OUT" || echo "No databases visible to the Margie integration, dear." ;;
   query)
     id="$(nid "${1:-}")"; [ -z "$id" ] && { echo "usage: notion.sh query <db id|url> [\"<text>\"]" >&2; exit 1; }; shift || true
     R="$(api POST "/databases/$id/query" '{"page_size":50}')"; fail_if_error "$R"
     OUT="$(printf '%s' "$R" | jq -r ".results[]? | \"\($TITLE_JQ)  (\(.last_edited_time[:10]))  [\(.id | gsub(\"-\";\"\"))]\"")"
     [ -n "$*" ] && OUT="$(printf '%s\n' "$OUT" | grep -i -- "$*")"
-    [ -n "$OUT" ] && echo "$OUT" || echo "No rows${*:+ matching '$*'}, sir." ;;
+    [ -n "$OUT" ] && echo "$OUT" || echo "No rows${*:+ matching '$*'}, dear." ;;
   create)
     PARENT=""; ARGS=()
     while [ $# -gt 0 ]; do case "$1" in --parent) PARENT="${2:-}"; shift 2 ;; *) ARGS+=("$1"); shift ;; esac; done
@@ -149,7 +149,7 @@ case "$cmd" in
     [ -z "$title" ] && { echo "usage: notion.sh create \"<title>: <body>\" [--parent <id|url>]" >&2; exit 1; }
     desc "would create a Notion page \"$title\" under ${PARENT:-the default parent page}"
     pid="$(nid "${PARENT:-$PARENT_DEFAULT}")"
-    [ -z "$pid" ] && { echo "No parent page, sir — pass --parent <id|url> or set notion_parent_page in config (and connect that page to the Margie integration)." >&2; exit 1; }
+    [ -z "$pid" ] && { echo "No parent page, dear — pass --parent <id|url> or set notion_parent_page in config (and connect that page to the Margie integration)." >&2; exit 1; }
     children="$(printf '%s' "$body" | paragraphs_json)"
     R="$(api POST /pages "$(jq -n --arg p "$pid" --arg t "$title" --argjson c "$children" \
       '{parent:{page_id:$p}, properties:{title:{title:[{type:"text", text:{content:$t}}]}}, children:$c}')")"; fail_if_error "$R"
@@ -160,7 +160,7 @@ case "$cmd" in
     desc "would append a paragraph to Notion page $(printf '%.24s' "$1")…"
     children="$(printf '%s' "$text" | paragraphs_json)"
     R="$(api PATCH "/blocks/$id/children" "$(jq -n --argjson c "$children" '{children:$c}')")"; fail_if_error "$R"
-    echo "Appended to the page, sir." ;;
+    echo "Appended to the page, dear." ;;
   rows)
     # rows <alias|ds|db> [n] — compact row list (title + status/date) for planner context.
     # Aliases resolve to a data source; decisions|questions resolve their DB's first source.
@@ -173,7 +173,7 @@ case "$cmd" in
     if [ -n "$DB" ]; then
       R="$(api2 GET "/databases/$DB")"; fail_if_error "$R"
       ds="$(printf '%s' "$R" | jq -r '.data_sources[0].id // empty')"
-      [ -z "$ds" ] && { echo "No data source on database $DB, sir." >&2; exit 1; }
+      [ -z "$ds" ] && { echo "No data source on database $DB, dear." >&2; exit 1; }
     else
       ds="$(ds_of "$a")" || exit 1
     fi
@@ -271,7 +271,7 @@ EOF2
         esac
         R="$(api2 PATCH "/pages/$pid" "$(jq -cn --arg st "$2" --argjson x "$EXTRA" '{properties: ({Status:{status:{name:$st}}} + $x)}')")"
         fail_if_error "$R"
-        echo "$ppt is now $2, sir." ;;
+        echo "$ppt is now $2, dear." ;;
       append)
         MD=""; TARGET=""
         while [ $# -gt 0 ]; do case "$1" in --md) MD="${2:-}"; shift 2 ;; *) TARGET="$1"; shift ;; esac; done
@@ -282,7 +282,7 @@ $(pt_page "$TARGET")
 EOF2
         [ -z "$pid" ] && exit 1
         append_blocks "$pid" "$(md_blocks "$MD")"
-        echo "Appended to $ppt, sir." ;;
+        echo "Appended to $ppt, dear." ;;
       comment)
         [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: notion.sh ticket comment <PT> \"<text>\"" >&2; exit 1; }
         desc "would comment on ticket $1: \"$2\""
@@ -292,7 +292,7 @@ EOF2
         [ -z "$pid" ] && exit 1
         R="$(api2 POST /comments "$(jq -cn --arg id "$pid" --arg t "$2" '{parent:{page_id:$id}, rich_text:[{type:"text",text:{content:$t}}]}')")"
         fail_if_error "$R"
-        echo "Commented on $ppt, sir." ;;
+        echo "Commented on $ppt, dear." ;;
       *) echo "usage: notion.sh ticket read|create|status|append|comment ..." >&2; exit 1 ;;
     esac ;;
   testcase)
@@ -331,7 +331,7 @@ EOF2
           MAP="$(printf '%s' "$MAP" | jq -c --arg k "$(printf '%s' "$TC" | jq -r '.title // "untitled"')" --arg v "$(printf '%s' "$R" | jq -r .id)" '. + {($k): $v}')"
           i=$((i + 1))
         done
-        echo "Added $N test cases to $ppt, sir."
+        echo "Added $N test cases to $ppt, dear."
         printf '%s\n' "$MAP" ;;
       status)
         [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: notion.sh testcase status <id> <Planned|Written|Passing|Failing|Skipped> [--file <path>]" >&2; exit 1; }
@@ -367,7 +367,7 @@ EOF2
         [ -z "$TARGET" ] || [ -z "$MD" ] && { echo "usage: notion.sh page append <id|url> --md <file>" >&2; exit 1; }
         desc "would append notes to page $(printf '%.24s' "$TARGET")…"
         append_blocks "$(nid "$TARGET")" "$(md_blocks "$MD")"
-        echo "Appended, sir." ;;
+        echo "Appended, dear." ;;
       *) echo "usage: notion.sh page create \"<title>\" --md <file> --parent <id|url> | append <id|url> --md <file>" >&2; exit 1 ;;
     esac ;;
   *) echo "usage: notion.sh whoami | search \"<q>\" | recent [n] | read <id|url> | dbs | query <db> [\"<text>\"] | create \"<title>: <body>\" [--parent <id>] | append <id|url> \"<text>\"" >&2; exit 1 ;;

@@ -113,7 +113,7 @@ def main():
         for is_me, hid, text, blob, mime, fname in reversed(rows):
             who = "Me" if is_me else name_for(hid)
             lines.append(f"{who}: " + content(text, blob, mime, fname).replace("\n", " "))
-    print("\n".join(lines) if lines else "No messages found, sir.")
+    print("\n".join(lines) if lines else "No messages found, dear.")
 
 
 if __name__ == "__main__":

@@ -23,6 +23,6 @@ fi
 if [ -s "$OUT" ]; then
   echo "$OUT"
 else
-  echo "Camera capture failed, sir — check Camera permission for Margie (System Settings → Privacy & Security → Camera), and that the panel camera isn't already using it."
+  echo "Camera capture failed, dear — check Camera permission for Margie (System Settings → Privacy & Security → Camera), and that the panel camera isn't already using it."
   exit 1
 fi

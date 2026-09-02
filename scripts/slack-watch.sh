@@ -43,9 +43,9 @@ c = os.path.expanduser("~/.margie/config.json"); d = json.load(open(c)); d["slac
 json.dump(d, open(c, "w"), indent=2); open(c, "a").write("\n")
 PY
       case "$2" in
-        off) echo "Slack watching is off, sir." ;;
-        preview) echo "Watching Slack in preview, sir — I'll draft replies and DM them to you, but post nothing." ;;
-        live) echo "Watching Slack live, sir — I'll answer mentions of you in-thread as your assistant." ;;
+        off) echo "Slack watching is off, dear." ;;
+        preview) echo "Watching Slack in preview, dear — I'll draft replies and DM them to you, but post nothing." ;;
+        live) echo "Watching Slack live, dear — I'll answer mentions of you in-thread as your assistant." ;;
       esac; exit 0 ;;
     *) echo "Slack watch mode is: $(cfg slack_watch | grep . || echo preview). Usage: slack-watch.sh mode off|preview|live" ; exit 0 ;;
   esac
@@ -147,7 +147,7 @@ while IFS=$'\t' read -r kind cid label ts thread user text; do
     echo "${NOW}|${ts}" >> "$HANDLED"
     logl "owner DM → brain: $(printf '%s' "$text" | cut -c1-80)"
     ( REPLY="$(MARGIE_SOURCE=slack "$MARGIE_CLI" -q "$text" 2>/dev/null)"
-      [ -z "$REPLY" ] && REPLY="Sorry sir, I didn't catch that — my brain didn't answer."
+      [ -z "$REPLY" ] && REPLY="Sorry dear, I didn't catch that — my brain didn't answer."
       sapi chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$REPLY" >/dev/null 2>&1
       logl "owner DM ← brain: $(printf '%s' "$REPLY" | cut -c1-80)" ) >/dev/null 2>&1 &
     continue
@@ -189,7 +189,7 @@ done < "$NEW.todo"
 rm -f "$NEW" "$NEW.todo"
 
 [ "${#SPOKEN_ITEMS[@]}" = 0 ] && exit 0
-if [ "$MODE" = "live" ]; then TAIL="I've answered as your assistant and DM'd you the details, sir."; else TAIL="I've DM'd you a draft reply for approval, sir."; fi
+if [ "$MODE" = "live" ]; then TAIL="I've answered as your assistant and DM'd you the details, dear."; else TAIL="I've DM'd you a draft reply for approval, dear."; fi
 SPOKEN="${SPOKEN_ITEMS[0]}"
 [ "${#SPOKEN_ITEMS[@]}" -gt 1 ] && SPOKEN="$SPOKEN, plus $(( ${#SPOKEN_ITEMS[@]} - 1 )) more"
 SPOKEN="$SPOKEN — $TAIL"

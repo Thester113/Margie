@@ -86,7 +86,7 @@ resolve_msg() {
     fi
   fi
   rm -f "$tmp"
-  echo "Couldn't find that message in the unacked backlog, sir." >&2
+  echo "Couldn't find that message in the unacked backlog, dear." >&2
   return 1
 }
 
@@ -114,15 +114,15 @@ case "$cmd" in
       '[.results[] | select((.properties["Sent At"].date.start // "9999") < $cut)] | length' "$TMP")"
     rm -f "$TMP"
     [ "$COUNT" -gt 0 ] || exit 0
-    LINE="You have $COUNT unacked agent message(s), sir"
+    LINE="You have $COUNT unacked agent message(s), dear"
     [ "$STALE" -gt 0 ] && LINE="$LINE — $STALE older than a day"
     echo "$LINE."
     ;;
   list)
     TMP="$(mktemp)"
-    if ! fetch_unacked "$TMP"; then rm -f "$TMP"; echo "Couldn't reach the Agent Messages database, sir — see $LOG."; exit 1; fi
+    if ! fetch_unacked "$TMP"; then rm -f "$TMP"; echo "Couldn't reach the Agent Messages database, dear — see $LOG."; exit 1; fi
     N="$(jq '.results | length' "$TMP")"
-    if [ "$N" = 0 ]; then echo "No unacked agent messages, sir."; rm -f "$TMP"; exit 0; fi
+    if [ "$N" = 0 ]; then echo "No unacked agent messages, dear."; rm -f "$TMP"; exit 0; fi
     jq -r --arg now "$(date -u +%FT%TZ)" '.results | to_entries[] |
       "[" + ((.key + 1) | tostring) + "] " + (.value.properties.From.select.name // "?")
       + " · " + ((.value.properties["Sent At"].date.start // "")[:16])
@@ -152,14 +152,14 @@ EOF2
     IFS="$(printf '\t')" read -r MID SUBJ FROM MURL <<EOF2
 $LINE
 EOF2
-    [ -f "$STATE/read/$(printf '%s' "$MID" | tr -d '-')" ] || { echo "I haven't ingested that message yet, sir — read it first (ack means ingested)." >&2; exit 1; }
+    [ -f "$STATE/read/$(printf '%s' "$MID" | tr -d '-')" ] || { echo "I haven't ingested that message yet, dear — read it first (ack means ingested)." >&2; exit 1; }
     desc "would acknowledge the agent message \"$SUBJ\" from $FROM (mark it ingested by $ME)"
     CUR="$(api GET "/pages/$(nid "$MID")" | jq -c '[.properties["Acked By"].multi_select[]?.name]')"
     NEW="$(printf '%s' "$CUR" | jq -c --arg me "$ME" '(. + [$me]) | unique | map({name: .})')"
     R="$(api PATCH "/pages/$(nid "$MID")" "$(jq -cn --argjson a "$NEW" '{properties: {"Acked By": {multi_select: $a}}}')")"
-    printf '%s' "$R" | jq -e '.object == "page"' >/dev/null || { echo "Notion refused the ack, sir: $(printf '%s' "$R" | jq -r '.message // "?"')" >&2; exit 1; }
+    printf '%s' "$R" | jq -e '.object == "page"' >/dev/null || { echo "Notion refused the ack, dear: $(printf '%s' "$R" | jq -r '.message // "?"')" >&2; exit 1; }
     : > "$HOME/.claude/agent-messages-last-check-$ME" 2>/dev/null || true
-    echo "Acknowledged \"$SUBJ\", sir."
+    echo "Acknowledged \"$SUBJ\", dear."
     ;;
   send|reply)
     if [ "$cmd" = "reply" ]; then
@@ -175,7 +175,7 @@ EOF2
       [ -z "$TO" ] || [ -z "$SUBJ" ] || [ -z "$BODY" ] && { echo "usage: agent-messages.sh send <To>[,To] \"<subject>\" \"<body>\" [--re <url>]" >&2; exit 1; }
     fi
     desc "would post an agent message to $TO — \"$SUBJ\" — and Slack-DM $(printf '%s' "$TO" | tr ',' ' ') owner(s) a 1-line pointer"
-    [ -n "$DS" ] || { echo "No Agent Messages data source configured, sir." >&2; exit 1; }
+    [ -n "$DS" ] || { echo "No Agent Messages data source configured, dear." >&2; exit 1; }
     PROPS="$(jq -cn --arg me "$ME" --arg to "$TO" --arg subj "$SUBJ" --arg re "$RE" --arg thread "$THREAD" \
       --arg meid "$(owner_of "$ME" notion_person_id)" \
       --argjson owners "$(for t in $(printf '%s' "$TO" | tr ',' ' '); do owner_of "$t" notion_person_id; done | jq -R . | jq -sc 'map(select(. != ""))')" \
@@ -190,7 +190,7 @@ EOF2
       + (if $thread != "" then {Thread: {relation: [{id: $thread}]}} else {} end)')"
     CH="$(printf '%s' "$BODY" | jq -Rs 'split("\n") | map(select(length > 0)) | map({object:"block", type:"paragraph", paragraph:{rich_text:[{type:"text", text:{content:.}}]}})')"
     R="$(api POST /pages "$(jq -cn --arg ds "$DS" --argjson p "$PROPS" --argjson c "$CH" '{parent:{type:"data_source_id", data_source_id:$ds}, properties:$p, children:$c}')")"
-    printf '%s' "$R" | jq -e '.object == "page"' >/dev/null || { echo "Notion refused the message, sir: $(printf '%s' "$R" | jq -r '.message // "?"')" >&2; exit 1; }
+    printf '%s' "$R" | jq -e '.object == "page"' >/dev/null || { echo "Notion refused the message, dear: $(printf '%s' "$R" | jq -r '.message // "?"')" >&2; exit 1; }
     MURL="$(printf '%s' "$R" | jq -r .url)"
     echo "Posted \"$SUBJ\" to $TO: $MURL"
     # Slack pointer to each recipient's OWNER — ≤3 sentences, the row is the

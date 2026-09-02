@@ -64,7 +64,7 @@ if [ "$USE_WT" = "1" ]; then
   [ -z "$WT_BRANCH" ] && WT_BRANCH="margie/$STAMP"
   # Create/reuse the worktree (worktree.sh resolves the repo + clones if needed).
   DIR_ABS="$(bash "$(dirname "$0")/worktree.sh" add "$DIR" "$WT_BRANCH" 2>/dev/null | tail -1)"
-  [ -z "$DIR_ABS" ] && { echo "Couldn't create worktree for '$DIR', sir."; exit 1; }
+  [ -z "$DIR_ABS" ] && { echo "Couldn't create worktree for '$DIR', dear."; exit 1; }
   SESSION="margie-$(printf '%s' "$WT_BRANCH" | tr '/ ' '--')"
 else
   DIR_ABS="$(cd "$DIR" 2>/dev/null && pwd || echo "$HOME")"

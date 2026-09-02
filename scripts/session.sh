@@ -45,14 +45,14 @@ resolve_session() {
 case "$cmd" in
   list)
     OUT="$("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' || true)"
-    [ -z "$OUT" ] && { echo "No running sessions, sir."; exit 0; }
+    [ -z "$OUT" ] && { echo "No running sessions, dear."; exit 0; }
     echo "$OUT"
     ;;
   read | show | peek)
     SESSION="$(resolve_session)"
     LINES="${1:-200}"
     if ! "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then
-      echo "No running session to read, sir — start one first."
+      echo "No running session to read, dear — start one first."
       exit 0
     fi
     echo "── session $SESSION ──"
@@ -66,12 +66,12 @@ case "$cmd" in
     TEXT="$*"
     [ -z "$TEXT" ] && { echo "usage: session.sh send \"<text>\" [--branch <b>]" >&2; exit 1; }
     if ! "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then
-      echo "No running session to steer, sir — start one first with kickoff-claude.sh."
+      echo "No running session to steer, dear — start one first with kickoff-claude.sh."
       exit 1
     fi
     "$TMUX_BIN" send-keys -t "$SESSION" -l -- "$TEXT"
     "$TMUX_BIN" send-keys -t "$SESSION" Enter
-    echo "Sent into session $SESSION, sir."
+    echo "Sent into session $SESSION, dear."
     ;;
   *)
     echo "usage: session.sh read [lines] | send \"<text>\" | list [--branch <b>]" >&2

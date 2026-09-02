@@ -34,7 +34,7 @@ while [ $# -gt 0 ]; do
     --target) TARGET="${2:-main}"; shift 2 ;;
     --title) TITLE_OPT="${2:-}"; shift 2 ;;
     --description-file) DESC_FILE="${2:-}"; shift 2 ;;
-    --*) echo "Unknown option '$1', sir. Usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f]" >&2; exit 1 ;;
+    --*) echo "Unknown option '$1', dear. Usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f]" >&2; exit 1 ;;
     *) [ -z "$REF" ] && REF="$1" || REF="$REF $1"; shift ;;
   esac
 done
@@ -51,7 +51,7 @@ if [ -n "$BRANCH" ]; then
 elif [ -n "$REF" ] && [ "$cmd" != "view" ]; then
   D="$("$DIR/dispatch.sh" __resolve "$REF" 2>/dev/null || true)"
   [ -z "$D" ] && { p="$MDIR/$REF"; [ -e "$p" ] && D="$(cd "$p" && pwd -P)"; }
-  [ -n "$D" ] && [ -s "$D/impl.json" ] || { echo "No implemented dispatch matches '$REF', sir — give me a PT id or --branch <b>." >&2; exit 1; }
+  [ -n "$D" ] && [ -s "$D/impl.json" ] || { echo "No implemented dispatch matches '$REF', dear — give me a PT id or --branch <b>." >&2; exit 1; }
   WT="$(jq -r .worktree "$D/impl.json")"; BRANCH="$(jq -r .branch "$D/impl.json")"
   PT="$(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null)"; TURL="$(jq -r '.url // empty' "$D/ticket.json" 2>/dev/null)"
   STATE="$D"
@@ -78,7 +78,7 @@ ensure_description() { # sets TITLE, DESCF (file), RISK; returns 1 if still draf
     # Kick a detached draft if one isn't already running.
     TAG="mr:$(basename "$STATE")"
     case "$("$DIR/claude-task.sh" state "$TAG")" in
-      RUNNING) echo "I'm still drafting the MR description for $BRANCH, sir — ask again in a minute."; return 1 ;;
+      RUNNING) echo "I'm still drafting the MR description for $BRANCH, dear — ask again in a minute."; return 1 ;;
     esac
     TPL="$(template_path)"
     P="$(cat "$DIR/prompts/mr-draft.md")"
@@ -86,7 +86,7 @@ ensure_description() { # sets TITLE, DESCF (file), RISK; returns 1 if still draf
     P="${P//'{{TICKET}}'/${PT:-none}${TURL:+ — $TURL}}"
     P="${P//'{{TEMPLATE_PATH}}'/${TPL:-none}}"
     "$DIR/claude-task.sh" start "$WT" "$P" --plan --schema "$DIR/schemas/mr.schema.json" --tag "$TAG" --out "$STATE/mr-draft.json" >/dev/null
-    echo "Drafting the MR description for $BRANCH from the repo template, sir — about a minute; then say 'open the MR' again."
+    echo "Drafting the MR description for $BRANCH from the repo template, dear — about a minute; then say 'open the MR' again."
     return 1
   fi
   DESCF="$STATE/mr-description.md"
@@ -106,11 +106,11 @@ case "$cmd" in
     echo "Title: $TITLE"; echo "Risk: ${RISK:-?}"; echo "Branch: $BRANCH → $TARGET"; echo "---"; cat "$DESCF" ;;
   create)
     [ -n "$WT" ] || { echo "usage: mr.sh create <PT|dispatch> | --branch <b> [--repo <r>] [--draft] [--target <b>]" >&2; exit 1; }
-    [ -d "$WT" ] || { echo "The worktree for $BRANCH is gone, sir ($WT)." >&2; exit 1; }
+    [ -d "$WT" ] || { echo "The worktree for $BRANCH is gone, dear ($WT)." >&2; exit 1; }
     # Already open?
     if [ "$FORGE" = "gitlab" ]; then EXISTING="$(cd "$WT" && glab mr view "$BRANCH" -F json 2>/dev/null | jq -r 'select(.state=="opened") | .web_url // empty')"
     else EXISTING="$(cd "$WT" && gh pr view "$BRANCH" --json url,state --jq 'select(.state=="OPEN") | .url' 2>/dev/null)"; fi
-    [ -n "$EXISTING" ] && { echo "There's already an open MR for $BRANCH, sir: $EXISTING"; exit 0; }
+    [ -n "$EXISTING" ] && { echo "There's already an open MR for $BRANCH, dear: $EXISTING"; exit 0; }
     if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then
       # Describe without kicking a draft: say what's known.
       if [ -s "$STATE/qa.json" ] || [ -s "$STATE/mr-draft.json" ] || [ -n "$DESC_FILE" ]; then ensure_description >/dev/null 2>&1; fi
@@ -118,13 +118,13 @@ case "$cmd" in
     fi
     ensure_description || exit 0
     N="$(git -C "$WT" rev-list --count "origin/$TARGET..HEAD" 2>/dev/null || echo "?")"
-    [ "$N" = "0" ] && { echo "Branch $BRANCH has no commits beyond $TARGET yet, sir — nothing to open."; exit 1; }
+    [ "$N" = "0" ] && { echo "Branch $BRANCH has no commits beyond $TARGET yet, dear — nothing to open."; exit 1; }
     if [ "${DRY_RUN:-0}" = "1" ]; then
       echo "DRY RUN — would run in $WT:"; echo "  git push -u origin $BRANCH"
       echo "  glab mr create --source-branch $BRANCH --target-branch $TARGET --title \"$TITLE\" --description @$DESCF --yes$([ "$DRAFT" = 1 ] && echo " --draft")"
       exit 0
     fi
-    git -C "$WT" push -u origin "$BRANCH" >/dev/null 2>&1 || { echo "Couldn't push $BRANCH, sir — check the remote/auth." >&2; exit 1; }
+    git -C "$WT" push -u origin "$BRANCH" >/dev/null 2>&1 || { echo "Couldn't push $BRANCH, dear — check the remote/auth." >&2; exit 1; }
     if [ "$FORGE" = "gitlab" ]; then
       OUT="$(cd "$WT" && glab mr create --source-branch "$BRANCH" --target-branch "$TARGET" --title "$TITLE" --description "$(cat "$DESCF")" --yes $([ "$DRAFT" = 1 ] && echo --draft) 2>&1)"
       URL="$(printf '%s' "$OUT" | grep -oE 'https://[^ ]+/-/merge_requests/[0-9]+' | tail -1)"
@@ -132,7 +132,7 @@ case "$cmd" in
       OUT="$(cd "$WT" && gh pr create --head "$BRANCH" --base "$TARGET" --title "$TITLE" --body-file "$DESCF" $([ "$DRAFT" = 1 ] && echo --draft) 2>&1)"
       URL="$(printf '%s' "$OUT" | grep -oE 'https://github.com/[^ ]+/pull/[0-9]+' | tail -1)"
     fi
-    [ -z "$URL" ] && { echo "Opening the MR failed, sir: $(printf '%s' "$OUT" | tail -1 | cut -c1-160)" >&2; exit 1; }
+    [ -z "$URL" ] && { echo "Opening the MR failed, dear: $(printf '%s' "$OUT" | tail -1 | cut -c1-160)" >&2; exit 1; }
     jq -n --arg url "$URL" --arg branch "$BRANCH" --arg title "$TITLE" --arg at "$(date -u +%FT%TZ)" '{url:$url, branch:$branch, title:$title, opened_at:$at}' > "$STATE/mr.json"
     if [ -n "$PT" ]; then
       printf 'MR opened: %s\n' "$URL" > "$STATE/mr-note.md"
@@ -145,9 +145,9 @@ case "$cmd" in
     desc "would update MR $REF${TITLE_OPT:+ title → \"$TITLE_OPT\"}${DESC_FILE:+ and replace its description}"
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"
     [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.url // empty' "$D/mr.json" 2>/dev/null | grep -oE '[0-9]+$')"
-    [ -z "$NUM" ] && { echo "Which MR, sir? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
+    [ -z "$NUM" ] && { echo "Which MR, dear? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
     R="$(cd "${WT:-$PWD}" && glab mr update "$NUM" ${TITLE_OPT:+--title "$TITLE_OPT"} ${DESC_FILE:+--description "$(cat "$DESC_FILE")"} 2>&1 | tail -1)"
-    echo "Updated MR !$NUM, sir. $R" ;;
+    echo "Updated MR !$NUM, dear. $R" ;;
   view)
     "$DIR/forge.sh" mr "$(printf '%s' "$REF" | grep -oE '[0-9]+$')" "${1:-}" ;;
   *)

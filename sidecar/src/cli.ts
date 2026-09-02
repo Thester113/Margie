@@ -16,6 +16,38 @@ import { ensureDaemon, Client } from "./client.js";
 import { SOCK, WireOut } from "./protocol.js";
 
 const DIM = "\x1b[2m", CYAN = "\x1b[36m", YEL = "\x1b[33m", GRN = "\x1b[32m", MAG = "\x1b[35m", BOLD = "\x1b[1m", RESET = "\x1b[0m";
+const ITAL = "\x1b[3m", PINK = "\x1b[38;5;213m", LAV = "\x1b[38;5;147m", MINT = "\x1b[38;5;121m", PEACH = "\x1b[38;5;216m", GREY = "\x1b[38;5;245m";
+const NAME = `${PINK}${BOLD}Margie${RESET}`;
+const cols = () => Math.min(process.stdout.columns || 100, 100);
+
+/** Word-wrap to the terminal, with a gutter. Keeps existing line breaks. */
+function wrap(text: string, indent = "  "): string {
+  const width = cols() - indent.length;
+  const out: string[] = [];
+  for (const para of text.split("\n")) {
+    if (!para.trim()) { out.push(""); continue; }
+    let line = "";
+    for (const word of para.split(/\s+/)) {
+      const vis = (line + " " + word).replace(/\x1b\[[0-9;]*m/g, "").length;
+      if (line && vis > width) { out.push(indent + line); line = word; } else line = line ? line + " " + word : word;
+    }
+    if (line) out.push(indent + line);
+  }
+  return out.join("\n");
+}
+/** Light syntax colouring for the things that matter in her replies. */
+function flair(text: string): string {
+  return text
+    .replace(/"([^"\n]{1,160})"/g, `${ITAL}${LAV}“$1”${RESET}`)                 // quoted text
+    .replace(/\b(PT-\d+|!\d{2,6}|MR !?\d+|#\d{2,6})\b/g, `${MINT}$1${RESET}`)     // tickets & MRs
+    .replace(/(https?:\/\/[^\s)]+)/g, `${DIM}$1${RESET}`)                        // urls
+    .replace(/\b(yes\?|Yes\?)$/m, `${PEACH}$1${RESET}`)                            // the confirmation question
+    .replace(/\b(\d+(?:\.\d+)?%?)\b/g, `${PEACH}$1${RESET}`);                       // numbers
+}
+function renderReply(text: string): string {
+  const body = wrap(flair(text), "   ");
+  return `\n ${NAME} ${GREY}·${RESET}\n${body}\n`;
+}
 const SCRIPTS = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts");
 const ENTRY = new URL("./index.js", import.meta.url).pathname;
 const HOME = process.env.HOME || "";
@@ -60,9 +92,9 @@ function renderEvent(m: WireOut, spin: Spinner, out: NodeJS.WriteStream) {
   spin.clear();
   switch (m.event) {
     case "thinking": spin.set(text || "thinking"); return;
-    case "tool":     out.write(`${DIM}  ▸ ${short(text)}${RESET}\n`); spin.set("running"); return;
-    case "result":   out.write(`${DIM}  ⎿ ${short(text, 130)}${RESET}\n`); spin.set("thinking"); return;
-    case "held":     out.write(`${YEL}  ⏸ held for your yes: ${short(text)}${RESET}\n`); spin.set("reading back"); return;
+    case "tool":     out.write(`${GREY}   ▸ ${LAV}${short(text)}${RESET}\n`); spin.set("running"); return;
+    case "result":   out.write(`${GREY}   ⎿ ${short(text, 130)}${RESET}\n`); spin.set("thinking"); return;
+    case "held":     out.write(`${PEACH}   ⏸ waiting for your yes: ${short(text)}${RESET}\n`); spin.set("reading back"); return;
     default: return;
   }
 }
@@ -129,12 +161,12 @@ function page(text: string) {
   return Promise.resolve();
 }
 
-const HELP = `${BOLD}Margie${RESET} — shared brain (voice + every terminal). Just talk to her.
+const HELP = `${PINK}✿${RESET} ${NAME} ${GREY}— your assistant, dear. One brain across voice and every terminal; just talk.${RESET}
   ${CYAN}/status${RESET}   daemon, held command, sessions, tasks, dispatches
   ${CYAN}/held${RESET}     what's waiting for your yes      ${CYAN}/yes${RESET}  ${CYAN}/no${RESET}   answer it
   ${CYAN}/spec${RESET}     latest spec in full             ${CYAN}/qa${RESET}   ${CYAN}/mr${RESET}    latest QA report / MR text
   ${CYAN}/log${RESET}      her recent brain log            ${CYAN}/clear${RESET}     ${CYAN}/quit${RESET}
-  ${DIM}Legend:  ▸ tool she ran   ⎿ first line of its output   ⏸ held for your yes   [margie] background notice${RESET}`;
+  ${GREY}▸ what she ran   ⎿ what it said   ⏸ waiting for your yes   ✿ something she noticed in the background${RESET}`;
 
 // ── REPL ──────────────────────────────────────────────────────────────────────
 async function repl() {
@@ -145,14 +177,14 @@ async function repl() {
 
   const prompt = () => {
     if (!rl) return;
-    rl.setPrompt(held ? `${YEL}margie ⏸${RESET} ${DIM}(${short(held, 40)})${RESET} ❯ ` : `${GRN}margie${RESET} ❯ `);
+    rl.setPrompt(held ? `${PEACH}⏸ ${short(held, 44)}${RESET}\n${PINK}you${RESET} ❯ ` : `${PINK}you${RESET} ❯ `);
     try { rl.prompt(true); } catch { /* closed */ }
   };
   const hook = (client: Client) => {
     client.onEvent = (m) => renderEvent(m, spin, process.stdout);
     client.onNotice = (t) => {
       spin.clear();
-      process.stdout.write(`\r\x1b[2K${CYAN}[margie] ${t}${RESET}\n`);
+      process.stdout.write(`\r\x1b[2K${PINK}✿${RESET} ${CYAN}${t}${RESET}\n`);
       prompt();
     };
     client.onClose = () => {
@@ -185,9 +217,9 @@ async function repl() {
     const send = text === "/yes" ? "yes" : text === "/no" ? "no" : text;
     try {
       const reply = await ask(c, send, spin, process.stdout);
-      console.log(`${BOLD}${reply}${RESET}`);
+      console.log(renderReply(reply));
     } catch {
-      try { c.close(); c = await ensureDaemon(); hook(c); console.log(`${BOLD}${await ask(c, send, spin, process.stdout)}${RESET}`); }
+      try { c.close(); c = await ensureDaemon(); hook(c); console.log(renderReply(await ask(c, send, spin, process.stdout))); }
       catch (e) { console.log(`(brain unreachable: ${(e as Error).message})`); }
     }
     held = await heldSummary(c);
@@ -216,7 +248,7 @@ async function oneShot(text: string, quiet: boolean) {
   c.onEvent = (m) => renderEvent(m, errSpin, process.stderr);
   const reply = await c.request(text);
   spin.stop();
-  console.log(reply);
+  console.log(TTY ? renderReply(reply) : reply);
   c.close();
 }
 

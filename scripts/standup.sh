@@ -103,7 +103,7 @@ $EV"
   local out
   out="$(cd "$HOME" && "$CLAUDE_BIN" -p "$P" --model "${MARGIE_STANDUP_MODEL:-sonnet}" --output-format json \
         --disallowedTools "Bash,Edit,Write,NotebookEdit,Agent,WebFetch,WebSearch,Read,Glob,Grep" 2>/dev/null | jq -r '.result // empty')"
-  [ -n "$out" ] || { echo "Couldn't compose the standup, sir (Claude returned nothing)." >&2; return 1; }
+  [ -n "$out" ] || { echo "Couldn't compose the standup, dear (Claude returned nothing)." >&2; return 1; }
   printf '%s\n' "$out" > "$DRAFT"
   cat "$DRAFT"
 }
@@ -134,9 +134,9 @@ dm_owner() { [ -n "$OWNER_ID" ] && sapi chat.postMessage --get --data-urlencode 
 
 case "$cmd" in
   evidence) evidence ;;
-  prompt) find_prompt | cut -f1-2 | sed 's/\t/  /' | cut -c1-200 || echo "No standup prompt for $OWNER today, sir." ;;
+  prompt) find_prompt | cut -f1-2 | sed 's/\t/  /' | cut -c1-200 || echo "No standup prompt for $OWNER today, dear." ;;
   draft) compose ;;
-  show) [ -s "$DRAFT" ] && cat "$DRAFT" || echo "No standup drafted yet today, sir — say 'draft my standup'." ;;
+  show) [ -s "$DRAFT" ] && cat "$DRAFT" || echo "No standup drafted yet today, dear — say 'draft my standup'." ;;
   edit)
     INSTR="$*"; [ -z "$INSTR" ] && { echo "usage: standup.sh edit \"<what to change>\"" >&2; exit 1; }
     [ -s "$DRAFT" ] || compose >/dev/null || exit 1
@@ -146,22 +146,22 @@ CURRENT:
 $(cat "$DRAFT")"
     out="$(cd "$HOME" && "$CLAUDE_BIN" -p "$P" --model "${MARGIE_STANDUP_MODEL:-sonnet}" --output-format json \
           --disallowedTools "Bash,Edit,Write,NotebookEdit,Agent,WebFetch,WebSearch,Read,Glob,Grep" 2>/dev/null | jq -r '.result // empty')"
-    [ -n "$out" ] || { echo "Couldn't revise the draft, sir." >&2; exit 1; }
+    [ -n "$out" ] || { echo "Couldn't revise the draft, dear." >&2; exit 1; }
     printf '%s\n' "$out" > "$DRAFT"; cat "$DRAFT" ;;
   post)
     [ -s "$DRAFT" ] || compose >/dev/null || exit 1
-    [ -f "$POSTED" ] && { echo "Today's standup is already posted, sir: $(cat "$POSTED")"; exit 0; }
+    [ -f "$POSTED" ] && { echo "Today's standup is already posted, dear: $(cat "$POSTED")"; exit 0; }
     desc "would post ${OWNER}'s standup for $TODAY in $CHAN$( [ -n "$(find_prompt 2>/dev/null)" ] && echo " — in the thread of today's standup prompt") as @Margie: $(head -2 "$DRAFT" | tr '\n' ' ' | cut -c1-90)…"
-    CID="$(channel_id)"; [ -z "$CID" ] && { echo "Couldn't find channel $CHAN, sir." >&2; exit 1; }
+    CID="$(channel_id)"; [ -z "$CID" ] && { echo "Couldn't find channel $CHAN, dear." >&2; exit 1; }
     PTS="$(find_prompt 2>/dev/null | cut -f1)"
-    if [ -n "$PTS" ] && thread_answered "$CID" "$PTS"; then echo "That standup thread already has ${OWNER}'s answer, sir."; : > "$POSTED"; exit 0; fi
+    if [ -n "$PTS" ] && thread_answered "$CID" "$PTS"; then echo "That standup thread already has ${OWNER}'s answer, dear."; : > "$POSTED"; exit 0; fi
     TEXT="*${OWNER}'s standup* (via Margie)
 $(cat "$DRAFT")"
     R="$(sapi chat.postMessage --get --data-urlencode "channel=$CID" --data-urlencode "text=$TEXT" ${PTS:+--data-urlencode "thread_ts=$PTS"})"
-    printf '%s' "$R" | jq -e '.ok==true' >/dev/null || { echo "Slack refused the post, sir: $(printf '%s' "$R" | jq -r '.error // "?"')" >&2; exit 1; }
+    printf '%s' "$R" | jq -e '.ok==true' >/dev/null || { echo "Slack refused the post, dear: $(printf '%s' "$R" | jq -r '.error // "?"')" >&2; exit 1; }
     LINK="$(sapi chat.getPermalink --get --data-urlencode "channel=$CID" --data-urlencode "message_ts=$(printf '%s' "$R" | jq -r .ts)" | jq -r '.permalink // empty')"
     printf '%s' "${LINK:-posted}" > "$POSTED"
-    echo "Posted ${OWNER}'s standup to $CHAN, sir.${LINK:+ $LINK}" ;;
+    echo "Posted ${OWNER}'s standup to $CHAN, dear.${LINK:+ $LINK}" ;;
   auto)
     [ "$MODE" = "off" ] && exit 0
     case "$(date +%u)" in 6|7) exit 0 ;; esac
@@ -175,12 +175,12 @@ $(cat "$DRAFT")"
     compose >/dev/null 2>&1 || exit 0
     : > "$SDIR/$TODAY.notified"
     if [ "$MODE" = "post" ]; then
-      OUT="$("$0" post)"; echo "Your standup is posted in $CHAN, sir."
+      OUT="$("$0" post)"; echo "Your standup is posted in $CHAN, dear."
       dm_owner "Standup posted to $CHAN: $(cat "$POSTED")"
     else
       dm_owner "Your standup draft for today — say \"post my standup\" (or \"change …\") to Margie:
 $(cat "$DRAFT")"
-      echo "Your standup draft is ready, sir — I've DM'd it to you; say \"post my standup\" when it's right."
+      echo "Your standup draft is ready, dear — I've DM'd it to you; say \"post my standup\" when it's right."
     fi ;;
   *) echo "usage: standup.sh evidence|draft [--since d] | show | post | auto" >&2; exit 1 ;;
 esac
