@@ -68,10 +68,19 @@ case "$cmd" in
     ;;
   needs)
     ST="$HOME/.margie/session-needs"; mkdir -p "$ST"; NOW="$(date +%s)"
-    for S in $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' || true); do
+    LIVE="$("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' || true)"
+    # Sessions seen before that are gone now: announce the end once, with their last lines.
+    for f in "$ST"/*.hash; do
+      [ -f "$f" ] || continue; S="$(basename "$f" .hash)"
+      printf '%s\n' "$LIVE" | grep -qxF "$S" && continue
+      echo "Session $S has ended. Last seen: $(cat "$ST/$S.tail" 2>/dev/null | cut -c1-220)"
+      rm -f "$ST/$S".*
+    done
+    for S in $LIVE; do
       PANE="$("$TMUX_BIN" capture-pane -t "$S" -p -S -40 2>/dev/null | sed 's/[[:space:]]*$//' | grep -v '^$')"
       [ -z "$PANE" ] && continue
       TAIL="$(printf '%s\n' "$PANE" | tail -12)"
+      printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | grep -vE 'auto mode on|shift\+tab' | tail -3 | tr '\n' ' ' > "$ST/$S.tail"
       H="$(printf '%s' "$PANE" | shasum | cut -c1-12)"
       # idle tracking: when did this exact screen first appear?
       PREV="$(cat "$ST/$S.hash" 2>/dev/null || true)"; SINCE="$(cat "$ST/$S.since" 2>/dev/null || echo "$NOW")"
