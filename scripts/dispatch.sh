@@ -610,6 +610,12 @@ case "$cmd" in
                 elif [ -f "$D/review-running" ] && [ "$("$DIR/claude-task.sh" state "review:$(basename "$D")")" = FAILED ]; then
                   rm -f "$D/review-running"; announce "My review run on MR !$IID failed to complete, dearie — I'll retry on the next commit."
                 fi
+                # the repo's review bots only auto-run on an MR's FIRST pipeline; ask them once per commit
+                if [ -n "$SHA" ] && [ "$PSTAT" != running ] && [ "$PSTAT" != pending ] && [ "$(cat "$D/bots-requested" 2>/dev/null)" != "$SHA" ]; then
+                  echo "$SHA" > "$D/bots-requested"
+                  RR="$("$DIR/mr.sh" request-review "!$IID" --repo "$WT" 2>/dev/null || true)"
+                  case "$RR" in Requested*) announce "Asked the repo's review bots to look at MR !$IID for $PT, dearie." ;; esac
+                fi
                 # pipeline failed -> once per pipeline, send it back
                 if [ "$PSTAT" = failed ] && [ -n "$PID" ] && [ "$(cat "$D/pipeline-failed" 2>/dev/null)" != "$PID" ]; then
                   echo "$PID" > "$D/pipeline-failed"

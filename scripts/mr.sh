@@ -8,6 +8,7 @@
 #   mr.sh view   <PT|!n> [repo]                read-only (forge.sh mr)
 #   mr.sh check  <PT|!n> [--repo r]            one JSON line: state, pipeline, unresolved, approvals, sha
 #   mr.sh merge  <PT|!n> [--repo r]            merge it (held; the session's branch is removed)
+#   mr.sh request-review <PT|!n> [--repo r]    play the manual review-bot jobs on the MR's latest pipeline
 #
 # The description is the repo's own MR template, fully filled, ending with the
 # one `/label ~"… Risk"` quick action the release job requires. For a dispatch
@@ -152,6 +153,22 @@ case "$cmd" in
     [ -z "$NUM" ] && { echo "Which MR, dearie? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
     R="$(cd "${WT:-$PWD}" && glab mr update "$NUM" ${TITLE_OPT:+--title "$TITLE_OPT"} ${DESC_FILE:+--description "$(cat "$DESC_FILE")"} 2>&1 | tail -1)"
     echo "Updated MR !$NUM, dearie. $R" ;;
+  request-review)
+    NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"
+    [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // empty' "$D/mr.json" 2>/dev/null)"
+    [ -z "$NUM" ] && { echo "Which MR, dearie? Give me !<number>." >&2; exit 1; }
+    cd "${WT:-${REPO_ARG:-$PWD}}" || exit 1
+    P="$(glab api "projects/:id/merge_requests/$NUM/pipelines" 2>/dev/null | jq -r '.[0].id // empty')"
+    [ -z "$P" ] && { echo "No pipeline on !$NUM yet, dearie." >&2; exit 1; }
+    PLAYED=""; SKIPPED=""
+    for DS in $(glab api "projects/:id/pipelines/$P/bridges" 2>/dev/null | jq -r '.[] | select(.name|test("review")) | .downstream_pipeline.id // empty'); do
+      for J in $(glab api "projects/:id/pipelines/$DS/jobs?per_page=50" 2>/dev/null | jq -r '.[] | select(.name|test(":request$")) | "\(.id):\(.name):\(.status)"'); do
+        jid="${J%%:*}"; rest="${J#*:}"; jname="${rest%%:*}"; jst="${rest##*:}"
+        if [ "$jst" = manual ]; then glab api -X POST "projects/:id/jobs/$jid/play" >/dev/null 2>&1 && PLAYED="$PLAYED $jname"; else SKIPPED="$SKIPPED $jname($jst)"; fi
+      done
+    done
+    [ -n "$PLAYED" ] && echo "Requested the review bots on !$NUM (pipeline $P):$PLAYED — their comments land as review threads in a few minutes, dearie."
+    [ -z "$PLAYED" ] && echo "Nothing to play on !$NUM, dearie —${SKIPPED:- no review jobs found}." ;;
   check|merge)
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"
     [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // (.url // "" | capture("(?<n>[0-9]+)$").n) // empty' "$D/mr.json" 2>/dev/null)"
@@ -177,6 +194,6 @@ case "$cmd" in
   view)
     "$DIR/forge.sh" mr "$(printf '%s' "$REF" | grep -oE '[0-9]+$')" "${1:-}" ;;
   *)
-    echo "usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f] | view <!n> [repo] | check <PT|!n> | merge <PT|!n>" >&2
+    echo "usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f] | view <!n> [repo] | check <PT|!n> | merge <PT|!n> | request-review <PT|!n>" >&2
     exit 1 ;;
 esac
