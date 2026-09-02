@@ -9,7 +9,7 @@
 //   margie status | stop | restart | log
 import { createInterface, Interface } from "node:readline";
 import { spawnSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureDaemon, Client } from "./client.js";
@@ -154,12 +154,23 @@ function latestDispatchFile(kind: "spec" | "qa" | "mr"): string | null {
   return existsSync(f) ? f : null;
 }
 
+let rl: Interface | undefined;   // the REPL's readline, when one is running
+
 function page(text: string) {
   // Long text goes through `less` when interactive (like Claude's viewer), else straight out.
+  // The terminal is handed over completely: readline is paused and raw mode dropped,
+  // and less runs synchronously — otherwise readline swallows the keys and `q` never
+  // reaches the pager (Tom had to kill the whole session to get out).
   if (TTY && text.split("\n").length > 40) {
-    const p = spawn("less", ["-R"], { stdio: ["pipe", "inherit", "inherit"] });
-    p.stdin.end(text);
-    return new Promise<void>((res) => p.on("close", () => res()));
+    const tmp = `${HOME}/.margie/.page-${process.pid}.txt`;
+    writeFileSync(tmp, text);
+    console.log(`${DIM}(viewer: q to come back, / to search, space/b to page)${RESET}`);
+    try { rl?.pause(); (process.stdin as any).setRawMode?.(false); } catch { /* not a tty */ }
+    try { spawnSync("less", ["-R", "-P", "q to return to Margie", tmp], { stdio: "inherit" }); } finally {
+      try { unlinkSync(tmp); } catch { /* ignore */ }
+      try { (process.stdin as any).setRawMode?.(true); rl?.resume(); rl?.prompt(); } catch { /* ignore */ }
+    }
+    return Promise.resolve();
   }
   process.stdout.write(text + "\n");
   return Promise.resolve();
@@ -177,7 +188,6 @@ const HELP = `${PINK}✿${RESET} ${NAME} ${GREY}— your assistant, dearie. One 
 async function repl() {
   let c = await ensureDaemon();
   const spin = new Spinner();
-  let rl: Interface;
   let held: string | null = null;
 
   const prompt = () => {
@@ -208,7 +218,7 @@ async function repl() {
   const queue: string[] = [];
   let busy = false;
   const handle = async (text: string) => {
-    if (text === "/quit" || text === "/exit") { rl.close(); return; }
+    if (text === "/quit" || text === "/exit") { rl?.close(); return; }
     if (text === "/help" || text === "/?") { console.log(HELP); return; }
     if (text === "/clear") { process.stdout.write("\x1b[2J\x1b[H"); return; }
     if (text === "/status") { await cmdStatus(); held = await heldSummary(c); return; }
