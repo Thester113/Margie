@@ -158,7 +158,20 @@ const BASH_TOOL = {
 };
 
 /** The turn being handled right now (turns are serialised through the queue). */
-let currentTurn: { conv?: string; speaker?: string } = {};
+let currentTurn: { conv?: string; speaker?: string; text?: string } = {};
+
+/** A solicited "go": Margie's previous reply invited exactly this word, and Tom
+ *  gave it. For internal filing (dispatch.sh go|file) that IS the confirmation —
+ *  holding it again just asks him twice. Messages to other people always hold. */
+const SOLICIT_RE = /\b(say|type)\s+["“'‘]?(go|yes)["”'’]?\b|say the word/i;
+const TRIGGER_RE = /^(go|yes,?\s*go|go ahead|go for it|do it|file it|ship it|yes)[.!]*$/i;
+function solicitedGo(cmd: string): boolean {
+  if (currentTurn.speaker) return false;                            // only Tom
+  if (!/\bdispatch\.sh\s+(go|file)\b/.test(cmd)) return false;      // filing tickets only
+  if (!TRIGGER_RE.test((currentTurn.text || "").trim())) return false;
+  const lastMargie = [...history].reverse().find((m) => m.role === "assistant" && !m.conv);
+  return !!lastMargie && SOLICIT_RE.test(lastMargie.content || "");
+}
 
 /** In a colleague's conversation Margie may only touch shared project artefacts —
  *  never read other Slack chats, mail, messages, or private files. Deterministic,
@@ -178,6 +191,11 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
   if (denied(cmd)) {
     logBrain(`BASH DENIED: ${cmd}`);
     return "DENIED: Margie is a dispatcher and may not run that command directly. Use a helper script (e.g. review-pr.sh, kickoff-claude.sh) to do it in a supervised Warp session instead.";
+  }
+  if (!confirmed && outward(cmd) && solicitedGo(cmd)) {
+    logBrain(`AUTO-CONFIRMED (Tom's solicited "${(currentTurn.text || "").trim()}"): ${cmd}`);
+    currentEmit?.("tool", `${cmd.slice(0, 100)}   (your "go" was the yes)`);
+    confirmed = true;
   }
   if (!confirmed && outward(cmd)) {
     pending.push({ cmd, at: Date.now() });
@@ -484,6 +502,10 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   away (cheap, internal; the notice "Ticket breakdown ready" follows) — do not
   ask permission for it. "go" files the umbrella ticket PLUS every child ticket
   with Blocked-By ordering. Answer "how many tickets?" from show, never memory.
+- OFFERING "GO": before you invite Tom to say "go", run dispatch.sh describe
+  <id> go and paraphrase that line so the offer is exact. His "go" then files
+  and starts the session directly — no second question. Anything that messages
+  other people (Slack, mail, MR) is always read back once for his yes.
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
@@ -916,7 +938,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
  * blown out by intermediate bash I/O and many real turns survive the trim.
  */
 async function handleTurn(text: string, history: ChatMsg[], source = "app", conv?: string, speaker?: string): Promise<string> {
-  currentTurn = { conv, speaker };
+  currentTurn = { conv, speaker, text };
   const backend = source === "app" ? BRAIN_VOICE : BRAIN_TEXT;
   if (backend === "claude") return claudeTurn(text, history, source, conv, speaker);
   return xaiTurn(text, history, source, conv, speaker);
