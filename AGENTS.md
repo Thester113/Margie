@@ -45,8 +45,10 @@ npm run tauri dev              # run the app
   `capabilities/default.json`.
 - Margie's replies are spoken aloud — keep the sidecar system prompt tuned
   for short conversational output, never markdown.
-- **The brain runs on the xAI chat API with a single guarded `bash` tool**
-  (`sidecar/src/index.ts`), not the Agent SDK. Margie is a *dispatcher*: the
+- **The brain is per-channel**: voice → xAI chat API; terminal/Slack → Claude
+  Agent SDK on Tom's plan (`claudeTurn` in `brain.ts`, our guarded `bash` as the
+  only tool, `tools: []`, `settingSources: []`, `bypassPermissions` because the
+  gate is the permission system). Same history and gates for both. Margie is a *dispatcher*: the
   `DENY` regexes in the sidecar refuse `git push/commit`, `gh pr
   review/merge`, `rm`, `sudo`, etc. — real work happens in the watchable Warp
   sessions her scripts spawn. Extend the guards; don't loosen them. A second

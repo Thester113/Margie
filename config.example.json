@@ -15,6 +15,11 @@
   "_forge": "forge: gitlab | github — which CLI (glab / gh), vocabulary (MR / PR) and write-guards Margie uses. Log in once with `glab auth login` or `gh auth login`. gitlab_host: only for self-hosted GitLab. org: GitLab group (subgroups included) or GitHub org bare repo names resolve against — omit to search the projects you're a member of.",
   "_repos": "repos_dir: where your clones live (bare repo names resolve here; new clones land here). default_repo: assumed when Tom says 'review MR 12' without naming one — omit to make her ask. review_skill: a repo-local skill name review-pr.sh should invoke — omit for a generic thorough-review prompt.",
 
+  "brain_voice_backend": "xai",
+  "brain_backend": "claude",
+  "brain_claude_model": "sonnet",
+  "_brain": "Which model IS Margie, per channel: voice (the overlay) uses brain_voice_backend — xai for sub-second turns; terminal/Slack use brain_backend — 'claude' runs on your Claude plan via the Agent SDK (no API key), model brain_claude_model (sonnet is snappy; fable for depth). Both share one history and the same guarded bash tool.",
+
   "xai_api_key": "xai-...",
   "xai_model": "grok-4.20-0309-non-reasoning",
   "_xai": "Margie's conversational brain (sidecar/src/index.ts) runs on the xAI chat API. Required for her to answer at all.",

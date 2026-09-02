@@ -19,7 +19,13 @@
 
 ## What Margie actually is (the docs lag the code)
 
-- **Brain (`sidecar/src/index.ts`) runs on the xAI chat API with one guarded
+- **Two brains, one mind** (`sidecar/src/brain.ts`): voice turns (source `app`)
+  run on the xAI chat API (`brain_voice_backend`, sub-second); terminal, Slack
+  and stdio turns run on **Claude via the Agent SDK on Tom's plan**
+  (`brain_backend: claude`, `brain_claude_model`, currently Fable 5.1) — no
+  API key. Both share the same history, persona and the single guarded
+  `bash` tool (an in-process SDK MCP server; built-in Claude Code tools are
+  disabled and no project settings are loaded). Historically the brain ran on the xAI chat API with one guarded
   `bash` tool** — not the Claude Agent SDK and not `bypassPermissions` as
   README/AGENTS.md still say. Safety guards (`DENY` regexes: no `git push/
   commit`, no `gh pr review/merge`, no `rm`, no `sudo`) are enforced in the

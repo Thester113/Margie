@@ -2,6 +2,8 @@ import { mkdirSync, appendFileSync, readFileSync, readdirSync, existsSync } from
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 
 /** Log the actual conversation with the brain so failures are observable. */
 export function logBrain(line: string) {
@@ -68,6 +70,11 @@ function listRepos(): string[] {
     return [];
   }
 }
+// Which model thinks for Margie, per channel. Voice needs grok's ~0.7s turns;
+// the terminal and Slack get Claude on Tom's plan (via the Agent SDK — no API key).
+const BRAIN_VOICE = (cfg("brain_voice_backend") || "xai").toLowerCase();      // app
+const BRAIN_TEXT = (cfg("brain_backend") || "claude").toLowerCase();          // cli, slack, stdio
+const BRAIN_CLAUDE_MODEL = cfg("brain_claude_model") || "sonnet";
 const CMD_TIMEOUT_MS = Number(process.env.MARGIE_CMD_TIMEOUT_MS || 45000);
 // Enough steps for a research question (several greps/reads) to finish. When it
 // IS exceeded, we force a final answer rather than bail (see handleTurn).
@@ -653,6 +660,65 @@ function forSpeech(s: string): string {
   return t || "Done, dear.";
 }
 
+// ── Claude brain (Agent SDK, Tom's Claude plan) ───────────────────────────────
+// Same persona, same single guarded bash tool (runBash → DENY / HELD / describe
+// all apply), same shared history. Built-in Claude Code tools are disabled and no
+// project settings are loaded, so the only thing this session can do is what the
+// grok brain can do — think better.
+const margieTools = createSdkMcpServer({
+  name: "margie",
+  version: "1.0.0",
+  tools: [
+    tool(
+      "bash",
+      BASH_TOOL.function.description,
+      { command: z.string().describe("The shell command to run.") },
+      async ({ command }) => ({ content: [{ type: "text", text: await runBash(command) }] }),
+    ),
+  ],
+});
+
+function transcript(history: ChatMsg[], turns = 16): string {
+  const pairs = history.filter((m) => m.role === "user" || m.role === "assistant").slice(-turns * 2);
+  return pairs.map((m) => `${m.role === "user" ? "Tom" : "Margie"}: ${m.content}`).join("\n");
+}
+
+async function claudeTurn(text: string, history: ChatMsg[], source: string): Promise<string> {
+  const sys = `${MARGIE_SYSTEM_PROMPT}\n\n${liveContext(source)}\n\nRECENT CONVERSATION (shared with the voice overlay; continue it naturally):\n${transcript(history) || "(none yet)"}`;
+  let finalText = "";
+  try {
+    const q = query({
+      prompt: text,
+      options: {
+        systemPrompt: { type: "custom", prompt: sys },
+        model: BRAIN_CLAUDE_MODEL,
+        tools: [],                                   // no built-in Claude Code tools
+        mcpServers: { margie: margieTools },
+        allowedTools: ["mcp__margie__bash"],
+        permissionMode: "bypassPermissions",         // our gate IS the permission system
+        maxTurns: MAX_TOOL_STEPS,
+        cwd: HOME,
+        settingSources: [],                          // don't load CLAUDE.md / hooks / MCP from Tom's projects
+        persistSession: false,
+        includePartialMessages: false,
+      },
+    });
+    for await (const m of q) {
+      if (m.type === "result") {
+        finalText = (m as any).is_error ? "" : String((m as any).result || "");
+        if ((m as any).is_error) logBrain(`CLAUDE error: ${String((m as any).result || (m as any).subtype)}`);
+      }
+    }
+  } catch (e) {
+    logBrain(`CLAUDE brain error: ${(e as Error).message}`);
+  }
+  if (!finalText) finalText = "Sorry dear, my brain hit a snag reaching Claude.";
+  const shaped = source === "app" ? forSpeech(finalText) : forText(finalText);
+  history.push({ role: "user", content: text });
+  history.push({ role: "assistant", content: shaped });
+  return shaped;
+}
+
 /**
  * Run one turn as an agentic tool loop against the xAI API. The tool churn
  * (bash calls + outputs) lives only in a local working copy; we commit ONLY a
@@ -660,6 +726,8 @@ function forSpeech(s: string): string {
  * blown out by intermediate bash I/O and many real turns survive the trim.
  */
 async function handleTurn(text: string, history: ChatMsg[], source = "app"): Promise<string> {
+  const backend = source === "app" ? BRAIN_VOICE : BRAIN_TEXT;
+  if (backend === "claude") return claudeTurn(text, history, source);
   const work: ChatMsg[] = history.slice();
   work.push({ role: "system", content: liveContext(source) });
   work.push({ role: "user", content: text });
@@ -818,6 +886,7 @@ export function noteToHistory(text: string) {
 }
 export function brainStatus() {
   return {
+    brains: { voice: BRAIN_VOICE, text: BRAIN_TEXT === "claude" ? `claude:${BRAIN_CLAUDE_MODEL}` : BRAIN_TEXT },
     turns: Math.floor((history.length - 1) / 2),
     busy: running,
     queue: queue.length,
