@@ -88,6 +88,8 @@ SRCS="$(mktemp)"
     | jq -r '.channels[]? | select(.is_member==true) | "chan\t"+.id+"\t#"+.name'
   sapi conversations.list --get --data-urlencode "types=im" -d "limit=200" \
     | jq -r '.channels[]? | "im\t"+.id+"\tDM"' 2>/dev/null
+  sapi conversations.list --get --data-urlencode "types=mpim" -d "limit=200" \
+    | jq -r '.channels[]? | "mpim\t"+.id+"\tgroup DM"' 2>/dev/null
 } > "$SRCS"
 
 # Collect (kind, cid, label, ts, thread_ts, user, text). kind = bot | owner | im
@@ -101,6 +103,7 @@ while IFS=$'\t' read -r kind cid label; do
     | select(.subtype==null) | select((.user // "") != $bot)
     | (.text // "") as $t
     | (if $kind=="im" then "im"
+       elif (($t | contains("<@"+$bot+">")) and ((.user // "") == $owner)) then "ownerask"
        elif ($t | contains("<@"+$bot+">")) then "bot"
        elif ($owner != "__none__" and ($t | contains("<@"+$owner+">")) and ((.user // "") != $owner)) then "owner"
        else "" end) as $k
@@ -143,13 +146,16 @@ while IFS=$'\t' read -r kind cid label ts thread user text; do
   # Tom DMing Margie = talking to her. Full brain, same history and confirmation
   # gate as voice/CLI; the reply goes back into the DM. Detached so a long turn
   # (tool calls, held commands) can't stall the poller.
-  if [ "$kind" = "im" ] && [ -n "$OWNER" ] && [ "$user" = "$OWNER" ]; then
+  if { [ "$kind" = "im" ] || [ "$kind" = "ownerask" ]; } && [ -n "$OWNER" ] && [ "$user" = "$OWNER" ]; then
     echo "${NOW}|${ts}" >> "$HANDLED"
-    logl "owner DM → brain: $(printf '%s' "$text" | cut -c1-80)"
-    ( REPLY="$(MARGIE_SOURCE=slack "$MARGIE_CLI" -q "$text" 2>/dev/null)"
+    ASK="$(printf '%s' "$text" | sed "s/<@$BOTID>//g; s/^ *//;s/ *$//")"
+    # In a channel, answer in the thread; in a DM / group DM, answer inline.
+    case "$label" in \#*) TARG=(--data-urlencode "thread_ts=$thread") ;; *) TARG=() ;; esac
+    logl "owner → brain ($label): $(printf '%s' "$ASK" | cut -c1-80)"
+    ( REPLY="$(MARGIE_SOURCE=slack "$MARGIE_CLI" -q "$ASK" 2>/dev/null)"
       [ -z "$REPLY" ] && REPLY="Sorry dear, I didn't catch that — my brain didn't answer."
-      sapi chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$REPLY" >/dev/null 2>&1
-      logl "owner DM ← brain: $(printf '%s' "$REPLY" | cut -c1-80)" ) >/dev/null 2>&1 &
+      sapi chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$REPLY" ${TARG[@]+"${TARG[@]}"} >/dev/null 2>&1
+      logl "owner ← brain: $(printf '%s' "$REPLY" | cut -c1-80)" ) >/dev/null 2>&1 &
     continue
   fi
   who="$(uname_of "$user")"
@@ -168,7 +174,8 @@ while IFS=$'\t' read -r kind cid label ts thread user text; do
   [ -z "$REPLY" ] && REPLY="Margie here, ${OWNER_NAME}'s assistant — I've flagged this for him and he'll follow up."
   LINK="$(sapi chat.getPermalink --get --data-urlencode "channel=$cid" --data-urlencode "message_ts=$ts" | jq -r '.permalink // empty')"
   if [ "$MODE" = "live" ]; then
-    POST="$(sapi chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "thread_ts=$thread" --data-urlencode "text=$REPLY")"
+    case "$label" in \#*) TT=(--data-urlencode "thread_ts=$thread") ;; *) TT=() ;; esac
+    POST="$(sapi chat.postMessage --get --data-urlencode "channel=$cid" ${TT[@]+"${TT[@]}"} --data-urlencode "text=$REPLY")"
     if echo "$POST" | jq -e '.ok==true' >/dev/null 2>&1; then logl "replied ($kind) in $label ts=$ts"; VERB="I replied"
     else logl "post failed in $label: $(echo "$POST"|jq -r '.error//"?"')"; VERB="I tried to reply but Slack refused"; fi
   else
@@ -183,6 +190,8 @@ $LINK}"
     dm_owner "💬 $who DM'd me: \"$clean\"
 $VERB: \"$REPLY\""
     SPOKEN_ITEMS+=("$who DM'd me")
+  elif [ "$label" = "group DM" ]; then
+    SPOKEN_ITEMS+=("$who mentioned me in a group DM")   # Tom's in it — no digest needed
   else
     dm_owner "$who mentioned me in $label: \"$clean\"
 $VERB: \"$REPLY\"${LINK:+
