@@ -116,6 +116,7 @@ launch_planner() { # launch_planner <dispatch dir> <workdir> "<request text>"
     printf '%s' "$P" > "$D/planner-prompt.txt"
 
     MODEL_OPT=(); M="$(cfg planner_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
+    date +%s > "$D/planner-started"; rm -f "$D/replan-pending"
     "$DIR/claude-task.sh" start "$WORKDIR" "$(cat "$D/planner-prompt.txt")" \
       --plan --schema "$DIR/schemas/spec.schema.json" \
       --allow "mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-search,mcp__claude_ai_Notion__notion-query-data-sources" \
@@ -201,6 +202,14 @@ case "$cmd" in
       "$DIR/claude-task.sh" detach "spec:$(basename "$D")" >/dev/null 2>&1 || break
     done
     printf '\n\nADDENDUM (%s): %s' "$(date -u +%FT%TZ)" "$EXTRA" >> "$D/request.txt"
+    # Coalesce: each planner run is a multi-minute Claude session. If one ran in the
+    # last 20 minutes, just queue the context — tick re-plans once things go quiet.
+    LAST="$(cat "$D/planner-started" 2>/dev/null || echo 0)"
+    if [ $(( $(date +%s) - LAST )) -lt 1200 ]; then
+      touch "$D/replan-pending"
+      echo "Noted, dearie — I've added that to the spec's request; I'll re-plan in one go shortly rather than start another run right now."
+      exit 0
+    fi
     rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
     [ -s "$D/draft-page.id" ] && { "$DIR/notion.sh" page archive "$(cat "$D/draft-page.id")" >/dev/null 2>&1; rm -f "$D/draft-page.id" "$D/draft-page.url"; }
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
@@ -342,6 +351,14 @@ case "$cmd" in
     for D in "$MDIR"/d-*; do
       [ -d "$D" ] || continue
       S="$(st "$D")"
+      if [ -f "$D/replan-pending" ] && [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "RUNNING" ] \
+         && [ $(( $(date +%s) - $(cat "$D/planner-started" 2>/dev/null || echo 0) )) -ge 1200 ]; then
+        rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+        launch_planner "$D" "$(dmeta "$D" repo)${SUBDIR:+/$SUBDIR}" "$(cat "$D/request.txt")" 2>/dev/null || true
+        st "$D" spec-running; S="spec-running"
+        announce "Re-planning \"$(head -c 60 "$D/request.txt")…\" with the queued context, dearie."
+      fi
+      SUBDIR="$(dmeta "$D" subdir)"
       case "$S" in
         spec-running)
           if spec_ready "$D"; then

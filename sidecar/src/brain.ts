@@ -692,7 +692,17 @@ const margieTools = createSdkMcpServer({
   ],
 });
 
-function transcript(history: ChatMsg[], turns = 16): string {
+/** One line per Claude run in ~/.margie/usage.log — so "where did my usage go" is answerable. */
+function logUsage(source: string, model: string, r: any) {
+  try {
+    const toks = Object.values((r.modelUsage || {}) as Record<string, any>)
+      .reduce((a: number, u: any) => a + (u.inputTokens || 0) + (u.cacheReadInputTokens || 0) + (u.cacheCreationInputTokens || 0), 0);
+    appendFileSync(`${HOME}/.margie/usage.log`,
+      `${new Date().toISOString()} brain source=${source} model=${model} cost=$${(r.total_cost_usd || 0).toFixed(3)} ctx_tokens=${toks} turns=${r.num_turns || 0} ms=${r.duration_ms || 0}\n`);
+  } catch { /* ignore */ }
+}
+
+function transcript(history: ChatMsg[], turns = 10): string {
   const pairs = history.filter((m) => m.role === "user" || m.role === "assistant").slice(-turns * 2);
   return pairs.map((m) => `${m.role === "user" ? "Tom" : "Margie"}: ${m.content}`).join("\n");
 }
@@ -726,14 +736,23 @@ async function claudeTurn(text: string, history: ChatMsg[], source: string): Pro
     });
     for await (const m of q) {
       if (m.type === "result") {
-        finalText = (m as any).is_error ? "" : String((m as any).result || "");
-        if ((m as any).is_error) logBrain(`CLAUDE error: ${String((m as any).result || (m as any).subtype)}`);
+        const r = m as any;
+        finalText = r.is_error ? "" : String(r.result || "");
+        if (r.is_error) logBrain(`CLAUDE error: ${String(r.result || r.subtype)}`);
+        logUsage(source, BRAIN_CLAUDE_MODEL, r);
       }
     }
   } catch (e) {
     logBrain(`CLAUDE brain error: ${(e as Error).message}`);
   }
-  if (!finalText) finalText = "Sorry dearie, my brain hit a snag reaching Claude.";
+  if (!finalText) {
+    // Claude unavailable (usage cap, outage): fall back to the fast brain so she keeps working.
+    if (XAI_API_KEY) {
+      logBrain("CLAUDE unavailable — falling back to grok for this turn");
+      return xaiTurn(text, history, source);
+    }
+    finalText = "Sorry dearie, my brain hit a snag reaching Claude.";
+  }
   const shaped = source === "app" ? forSpeech(finalText) : forText(finalText);
   history.push({ role: "user", content: text });
   history.push({ role: "assistant", content: shaped });
@@ -749,6 +768,10 @@ async function claudeTurn(text: string, history: ChatMsg[], source: string): Pro
 async function handleTurn(text: string, history: ChatMsg[], source = "app"): Promise<string> {
   const backend = source === "app" ? BRAIN_VOICE : BRAIN_TEXT;
   if (backend === "claude") return claudeTurn(text, history, source);
+  return xaiTurn(text, history, source);
+}
+
+async function xaiTurn(text: string, history: ChatMsg[], source = "app"): Promise<string> {
   const work: ChatMsg[] = history.slice();
   work.push({ role: "system", content: liveContext(source) });
   work.push({ role: "user", content: text });
