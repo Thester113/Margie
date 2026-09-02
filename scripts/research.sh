@@ -52,7 +52,8 @@ Facts only; say 'unverified' where a page didn't state it. Write NOTHING to disk
     if [ -s "$R/$id/result.md" ]; then cat "$R/$id/result.md"
     elif [ -n "$j" ] && [ -s "$j" ]; then
       if [ "$(jq -r '.is_error // false' "$j")" = true ]; then echo "That research failed, dearie: $(jq -r '.result // "no detail"' "$j" | head -3)"; exit 1; fi
-      jq -r '.result // empty' "$j" | tee "$R/$id/result.md"
+      # Drop any "I have the data, writing now…" preamble the model put before a --- rule.
+      jq -r '.result // empty' "$j" | awk 'NR<=6 && /^---+$/ { drop=NR } { l[NR]=$0 } END { for (i=drop+1;i<=NR;i++) if (i>drop+1 || l[i]!="") print l[i] }' | tee "$R/$id/result.md"
       printf '\n(cost $%s)\n' "$(jq -r '.total_cost_usd // 0 | .*100 | round / 100' "$j")"
     else echo "Still researching, dearie — '$(cat "$R/$id/question.txt")' isn't finished yet."; fi ;;
   post)
