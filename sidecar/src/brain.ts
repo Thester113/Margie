@@ -117,7 +117,9 @@ const OUTWARD: RegExp[] = [
   /\bstandup\.sh\s+post\b/,
 ];
 const PENDING_TTL_MS = 3 * 60 * 1000;
-let pending: { cmd: string; at: number } | null = null;
+// Several commands can be held in one turn (e.g. two DMs); one "yes" releases
+// them all in order, anything else drops them all.
+let pending: { cmd: string; at: number }[] = [];
 // Progress sink for the turn currently draining (daemon clients see tool/held
 // events; stdio and the app ignore them). Set by drain(), used by runBash*.
 let currentEmit: ((event: string, text: string) => void) | null = null;
@@ -157,11 +159,11 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
     return "DENIED: Margie is a dispatcher and may not run that command directly. Use a helper script (e.g. review-pr.sh, kickoff-claude.sh) to do it in a supervised Warp session instead.";
   }
   if (!confirmed && outward(cmd)) {
-    pending = { cmd, at: Date.now() };
-    logBrain(`BASH HELD (awaiting Tom's yes): ${cmd}`);
+    pending.push({ cmd, at: Date.now() });
+    logBrain(`BASH HELD (awaiting Tom's yes, ${pending.length} held): ${cmd}`);
     currentEmit?.("held", cmd.slice(0, 120));
     let held =
-      "HELD — NOTHING WAS DONE. This acts on Tom's behalf, so confirm first: in ONE sentence tell Tom exactly what is about to happen (quote any message text), then ask for his yes. Do not call any tool now. It runs only after he confirms.";
+      `HELD — NOTHING WAS DONE (${pending.length} command${pending.length > 1 ? "s" : ""} now waiting). This acts on Tom's behalf, so confirm first: tell Tom concisely what is about to happen — every held item, quoting message text — then ask for his yes. Use the REAL values (actual links, names); never placeholders like <link>. Do not call any tool now. Everything held runs only after he confirms.`;
     // Margie's own scripts can say precisely what they WOULD do (side-effect
     // free under MARGIE_DESCRIBE=1) — so the read-back is accurate, not guessed.
     if (/\b(dispatch|notion|agent-messages)\.sh\b/.test(cmd)) {
@@ -819,12 +821,16 @@ async function drain() {
     const { id, text } = turn;
     const started = Date.now();
     currentEmit = turn.emit ?? null;
-    // Confirm-first gate: a held outward command runs only on Tom's short "yes".
-    if (pending && Date.now() - pending.at < PENDING_TTL_MS && isAffirmative(text)) {
-      const held = pending;
-      pending = null;
-      const out = await runBash(held.cmd, true);
-      const last = out.split("\n").filter(Boolean).pop() || "Done, dear.";
+    // Confirm-first gate: held outward commands run only on Tom's short "yes".
+    const fresh = pending.filter((p) => Date.now() - p.at < PENDING_TTL_MS);
+    if (fresh.length && isAffirmative(text)) {
+      pending = [];
+      const results: string[] = [];
+      for (const held of fresh) {
+        const out = await runBash(held.cmd, true);
+        results.push(out.split("\n").filter(Boolean).pop() || "Done, dear.");
+      }
+      const last = results.length === 1 ? results[0] : results.map((r, i) => `${i + 1}. ${r}`).join("\n");
       const spoken = (turn.source || "app") === "app" ? forSpeech(last) : forText(last);
       history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
       trimHistory();
@@ -834,9 +840,9 @@ async function drain() {
     }
     // A clear "no" cancels deterministically — no model turn, so nothing can be
     // re-invoked under the guise of cancelling.
-    if (pending && isNegative(text)) {
-      logBrain(`HELD command CANCELLED by Tom: ${pending.cmd}`);
-      pending = null;
+    if (pending.length && isNegative(text)) {
+      logBrain(`HELD command(s) CANCELLED by Tom: ${pending.map((p) => p.cmd).join(" || ")}`);
+      pending = [];
       const spoken = "Cancelled, dear — nothing was done.";
       history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
       trimHistory();
@@ -844,9 +850,9 @@ async function drain() {
       continue;
     }
     // Anything else drops the held command (Tom can re-ask or amend).
-    if (pending) {
-      logBrain(`HELD command dropped: ${pending.cmd}`);
-      pending = null;
+    if (pending.length) {
+      logBrain(`HELD command(s) dropped: ${pending.map((p) => p.cmd).join(" || ")}`);
+      pending = [];
     }
     // Deterministic PR/MR-review dispatch — never let the model self-review.
     const fp = reviewFastPath(text);
@@ -890,6 +896,6 @@ export function brainStatus() {
     turns: Math.floor((history.length - 1) / 2),
     busy: running,
     queue: queue.length,
-    pending: pending ? { cmd: pending.cmd.slice(0, 120), ageMs: Date.now() - pending.at } : null,
+    pending: pending.length ? { cmd: pending.map((p) => p.cmd.slice(0, 80)).join("  ||  "), ageMs: Date.now() - pending[0].at, count: pending.length } : null,
   };
 }
