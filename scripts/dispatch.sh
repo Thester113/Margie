@@ -176,9 +176,14 @@ case "$cmd" in
       spec-running|spec-ready|spec-failed) ;;
       *) echo "That dispatch is already past planning ($(st "$D")), sir — amendments go to the session or the ticket." >&2; exit 1 ;;
     esac
+    # Supersede any previous planner run for this dispatch: stop it if running and
+    # detach its --out so a finished one can't re-deposit the old spec.
     if [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" = "RUNNING" ]; then
-      "$DIR/claude-task.sh" stop "$(basename "$D" | sed 's/^/spec:/')" >/dev/null 2>&1 || true
+      "$DIR/claude-task.sh" stop "spec:$(basename "$D")" >/dev/null 2>&1 || true
     fi
+    while [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "NONE" ]; do
+      "$DIR/claude-task.sh" detach "spec:$(basename "$D")" >/dev/null 2>&1 || break
+    done
     printf '\n\nADDENDUM (%s): %s' "$(date -u +%FT%TZ)" "$EXTRA" >> "$D/request.txt"
     rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"

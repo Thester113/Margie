@@ -18,6 +18,7 @@
 #   claude-task.sh followup <id|latest> "<text>"  continue that task's Claude session with a new prompt
 #   claude-task.sh log <id|latest> [n]            tail the raw log
 #   claude-task.sh stop <id|latest>               stop a running task
+#   claude-task.sh detach <tag|id>                forget a task's --out/tag (superseded runs)
 #   claude-task.sh notify                         one line per task newly finished since last
 #                                                 call; SILENT otherwise (the daemon-poller contract)
 #
@@ -171,6 +172,14 @@ case "$cmd" in
     if running "$id"; then echo "RUNNING"
     elif [ -s "$TASKS/$id.json" ] && jq -e 'if .is_error then false else true end' "$TASKS/$id.json" >/dev/null 2>&1; then harvest; echo "DONE"
     else echo "FAILED"; fi
+    ;;
+  detach)
+    # Forget a task's --out (and tag) so a superseded run can't re-deposit its output.
+    x="${1:-}"; [ -z "$x" ] && { echo "usage: claude-task.sh detach <tag|id>" >&2; exit 1; }
+    id="$x"; [ -f "$TASKS/$id.meta" ] || id="$(by_tag "$x" || true)"
+    [ -z "$id" ] && { echo "NONE"; exit 0; }
+    jq '.out = "" | .tag = (.tag + " (superseded)")' "$TASKS/$id.meta" > "$TASKS/$id.meta.tmp" && mv "$TASKS/$id.meta.tmp" "$TASKS/$id.meta"
+    echo "detached $id"
     ;;
   notify)
     harvest
