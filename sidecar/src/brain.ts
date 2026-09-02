@@ -530,6 +530,11 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   threads and any reviewer's go into the session to address. If the process
   notes name an agent reviewer, ask for their review via agent-messages.sh
   (held) when the MR touches their area.
+- ONE TICKET AT A TIME: with a breakdown, "go" files every ticket and starts a
+  session for the FIRST non-spike ticket only, on its own branch; when its MR
+  merges the next ticket starts by itself. dispatch.sh status shows "tickets
+  N/M merged" on the umbrella and one ↳ line per ticket in flight. Spike
+  tickets are Tom's (handset tests etc.) — name them as "on you".
 - YOU DRIVE DEVELOPMENT AFTER "GO": the pipeline runs itself — the session
   codes and signals, QA runs automatically, the MR is opened by the session,
   you self-review it, watch the pipeline, and send review comments or failures

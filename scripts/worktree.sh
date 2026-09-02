@@ -30,7 +30,15 @@ case "$cmd" in
     if git -C "$REPO" show-ref --verify --quiet "refs/heads/$branch"; then
       git -C "$REPO" worktree add "$d" "$branch" >&2
     else
-      git -C "$REPO" worktree add -b "$branch" "$d" >&2
+      # New branches start from the freshly fetched target branch, never from whatever
+      # the local checkout happens to be on (per-ticket MRs stack on merged main).
+      BASE="$(jq -r '.mr_target_branch // "main"' "$HOME/.margie/config.json" 2>/dev/null || echo main)"
+      git -C "$REPO" fetch -q origin "$BASE" 2>/dev/null || true
+      if git -C "$REPO" show-ref --verify --quiet "refs/remotes/origin/$BASE"; then
+        git -C "$REPO" worktree add -b "$branch" "$d" "origin/$BASE" >&2
+      else
+        git -C "$REPO" worktree add -b "$branch" "$d" >&2
+      fi
     fi
     echo "$d" ;;
   remove)

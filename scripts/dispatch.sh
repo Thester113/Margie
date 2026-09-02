@@ -66,6 +66,7 @@ render_md() { # render_md <dir>
   req="$(tr '\n' ' ' < "$d/request.txt")"
   jq -r --arg req "$req" '
     def bl(a): (a // []) | map("- " + .) | join("\n");
+    (if .parent_title then "Part of: " + .parent_title + " (ticket " + .ticket_key + ")\n\n" else "" end) +
     "> " + $req + "\n\n" +
     "## Use case\n" + (.use_case.story // "") +
       (if (.use_case.existing_use_case_match // null) then "\n(Belongs to existing use case: " + .use_case.existing_use_case_match + ")" else "" end) + "\n\n" +
@@ -173,12 +174,54 @@ render_breakdown() { # render_breakdown <dir>
       (if (.notes // "") != "" then "\nNotes: " + .notes else "" end)
     ) | join("\n\n"))' "$1/breakdown.json" > "$1/breakdown.md"
 }
+# ── Per-ticket implementation. A breakdown's tickets become CHILD dispatches
+# (d-<parent>--T2 …): each has its own scoped spec, ticket, branch, session, QA,
+# MR and merge, and the next one starts when the previous merges. Spike tickets
+# are human work: skipped and named as blockers. The umbrella closes last.
+child_dir() { echo "$MDIR/$(basename "$1")--$2"; }
+make_child() { # make_child <parent dir> <key>  → creates the child dispatch dir (idempotent)
+  local d="$1" key="$2" c; c="$(child_dir "$d" "$key")"
+  [ -d "$c" ] && { echo "$c"; return 0; }
+  mkdir -p "$c"; echo "$(basename "$d")" > "$c/parent"; echo "$key" > "$c/key"
+  jq -c --arg id "$(basename "$c")" '. + {id:$id}' "$d/d.json" > "$c/d.json"
+  cp "$d/request.txt" "$c/request.txt"
+  # scoped spec: the child's goal/scope/AC/tests over the parent's architecture and use case
+  jq -c --arg key "$key" --slurpfile b "$d/breakdown.json" '
+    ($b[0].tickets[] | select(.key==$key)) as $t
+    | . + {title: $t.title, goal: $t.goal, scope: $t.scope, out_of_scope: ($t.out_of_scope // []),
+           acceptance_criteria: $t.acceptance_criteria, estimate: $t.size,
+           slug: ($t.title | ascii_downcase | gsub("[^a-z0-9]+";"-") | gsub("^-+|-+$";"") | .[0:28]),
+           test_cases: [.test_cases[] | select(.title as $x | $t.test_case_titles | index($x))],
+           security: (.security + {risk_label: ($t.risk_label // .security.risk_label)}),
+           open_questions: [], parent_title: .title, ticket_key: $key, spike: ($t.spike // false)}' "$d/spec.json" > "$c/spec.json"
+  jq -c --arg key "$key" '.[] | select(.key==$key) | {pt, id, url}' "$d/tickets.json" > "$c/ticket.json"
+  jq -c '[.test_cases[] | {title, case_type, setup, exercise, assertions, cleanup, cannot_run_async: (.cannot_run_async // false), test_file: (.test_file // ""), sabotage}]' "$c/spec.json" > "$c/testcases.json"
+  [ -s "$d/child-$key-tcmap.json" ] && cp "$d/child-$key-tcmap.json" "$c/tcmap.json"
+  [ -s "$d/docs-page.url" ] && cp "$d/docs-page.url" "$c/docs-page.url"
+  render_md "$c"; st "$c" filed
+  echo "$c"
+}
+next_child() { # next_child <parent dir> → key of the first ticket not yet started (skipping spikes), or ""
+  local d="$1" key
+  for key in $(jq -r '.tickets[] | select((.spike // false) | not) | .key' "$d/breakdown.json"); do
+    [ -d "$(child_dir "$d" "$key")" ] || { echo "$key"; return 0; }
+  done; echo ""
+}
+start_child() { # start_child <parent dir> <key>  → file+implement the child (branch from fresh main)
+  local d="$1" key="$2" c; c="$(make_child "$d" "$key")"
+  git -C "$(dmeta "$d" repo)" fetch -q origin "$(cfgd mr_target_branch main)" 2>/dev/null && git -C "$(dmeta "$d" repo)" checkout -q "$(cfgd mr_target_branch main)" 2>/dev/null && git -C "$(dmeta "$d" repo)" pull -q --ff-only 2>/dev/null || true
+  "$0" implement "$(basename "$c")"
+}
 process_notes() { # process_notes <dir> — the team's written process for this repo, if Tom wrote one
   local f="$HOME/.margie/process/$(basename "$(dmeta "$1" repo)").md"
   [ -s "$f" ] && { printf '\n\nTEAM PROCESS FOR THIS REPO (follow it):\n'; cat "$f"; }
 }
 spec_text() { # spec_text <dir>  — spec.md plus the ticket breakdown when there is one
-  cat "$1/spec.md"; if has_breakdown "$1"; then echo; [ -s "$1/breakdown.md" ] || render_breakdown "$1"; cat "$1/breakdown.md"
+  cat "$1/spec.md"
+  if [ -s "$1/key" ]; then
+    echo; echo "THIS IS TICKET $(cat "$1/key") OF A LARGER PLAN. Implement ONLY this ticket's scope and acceptance criteria on this branch; earlier tickets are already merged on the target branch and later ones get their own sessions. Do not widen the scope."
+  fi
+  if has_breakdown "$1"; then echo; [ -s "$1/breakdown.md" ] || render_breakdown "$1"; cat "$1/breakdown.md"
     echo; echo "Work the tickets in dependency order, ONE MR per ticket (branch <branch_prefix>/<child PT>-<slug>); the umbrella ticket stays In Progress until the last child merges."; fi
 }
 
@@ -425,7 +468,15 @@ case "$cmd" in
     TITLE="$(jq -r .title "$D/spec.json")"
     if has_breakdown "$D"; then desc "would file the umbrella ticket \"$TITLE\" plus $(jq '.tickets|length' "$D/breakdown.json") child tickets in Blocked-By order ($(jq -r '.tickets|map(.key + " " + .title)|join("; ")' "$D/breakdown.json")), $(jq '.test_cases|length' "$D/spec.json") test cases spread across them, a spec page, then start ONE Claude Code session on branch $(cfg branch_prefix | grep . || echo margie)/PT-…-$(jq -r .slug "$D/spec.json") in a worktree that works the tickets in order, one MR each"
     else desc "would file Notion ticket \"$TITLE\" with $(jq '.test_cases|length' "$D/spec.json") test cases and a spec page, then start a Claude Code session on branch $(cfg branch_prefix | grep . || echo margie)/PT-…-$(jq -r .slug "$D/spec.json") in a worktree"; fi
-    "$0" file "$(basename "$D")" && "$0" implement "$(basename "$D")"
+    "$0" file "$(basename "$D")" || exit 1
+    if has_breakdown "$D"; then
+      st "$D" implementing; status_all "$D" "In Progress" >/dev/null 2>&1
+      SP="$(jq -r '[.tickets[] | select(.spike // false) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
+      [ -n "$SP" ] && echo "On you, dearie (spike work, not automated): $SP."
+      K="$(next_child "$D")"; [ -n "$K" ] && start_child "$D" "$K"
+    else
+      "$0" implement "$(basename "$D")"
+    fi
     ;;
 
   qa)
@@ -468,6 +519,12 @@ case "$cmd" in
         BR="$(jq -r .branch "$D/impl.json")"
         SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"
         tmux has-session -t "$SESS" 2>/dev/null && LINE="$LINE, session live" || LINE="$LINE, session ended"
+      fi
+      [ -s "$D/key" ] && LINE="  ↳ $(cat "$D/key") $LINE"
+      if has_breakdown "$D" && [ ! -s "$D/impl.json" ]; then
+        DONE=0; TOT="$(jq '[.tickets[] | select((.spike // false) | not)] | length' "$D/breakdown.json")"
+        for c in "$MDIR/$(basename "$D")--"*; do [ -d "$c" ] && [ "$(st "$c")" = closed ] && DONE=$((DONE+1)); done
+        LINE="$LINE, tickets $DONE/$TOT merged"
       fi
       [ -s "$D/mr.json" ] && LINE="$LINE, MR !$(jq -r .iid "$D/mr.json")$( [ -s "$D/mr-check.json" ] && echo " (pipeline $(jq -r .pipeline "$D/mr-check.json"), $(jq -r .unresolved "$D/mr-check.json") open threads$( [ -f "$D/review-approved" ] && echo ", review clean"))")"
       spec_ready "$D" && LINE="$LINE — $(jq -r .title "$D/spec.json" | cut -c1-60)"
@@ -646,6 +703,18 @@ case "$cmd" in
                 status_all "$D" "Done"
                 st "$D" closed
                 announce "$PT merged and closed, dearie."
+                # a child finished → start the next ticket, or close the umbrella after the last
+                if [ -s "$D/parent" ]; then
+                  PD="$MDIR/$(cat "$D/parent")"
+                  if [ -d "$PD" ]; then
+                    K="$(next_child "$PD")"
+                    if [ -n "$K" ]; then announce "Next ticket for $(jq -r .pt "$PD/ticket.json"): $K — starting it now, dearie."; start_child "$PD" "$K" >/dev/null 2>&1
+                    else
+                      "$DIR/notion.sh" ticket status "$(jq -r .pt "$PD/ticket.json")" "Done" >/dev/null 2>&1; st "$PD" closed
+                      announce "All tickets under $(jq -r .pt "$PD/ticket.json") are merged — umbrella closed, dearie.$( SP="$(jq -r '[.tickets[] | select(.spike // false) | .key] | join(", ")' "$PD/breakdown.json")"; [ -n "$SP" ] && echo " Still on you: $SP.")"
+                    fi
+                  fi
+                fi
               fi
             fi
           fi ;;
@@ -692,6 +761,10 @@ case "$cmd" in
       { [ "$P" != success ] || [ "$U" != 0 ]; } && { echo "Not merging !$IID yet, dearie — pipeline is $P and $U review thread(s) are open."; exit 1; }
     fi
     "$DIR/mr.sh" merge "!$IID" --repo "$WT" ;;
+  __make_child)   # internal: build (not start) the child dispatch for a ticket key
+    need_d "${1:-latest}"; make_child "$D" "${2:?key}" ;;
+  __next_child)
+    need_d "${1:-latest}"; next_child "$D" ;;
   __resolve)
     resolve_d "${1:-latest}" ;;
   describe)
