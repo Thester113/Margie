@@ -59,7 +59,13 @@ EOF
   "$ROOT/bin/margie" stop >/dev/null 2>&1 || true
   sleep 1
   launchctl bootout "gui/$UID_/$LABEL" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/$UID_" "$PLIST" && echo "Brain daemon installed under launchd ($LABEL) — starts at login, restarts on crash."
+  # bootout is asynchronous — wait for the old service to be gone, then bootstrap (retrying).
+  for _ in $(seq 1 20); do launchctl print "gui/$UID_/$LABEL" >/dev/null 2>&1 || break; sleep 0.5; done
+  for _ in $(seq 1 5); do
+    launchctl bootstrap "gui/$UID_" "$PLIST" 2>/dev/null && { echo "Brain daemon installed under launchd ($LABEL) — starts at login, restarts on crash."; return 0; }
+    sleep 1
+  done
+  echo "launchctl bootstrap kept failing — try: launchctl bootstrap gui/$UID_ $PLIST" >&2; return 1
 }
 
 install_app() {
