@@ -222,7 +222,13 @@ case "$cmd" in
         if [ "$(jq -r '.is_error // false' "$j")" = "true" ]; then st="FAILED"; else st="DONE"; fi
         gist="$(jq -r '.result // ""' "$j" | tr '\n' ' ' | cut -c1-110)"
       else st="FAILED"; gist="$(tail -1 "$TASKS/$id.log" 2>/dev/null | cut -c1-110)"; fi
-      echo "Background task '$(meta "$id" tag | grep . || basename "$m" .meta)' finished: $st. $gist"
+      tag="$(meta "$id" tag | grep . || basename "$m" .meta)"
+      case "$tag" in
+        spec:*|qa:*|breakdown:*|*superseded*) ;;   # dispatch.sh tick announces these properly
+        research:*) rid="${tag#research:}"; q="$(cut -c1-90 "$HOME/.margie/research/$rid/question.txt" 2>/dev/null || echo "$rid")"
+          echo "Research finished ($st): \"$q\" — research.sh show $rid" ;;
+        *) echo "Background task '$tag' finished: $st. $gist" ;;
+      esac
       echo "$id" >> "$SEEN"
     done
     ;;
