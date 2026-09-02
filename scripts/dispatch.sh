@@ -260,7 +260,7 @@ case "$cmd" in
       echo "Noted, dearie — I've added that to the spec's request; I'll re-plan in one go shortly rather than start another run right now."
       exit 0
     fi
-    [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+    [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md" "$D/breakdown.json" "$D/breakdown.md" "$D/breakdown-running"  # a re-plan invalidates the ticket breakdown
     supersede_draft "$D" "Superseded $(date +%b\ %-d\ %H:%M)"
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
@@ -468,7 +468,7 @@ case "$cmd" in
       S="$(st "$D")"
       if [ -f "$D/replan-pending" ] && [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "RUNNING" ] \
          && [ $(( $(date +%s) - $(cat "$D/planner-started" 2>/dev/null || echo 0) )) -ge 1200 ]; then
-        [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+        [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md" "$D/breakdown.json" "$D/breakdown.md" "$D/breakdown-running"  # a re-plan invalidates the ticket breakdown
         launch_planner "$D" "$(dmeta "$D" repo)${SUBDIR:+/$SUBDIR}" "$(cat "$D/request.txt")" 2>/dev/null || true
         st "$D" spec-running; S="spec-running"
         announce "Re-planning \"$(head -c 60 "$D/request.txt")…\" with the queued context, dearie."
@@ -569,7 +569,7 @@ case "$cmd" in
     while [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "NONE" ]; do
       "$DIR/claude-task.sh" detach "spec:$(basename "$D")" >/dev/null 2>&1 || break
     done
-    [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+    [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md" "$D/breakdown.json" "$D/breakdown.md" "$D/breakdown-running"  # a re-plan invalidates the ticket breakdown
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
     st "$D" spec-running
