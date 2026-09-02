@@ -99,17 +99,37 @@ while IFS=$'\t' read -r kind cid label; do
   H="$(sapi conversations.history --get --data-urlencode "channel=$cid" -d "limit=15")"
   echo "$H" | jq -e '.ok==true' >/dev/null 2>&1 || continue
   echo "$H" | jq -r --arg bot "$BOTID" --arg owner "${OWNER:-__none__}" --arg kind "$kind" --arg cid "$cid" --arg label "$label" '
-    .messages[]?
+    .messages as $all
+    | range(0; ($all | length)) as $i
+    | $all[$i]
     | select(.subtype==null) | select((.user // "") != $bot)
     | (.text // "") as $t
+    | ($all[$i+1] // {}) as $prev
+    | (($prev.user // "") == $bot and (($prev.text // "") | test("\\?\\s*$")) and ((.ts|tonumber) - ($prev.ts|tonumber) < 600)) as $answering_her
     | (if $kind=="im" then "im"
        elif (($t | contains("<@"+$bot+">")) and ((.user // "") == $owner)) then "ownerask"
+       elif ($answering_her and ((.user // "") == $owner)) then "ownerask"
        elif ($t | contains("<@"+$bot+">")) then "bot"
        elif ($owner != "__none__" and ($t | contains("<@"+$owner+">")) and ((.user // "") != $owner)) then "owner"
        else "" end) as $k
     | select($k != "")
     | [$k, $cid, $label, .ts, (.thread_ts // .ts), (.user // "?"), ($t | gsub("\t";" ") | gsub("\n";" "))]
     | @tsv' >> "$NEW"
+done < "$SRCS"
+
+# Replies in threads under Margie's messages: the owner's → brain; others' → composer.
+while IFS=$'\t' read -r kind cid label; do
+  [ -z "$cid" ] && continue
+  H="$(sapi conversations.history --get --data-urlencode "channel=$cid" -d "limit=15")"
+  echo "$H" | jq -r --arg bot "$BOTID" '.messages[]? | select((.user // "")==$bot and ((.reply_count // 0) > 0)) | .ts' 2>/dev/null \
+  | while read -r pts; do
+      [ -z "$pts" ] && continue
+      sapi conversations.replies --get --data-urlencode "channel=$cid" --data-urlencode "ts=$pts" -d "limit=30" \
+      | jq -r --arg bot "$BOTID" --arg owner "${OWNER:-__none__}" --arg cid "$cid" --arg label "$label" --arg pts "$pts" '
+          .messages[]? | select(.ts != $pts) | select(.subtype==null) | select((.user // "") != $bot)
+          | [(if (.user // "")==$owner then "ownerask" else "bot" end), $cid, $label, .ts, $pts, (.user // "?"), ((.text // "") | gsub("\t";" ") | gsub("\n";" "))]
+          | @tsv' >> "$NEW"
+    done
 done < "$SRCS"
 rm -f "$SRCS"
 
@@ -150,7 +170,7 @@ while IFS=$'\t' read -r kind cid label ts thread user text; do
     echo "${NOW}|${ts}" >> "$HANDLED"
     ASK="$(printf '%s' "$text" | sed "s/<@$BOTID>//g; s/^ *//;s/ *$//")"
     # In a channel, answer in the thread; in a DM / group DM, answer inline.
-    case "$label" in \#*) TARG=(--data-urlencode "thread_ts=$thread") ;; *) TARG=() ;; esac
+    if [ "$thread" != "$ts" ]; then TARG=(--data-urlencode "thread_ts=$thread"); else case "$label" in \#*) TARG=(--data-urlencode "thread_ts=$thread") ;; *) TARG=() ;; esac; fi
     logl "owner → brain ($label): $(printf '%s' "$ASK" | cut -c1-80)"
     ( REPLY="$(MARGIE_SOURCE=slack "$MARGIE_CLI" -q "$ASK" 2>/dev/null)"
       [ -z "$REPLY" ] && REPLY="Sorry dearie, I didn't catch that — my brain didn't answer."
@@ -174,7 +194,7 @@ while IFS=$'\t' read -r kind cid label ts thread user text; do
   [ -z "$REPLY" ] && REPLY="Margie here, ${OWNER_NAME}'s assistant — I've flagged this for him and he'll follow up."
   LINK="$(sapi chat.getPermalink --get --data-urlencode "channel=$cid" --data-urlencode "message_ts=$ts" | jq -r '.permalink // empty')"
   if [ "$MODE" = "live" ]; then
-    case "$label" in \#*) TT=(--data-urlencode "thread_ts=$thread") ;; *) TT=() ;; esac
+    if [ "$thread" != "$ts" ]; then TT=(--data-urlencode "thread_ts=$thread"); else case "$label" in \#*) TT=(--data-urlencode "thread_ts=$thread") ;; *) TT=() ;; esac; fi
     POST="$(sapi chat.postMessage --get --data-urlencode "channel=$cid" ${TT[@]+"${TT[@]}"} --data-urlencode "text=$REPLY")"
     if echo "$POST" | jq -e '.ok==true' >/dev/null 2>&1; then logl "replied ($kind) in $label ts=$ts"; VERB="I replied"
     else logl "post failed in $label: $(echo "$POST"|jq -r '.error//"?"')"; VERB="I tried to reply but Slack refused"; fi
