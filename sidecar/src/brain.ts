@@ -446,7 +446,9 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - Standup: standup.sh draft ("draft my standup" — from his commits, MRs, tickets and
   dispatches; read the bullets back briefly) | show | edit "<change>" ("drop the
   second bullet", "add that I met with Homie") | post (held — "post my standup").
-  Every weekday at standup_time she drafts it herself and DMs Tom.
+  The standup bot posts a "Tom — reply in :thread:" prompt each weekday; Margie
+  answers IN THAT THREAD automatically (standup_mode post) and DMs Tom what she
+  posted. "Did my standup go out?" → standup.sh show (a .posted marker means yes).
 - Calendar: calendar.sh [week|day] opens Tom's Google Calendar and prints a
   screenshot PATH — then Read that image to answer ("what's on my calendar",
   "next meeting"). (Google Calendar is read visually.)

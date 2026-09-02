@@ -1,6 +1,7 @@
 #!/bin/bash
 # standup.sh — Margie drafts and posts the owner's daily standup from evidence.
 #
+#   standup.sh prompt                      today's standup-bot prompt addressed to the owner (ts + text)
 #   standup.sh evidence [--since <date>]   what she found (commits, MRs, tickets, dispatches)
 #   standup.sh draft    [--since <date>]   compose the three-question standup (Claude, no tools)
 #   standup.sh show                        today's draft
@@ -77,16 +78,25 @@ evidence() {
 
 compose() {
   local EV; EV="$(evidence)"
-  local P="You are Margie, ${OWNER}'s assistant, drafting HIS daily standup for the team's #standup channel. Below is the evidence of what he did (git commits, merge requests, tickets, Margie's dispatch pipeline). Write it in the channel's exact three-question format, first person as ${OWNER}:
+  local PROMPT_TEXT; PROMPT_TEXT="$(find_prompt 2>/dev/null | cut -f2 | sed 's/ ⏎ /\n/g')"
+  local FORMAT
+  if [ -n "$PROMPT_TEXT" ]; then
+    FORMAT="Answer EXACTLY the questions in this standup prompt, as a numbered list in the same order (1., 2., …), one line or a few • bullets per question, and answer its trailing 'Also:' question in one line at the end:
+<<<$PROMPT_TEXT>>>"
+  else
+    FORMAT="Use this format:
+*What did you accomplish yesterday?*
+• …
+*What are you working on today?*
+• …
+*Any blockers?*
+• …
+*Anything else to bring up?*
+• …"
+  fi
+  local P="You are Margie, ${OWNER}'s assistant, drafting HIS daily standup for the team's standup channel, first person as ${OWNER}. Below is the evidence of what he did (git commits, merge requests, tickets, Margie's dispatch pipeline). $FORMAT
 
-*What have you done since yesterday?*
-• …
-*What will you do today?*
-• …
-*Have anything for after standup?*
-• …
-
-Rules: bullets only, each ≤ 14 words, plain Slack formatting (asterisks for the three headers, • bullets). Group related commits into one bullet; mention MR numbers (!123) and ticket ids (PT-###) when present. 'Today' should be inferred from in-flight dispatches/tickets/open MRs; if unknown, write 'continue on <the in-flight item>'. Put blockers or things needing a decision under the third header; if none, write '• Nothing'. Do not invent work that isn't in the evidence. Output ONLY the standup text.
+Rules: ≤ 14 words per line, plain Slack formatting (no markdown headings), group related commits into one bullet, cite MR numbers (!123) and ticket ids (PT-###) when present. 'Today' is inferred from in-flight dispatches/tickets/open MRs; if unknown say 'continue on <the in-flight item>'. Blockers: only real ones, else 'None'. Do not invent work that isn't in the evidence. Output ONLY the standup text.
 
 EVIDENCE:
 $EV"
@@ -99,6 +109,23 @@ $EV"
 }
 
 sapi() { local m="$1"; shift; curl -sS --max-time 10 -H "Authorization: Bearer $BTOK" "$@" "https://slack.com/api/$m"; }
+# Today's per-person standup prompt for the owner (a bot post naming Tom, or
+# <@his id>, and asking to reply in thread). Prints "ts<TAB>text".
+find_prompt() {
+  local cid; cid="$(channel_id)"; [ -z "$cid" ] && return 1
+  local since; since="$(date -j -f '%Y-%m-%d %H:%M:%S' "$TODAY 00:00:00" +%s 2>/dev/null || date +%s)"
+  sapi conversations.history --get --data-urlencode "channel=$cid" -d "limit=80" -d "oldest=$since" \
+    | jq -r --arg n "$OWNER" --arg id "${OWNER_ID:-__none__}" '
+        .messages[]? | select(.subtype=="bot_message" or .bot_id != null)
+        | select((.text // "") | test("reply in|:thread:"; "i"))
+        | select((.text // "") | (test("^\\s*(<@" + $id + ">|" + $n + ")\\b"; "i")))
+        | [.ts, ((.text // "") | gsub("\n"; " ⏎ "))] | @tsv' | head -1
+}
+# Has the owner (or Margie for him) already answered in that thread?
+thread_answered() { # thread_answered <cid> <ts>
+  sapi conversations.replies --get --data-urlencode "channel=$1" --data-urlencode "ts=$2" -d "limit=50" \
+    | jq -e --arg o "${OWNER_ID:-__none__}" '[.messages[]? | select(.ts != .thread_ts) | select(.user==$o or ((.text // "") | test("via Margie")))] | length > 0' >/dev/null 2>&1
+}
 channel_id() {
   case "$CHAN" in C*|G*) printf '%s' "$CHAN"; return ;; esac
   sapi conversations.list --get --data-urlencode "types=public_channel,private_channel" -d "limit=1000" | jq -r --arg n "${CHAN#\#}" '.channels[]? | select(.name==$n) | .id' | head -1
@@ -107,6 +134,7 @@ dm_owner() { [ -n "$OWNER_ID" ] && sapi chat.postMessage --get --data-urlencode 
 
 case "$cmd" in
   evidence) evidence ;;
+  prompt) find_prompt | cut -f1-2 | sed 's/\t/  /' | cut -c1-200 || echo "No standup prompt for $OWNER today, sir." ;;
   draft) compose ;;
   show) [ -s "$DRAFT" ] && cat "$DRAFT" || echo "No standup drafted yet today, sir — say 'draft my standup'." ;;
   edit)
@@ -123,11 +151,13 @@ $(cat "$DRAFT")"
   post)
     [ -s "$DRAFT" ] || compose >/dev/null || exit 1
     [ -f "$POSTED" ] && { echo "Today's standup is already posted, sir: $(cat "$POSTED")"; exit 0; }
-    desc "would post ${OWNER}'s standup for $TODAY to $CHAN as @Margie ($(grep -c '^•' "$DRAFT") bullets: $(sed -n '2p' "$DRAFT" | cut -c1-70)…)"
+    desc "would post ${OWNER}'s standup for $TODAY in $CHAN$( [ -n "$(find_prompt 2>/dev/null)" ] && echo " — in the thread of today's standup prompt") as @Margie: $(head -2 "$DRAFT" | tr '\n' ' ' | cut -c1-90)…"
     CID="$(channel_id)"; [ -z "$CID" ] && { echo "Couldn't find channel $CHAN, sir." >&2; exit 1; }
+    PTS="$(find_prompt 2>/dev/null | cut -f1)"
+    if [ -n "$PTS" ] && thread_answered "$CID" "$PTS"; then echo "That standup thread already has ${OWNER}'s answer, sir."; : > "$POSTED"; exit 0; fi
     TEXT="*${OWNER}'s standup* (via Margie)
 $(cat "$DRAFT")"
-    R="$(sapi chat.postMessage --get --data-urlencode "channel=$CID" --data-urlencode "text=$TEXT")"
+    R="$(sapi chat.postMessage --get --data-urlencode "channel=$CID" --data-urlencode "text=$TEXT" ${PTS:+--data-urlencode "thread_ts=$PTS"})"
     printf '%s' "$R" | jq -e '.ok==true' >/dev/null || { echo "Slack refused the post, sir: $(printf '%s' "$R" | jq -r '.error // "?"')" >&2; exit 1; }
     LINK="$(sapi chat.getPermalink --get --data-urlencode "channel=$CID" --data-urlencode "message_ts=$(printf '%s' "$R" | jq -r .ts)" | jq -r '.permalink // empty')"
     printf '%s' "${LINK:-posted}" > "$POSTED"
@@ -135,9 +165,13 @@ $(cat "$DRAFT")"
   auto)
     [ "$MODE" = "off" ] && exit 0
     case "$(date +%u)" in 6|7) exit 0 ;; esac
-    [ "$(date +%H:%M)" \< "$STIME" ] && exit 0
     [ -f "$POSTED" ] && exit 0
     [ -f "$SDIR/$TODAY.notified" ] && exit 0
+    # Trigger: the standup bot has posted today's prompt for the owner (preferred),
+    # else the configured time.
+    PROMPT_TS="$(find_prompt 2>/dev/null | cut -f1)"
+    if [ -z "$PROMPT_TS" ]; then [ "$(date +%H:%M)" \< "$STIME" ] && exit 0; fi
+    if [ -n "$PROMPT_TS" ] && thread_answered "$(channel_id)" "$PROMPT_TS"; then : > "$POSTED"; exit 0; fi
     compose >/dev/null 2>&1 || exit 0
     : > "$SDIR/$TODAY.notified"
     if [ "$MODE" = "post" ]; then
