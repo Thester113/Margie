@@ -129,6 +129,11 @@ read_member_channels() { # bot (or user) token: recent history from channels we'
 
 resolve_target() { # -> channel id to post to
   local t="$1" name id
+  # A raw conversation id (channel C…, group/private G…, DM D…) — with or without a leading # — is used as-is.
+  case "$t" in
+    \#C[A-Z0-9]*|\#G[A-Z0-9]*|\#D[A-Z0-9]*|C[A-Z0-9]*|G[A-Z0-9]*|D[A-Z0-9]*)
+      if printf '%s' "${t#\#}" | grep -qE '^[CGD][A-Z0-9]{8,}$'; then echo "${t#\#}"; return; fi ;;
+  esac
   case "$t" in
     \#*) name="${t#\#}" ;;
     @*)  name="${t#@}"
