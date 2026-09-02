@@ -1,4 +1,4 @@
-import { mkdirSync, appendFileSync, readFileSync, readdirSync, existsSync } from "node:fs";
+import { mkdirSync, appendFileSync, readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -477,6 +477,9 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   ~15s; report the "Sent to …" line it returns.
 - Gmail: gmail.sh unread | read "<query>" | send "<to>: <subj>: <body>" | reply "<instruction>"
 - Jira tickets: jira.sh read <KEY> | mine | search "<q>" | create "<desc>" | comment <KEY> "<text>"
+- IMAGES: when a message contains a screenshot/image path (drag-and-drop gives
+  "Screenshot\ 2026…\ PM.png" — backslash-spaces are ONE path), the image is
+  attached and you can see it. Read it directly; never ls/open/ocr it.
 - RESEARCH — comparisons, "what are our options", pricing, anything needing the
   web or more than two lookups: NEVER browse, curl or compare inline. Run
   research.sh start "<question>" --context "<what it's for, in one line>"
@@ -795,14 +798,53 @@ function transcript(history: ChatMsg[], turns = 10, conv?: string, speaker?: str
   return pairs.map((m) => `${speakerLabel(m)}: ${m.content}`).join("\n");
 }
 
-async function claudeTurn(text: string, history: ChatMsg[], source: string, conv?: string, speaker?: string): Promise<string> {
+/** Image paths dropped into a turn (drag-and-drop gives "Screenshot\ 2026…\ PM.png")
+ *  become real image attachments for the Claude brain; the text keeps a marker. */
+const IMAGE_EXT: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+function extractImages(text: string): { text: string; images: Array<{ path: string; media_type: string; data: string }> } {
+  const images: Array<{ path: string; media_type: string; data: string }> = [];
+  const re = /(?:"([^"\n]+\.(?:png|jpe?g|gif|webp))"|((?:\\ |[^\s"])+\.(?:png|jpe?g|gif|webp)))\b/gi;
+  const out = text.replace(re, (m, quoted, bare) => {
+    let p = (quoted || bare || "").replace(/\\ /g, " ").replace(/^~(?=\/|$)/, HOME);
+    if (!p.startsWith("/")) p = `${HOME}/${p}`;
+    try {
+      // macOS screenshot names carry a narrow no-break space before AM/PM; a dropped
+      // path may have a plain space. Match on a whitespace-normalised basename.
+      if (!existsSync(p)) {
+        const dir = p.slice(0, p.lastIndexOf("/")) || "/", want = p.slice(p.lastIndexOf("/") + 1).replace(/[\s\u202F\u00A0]+/g, " ");
+        const hit = readdirSync(dir).find((n) => n.replace(/[\s\u202F\u00A0]+/g, " ") === want);
+        if (!hit) return m;
+        p = `${dir}/${hit}`;
+      }
+      const st = statSync(p);
+      if (!st.isFile() || st.size > 5 * 1024 * 1024) return m;
+      const ext = p.split(".").pop()!.toLowerCase();
+      images.push({ path: p, media_type: IMAGE_EXT[ext], data: readFileSync(p).toString("base64") });
+      return `[attached image ${images.length}: ${p.split("/").pop()}]`;
+    } catch { return m; }
+  });
+  return { text: out, images };
+}
+
+async function claudeTurn(rawText: string, history: ChatMsg[], source: string, conv?: string, speaker?: string): Promise<string> {
+  const { text, images } = extractImages(rawText);
+  if (images.length) logBrain(`IMAGES attached: ${images.map((i) => i.path).join(", ")}`);
+  // With images the prompt is one user message with content blocks (streaming-input form).
+  const prompt = images.length
+    ? (async function* () {
+        yield {
+          type: "user", parent_tool_use_id: null, session_id: "",
+          message: { role: "user", content: [{ type: "text", text }, ...images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.media_type, data: i.data } }))] },
+        } as any;
+      })()
+    : text;
   const scope = (conv ? `This turn is from Slack conversation ${conv}${speaker ? `, spoken by ${speaker}` : ""}. Only what's in this transcript happened there; do not bring in other groups' messages or look them up. ` : "")
     + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns();
   const sys = `${MARGIE_SYSTEM_PROMPT}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
   try {
     const q = query({
-      prompt: text,
+      prompt,
       options: {
         systemPrompt: { type: "custom", prompt: sys },
         model: BRAIN_CLAUDE_MODEL,
