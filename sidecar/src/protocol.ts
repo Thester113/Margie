@@ -23,7 +23,7 @@ export interface WireIn {
 export interface WireOut {
   id?: number;
   text?: string;
-  event?: "tool" | "held" | "notice";
+  event?: "tool" | "result" | "thinking" | "held" | "notice";
   op?: "status" | "pong" | "stopping";
   [k: string]: unknown;
 }

@@ -191,6 +191,11 @@ function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise
       clearTimeout(timer);
       let r = out.trim();
       if (r.length > 4000) r = r.slice(0, 4000) + "\n…[truncated]";
+      if (!extraEnv.MARGIE_DESCRIBE && !extraEnv.MARGIE_POLLER) {
+        const first = (r.split("\n").find((l) => l.trim()) || "[no output]").slice(0, 160);
+        const more = r.split("\n").filter((l) => l.trim()).length - 1;
+        currentEmit?.("result", more > 0 ? `${first}  (+${more} lines)` : first);
+      }
       resolve(r || "[no output]");
     });
     child.on("error", (e) => {
@@ -619,6 +624,7 @@ async function handleTurn(text: string, history: ChatMsg[]): Promise<string> {
   for (let step = 0; step < MAX_TOOL_STEPS && finalText === null; step++) {
     let data: any;
     try {
+      currentEmit?.("thinking", step === 0 ? "thinking" : "reading tool output");
       data = await callModel(work);
     } catch (e) {
       logBrain(`XAI error: ${(e as Error).message}`);
