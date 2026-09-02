@@ -167,6 +167,7 @@ function page(text: string) {
 
 const HELP = `${PINK}✿${RESET} ${NAME} ${GREY}— your assistant, dearie. One brain across voice and every terminal; just talk.${RESET}
   ${CYAN}/status${RESET}   daemon, held command, sessions, tasks, dispatches
+  ${CYAN}/usage${RESET}    Claude spend today (${CYAN}/usage week${RESET})
   ${CYAN}/held${RESET}     what's waiting for your yes      ${CYAN}/yes${RESET}  ${CYAN}/no${RESET}   answer it
   ${CYAN}/spec${RESET}     latest spec in full             ${CYAN}/qa${RESET}   ${CYAN}/mr${RESET}    latest QA report / MR text
   ${CYAN}/log${RESET}      her recent brain log            ${CYAN}/clear${RESET}     ${CYAN}/quit${RESET}
@@ -212,6 +213,7 @@ async function repl() {
     if (text === "/clear") { process.stdout.write("\x1b[2J\x1b[H"); return; }
     if (text === "/status") { await cmdStatus(); held = await heldSummary(c); return; }
     if (text === "/held") { console.log(held ? `${YEL}⏸ ${held}${RESET}` : `${DIM}nothing held${RESET}`); return; }
+    if (text === "/usage" || text === "/usage week") { spawnSync(`${SCRIPTS}/usage.sh`, [text.endsWith("week") ? "week" : "today"], { stdio: "inherit" }); return; }
     if (text === "/log") { spawnSync("tail", ["-25", `${HOME}/.margie/brain.log`], { stdio: "inherit" }); return; }
     if (text === "/spec" || text === "/qa" || text === "/mr") {
       const f = latestDispatchFile(text.slice(1) as "spec" | "qa" | "mr");

@@ -473,6 +473,9 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   ~15s; report the "Sent to …" line it returns.
 - Gmail: gmail.sh unread | read "<query>" | send "<to>: <subj>: <body>" | reply "<instruction>"
 - Jira tickets: jira.sh read <KEY> | mine | search "<q>" | create "<desc>" | comment <KEY> "<text>"
+- Spend: usage.sh today | week ("what have you cost me today?", "usage this week")
+  prints Claude spend by category (brain turns, planner, QA, other tasks) and the
+  daily budget; never estimate spend yourself.
 - AppSignal (monitoring/logs, read-only): appsignal.sh apps | logs "<query>"
   [--app <name>] [--minutes <n>] [--namespace <ns>] | errors [--minutes <n>] |
   perf | ask "<question>". "Any errors in prod?" → appsignal.sh errors; "check the
@@ -783,7 +786,7 @@ function transcript(history: ChatMsg[], turns = 10, conv?: string, speaker?: str
 async function claudeTurn(text: string, history: ChatMsg[], source: string, conv?: string, speaker?: string): Promise<string> {
   const scope = (conv ? `This turn is from Slack conversation ${conv}${speaker ? `, spoken by ${speaker}` : ""}. Only what's in this transcript happened there; do not bring in other groups' messages or look them up. ` : "")
     + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns();
-  const sys = `${MARGIE_SYSTEM_PROMPT}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, 10, conv, speaker) || "(none yet)"}`;
+  const sys = `${MARGIE_SYSTEM_PROMPT}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
   try {
     const q = query({
@@ -802,7 +805,7 @@ async function claudeTurn(text: string, history: ChatMsg[], source: string, conv
           toolName === "mcp__margie__bash"
             ? { behavior: "allow" as const }
             : { behavior: "deny" as const, message: `Tool ${toolName} is not available to Margie's brain — use the bash helper scripts (slack.sh, notion.sh, …), which carry Tom's confirmation gate.` },
-        maxTurns: MAX_TOOL_STEPS,
+        maxTurns: speaker ? Math.min(4, MAX_TOOL_STEPS) : MAX_TOOL_STEPS,  // colleagues get short, cheap turns
         cwd: HOME,
         settingSources: [],                          // don't load CLAUDE.md / hooks / MCP from Tom's projects
         persistSession: false,

@@ -31,6 +31,7 @@
 set -uo pipefail
 
 TASKS="$HOME/.margie/tasks"; mkdir -p "$TASKS"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_BIN="${MARGIE_CLAUDE_BIN:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
 cmd="${1:-status}"; shift || true
 
@@ -88,20 +89,37 @@ harvest() {
 
 case "$cmd" in
   start)
-    PERM=(); TAG=""; OUT=""; EXTRA=(); dir=""; task=""
+    PERM=(); TAG=""; OUT=""; EXTRA=(); dir=""; task=""; DENYLIST=""; BUDGET=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --schema) EXTRA+=(--json-schema "$(cat "${2:?}")"); shift 2 ;;
-        --plan)   PERM=(--permission-mode plan); shift ;;
+        # --plan = read-only research: no edits, no shell, no subagents. (Claude Code's
+        # own plan mode spun up Opus explore agents and cost $9-13 a run.)
+        --plan)   DENYLIST="${DENYLIST:+$DENYLIST,}Edit,Write,NotebookEdit,Bash,Task,Agent"; shift ;;
+        --no-subagents) DENYLIST="${DENYLIST:+$DENYLIST,}Task,Agent"; shift ;;
         --allow)  EXTRA+=(--allowedTools "${2:?}"); shift 2 ;;
-        --deny)   EXTRA+=(--disallowedTools "${2:?}"); shift 2 ;;
+        --deny)   DENYLIST="${DENYLIST:+$DENYLIST,}${2:?}"; shift 2 ;;
         --model)  EXTRA+=(--model "${2:?}"); shift 2 ;;
+        --effort) EXTRA+=(--effort "${2:?}"); shift 2 ;;
+        --budget) BUDGET="${2:?}"; shift 2 ;;
         --tag)    TAG="${2:?}"; shift 2 ;;
         --out)    OUT="${2:?}"; shift 2 ;;
         *) if [ -z "$dir" ]; then dir="$1"; else task="${task:+$task }$1"; fi; shift ;;
       esac
     done
-    if [ -z "$dir" ] || [ -z "$task" ]; then echo "usage: claude-task.sh start <dir> \"<task>\" [--schema f] [--plan] [--allow t] [--deny t] [--model m] [--tag n] [--out f]" >&2; exit 1; fi
+    if [ -z "$dir" ] || [ -z "$task" ]; then echo "usage: claude-task.sh start <dir> \"<task>\" [--schema f] [--plan] [--no-subagents] [--allow t] [--deny t] [--model m] [--effort low|medium|high] [--budget usd] [--tag n] [--out f]" >&2; exit 1; fi
+    [ -n "$DENYLIST" ] && EXTRA+=(--disallowedTools "$DENYLIST")
+    # Every headless run is capped in dollars: --budget, else config task_budget_usd, else 5.
+    [ -z "$BUDGET" ] && BUDGET="$(jq -r '.task_budget_usd // empty' "$HOME/.margie/config.json" 2>/dev/null)"
+    EXTRA+=(--max-budget-usd "${BUDGET:-5}")
+    # Daily ceiling (config daily_budget_usd): refuse new launches once today's spend passes it.
+    DAILY="$(jq -r '.daily_budget_usd // empty' "$HOME/.margie/config.json" 2>/dev/null)"
+    if [ -n "$DAILY" ]; then
+      SPENT="$("$DIR/usage.sh" today --total 2>/dev/null || echo 0)"
+      if [ "$(echo "$SPENT >= $DAILY" | bc 2>/dev/null)" = 1 ]; then
+        echo "Not starting that, dearie — today's Claude spend is already \$$SPENT against the \$$DAILY daily budget (daily_budget_usd in config). Raise it or wait for tomorrow." >&2; exit 1
+      fi
+    fi
     # Default model for dispatched runs (claude_model in config) unless --model was given.
     if ! printf '%s\n' ${EXTRA[@]+"${EXTRA[@]}"} | grep -qx -- --model; then
       DM="$(jq -r '.claude_model // empty' "$HOME/.margie/config.json" 2>/dev/null)"

@@ -96,6 +96,14 @@
   perl `setsid`) and the launchd plist sets `AbandonProcessGroup` — the daemon
   is a launchd job, and launchd kills a job's process group on exit, which
   silently killed planners on every rebuild.
+- **Cost controls are code too.** Every headless run gets `--max-budget-usd`
+  (`dispatch_budget_usd` for planner/QA, `task_budget_usd` otherwise) and
+  `daily_budget_usd` refuses new launches once `usage.sh today` passes it.
+  `claude-task.sh --plan` means read-only tools with NO subagents (Claude
+  Code's real plan mode spawned Opus explore agents at $9–13 a run); the
+  planner/QA default to `planner_model`/`qa_model` (sonnet) at `medium`
+  effort, and a re-plan revises `prev-spec.json` instead of re-exploring.
+  `usage.sh today|week` / `/usage` in the CLI is the spend report.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on a ≤6-word affirmative within 3 minutes; anything else

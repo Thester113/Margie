@@ -28,6 +28,7 @@ MDIR="$HOME/.margie/dispatch"; mkdir -p "$MDIR"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CFG="$HOME/.margie/config.json"
 cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfgd() { local v; v="$(cfg "$1")"; printf '%s' "${v:-$2}"; }  # cfgd <key> <default>
 desc() { if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then echo "$*"; exit 0; fi; }
 slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-28; }
 st() { # st <dir> [new-state]
@@ -113,12 +114,20 @@ launch_planner() { # launch_planner <dispatch dir> <workdir> "<request text>"
     P="${P//'{{CONTEXT}}'/$(cat "$D/context.md")}"
     P="${P//'{{CASE_TYPES}}'/$CASE_TYPES}"
     P="${P//'{{LABELS}}'/$LABELS}"
+    # A re-plan revises the last spec instead of re-exploring the repo from scratch.
+    if [ -s "$D/prev-spec.json" ]; then
+      P="${P//'{{PREVIOUS}}'/$(printf 'PREVIOUS SPEC (revise it for the newest ADDENDUM(s); keep everything still valid, do not re-research what it already settled):\n%s' "$(cat "$D/prev-spec.json")")}"
+    else
+      P="${P//'{{PREVIOUS}}'/}"
+    fi
     printf '%s' "$P" > "$D/planner-prompt.txt"
 
     MODEL_OPT=(); M="$(cfg planner_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
+    SUB=(--no-subagents); [ "$(cfg planner_subagents)" = "true" ] && SUB=()
     date +%s > "$D/planner-started"; rm -f "$D/replan-pending"
     "$DIR/claude-task.sh" start "$WORKDIR" "$(cat "$D/planner-prompt.txt")" \
-      --plan --schema "$DIR/schemas/spec.schema.json" \
+      --plan --schema "$DIR/schemas/spec.schema.json" ${SUB[@]+"${SUB[@]}"} \
+      --effort "$(cfgd planner_effort medium)" --budget "$(cfgd dispatch_budget_usd 4)" \
       --allow "mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-search,mcp__claude_ai_Notion__notion-query-data-sources" \
       --tag "spec:$(basename "$D")" --out "$D/spec.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null
 }
@@ -221,7 +230,7 @@ case "$cmd" in
       echo "Noted, dearie — I've added that to the spec's request; I'll re-plan in one go shortly rather than start another run right now."
       exit 0
     fi
-    rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+    [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
     [ -s "$D/draft-page.id" ] && { "$DIR/notion.sh" page archive "$(cat "$D/draft-page.id")" >/dev/null 2>&1; rm -f "$D/draft-page.id" "$D/draft-page.url"; }
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
@@ -327,7 +336,8 @@ case "$cmd" in
     else
       MODEL_OPT=(); M="$(cfg qa_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
       "$DIR/claude-task.sh" start "$WT${SUBDIR:+/$SUBDIR}" "$P" \
-        --deny "Edit,Write,NotebookEdit" --schema "$DIR/schemas/qa.schema.json" \
+        --deny "Edit,Write,NotebookEdit" --no-subagents --schema "$DIR/schemas/qa.schema.json" \
+        --effort "$(cfgd qa_effort medium)" --budget "$(cfgd dispatch_budget_usd 4)" \
         --tag "qa:$(basename "$D")" --out "$D/qa.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null
       st "$D" qa-running
       echo "QA verification is running on $PT, dearie — I'll report the verdict."
@@ -364,7 +374,7 @@ case "$cmd" in
       S="$(st "$D")"
       if [ -f "$D/replan-pending" ] && [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "RUNNING" ] \
          && [ $(( $(date +%s) - $(cat "$D/planner-started" 2>/dev/null || echo 0) )) -ge 1200 ]; then
-        rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+        [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
         launch_planner "$D" "$(dmeta "$D" repo)${SUBDIR:+/$SUBDIR}" "$(cat "$D/request.txt")" 2>/dev/null || true
         st "$D" spec-running; S="spec-running"
         announce "Re-planning \"$(head -c 60 "$D/request.txt")…\" with the queued context, dearie."
@@ -455,7 +465,7 @@ case "$cmd" in
     while [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "NONE" ]; do
       "$DIR/claude-task.sh" detach "spec:$(basename "$D")" >/dev/null 2>&1 || break
     done
-    rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+    [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
     st "$D" spec-running
