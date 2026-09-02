@@ -35,7 +35,7 @@ SEND_AS="$(jq -r '.slack_send_as // empty' "$CFG" 2>/dev/null)"
 # (slack_send_as: "tom" reverts to sending as Tom via the connector/user token).
 BOT_SEND=0
 case "${1:-read}" in
-  send|reply|dm) [ -n "$BTOK" ] && [ "$SEND_AS" != "tom" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;
+  send|reply|dm) [ -n "$BTOK" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;   # sends are always the bot
 esac
 
 # ── Backend 2: Claude Code's Slack connector (the claude.ai Slack app) ──────────
@@ -57,13 +57,10 @@ if [ "$BOT_SEND" = 0 ] && { [ -z "$TOKEN" ] || [ "$VIA" = "claude" ]; }; then
       ask "You are Margie's Slack reader; Tom's replies are spoken aloud, so be terse. $Q Use slack_search_public_and_private (and slack_read_thread / slack_read_channel only if needed for context). Output ONLY the matches, newest first, at most 8 lines, each formatted as: [#channel or DM] sender (date): text trimmed to ~140 chars. No commentary, no markdown. If nothing matches output exactly: No matches." \
           "${T}slack_search_public_and_private,${T}slack_search_public,${T}slack_read_thread,${T}slack_read_channel,${T}slack_search_channels,${T}slack_search_users,${T}slack_list_user_channels,${T}slack_read_user_profile" ;;
     send|reply|dm)
-      target="${args%%:*}"; msg="${args#*:}"; msg="$(printf '%s' "$msg" | sed 's/^ *//')"
-      if [ -z "$target" ] || [ -z "$msg" ] || [ "$target" = "$args" ]; then
-        echo "usage: slack.sh send \"<#channel|@user|name>: <message>\"" >&2; exit 1
-      fi
-      if [ "${MARGIE_SLACK_DRY:-0}" = "1" ]; then SENDTOOL="slack_send_message_draft"; VERB="Create a DRAFT (do not send) of"; else SENDTOOL="slack_send_message"; VERB="Send"; fi
-      ask "You are Margie's Slack sender, acting as Tom. $VERB exactly ONE Slack message to \"$target\" with this text VERBATIM (no additions, no rewording, no markdown, no signature): <<<$msg>>> Steps: 1) resolve \"$target\" — a #channel, @user, or a person's name — with slack_search_channels / slack_search_users (for a person, send a DM). 2) call $SENDTOOL once. 3) Output ONE line only: Sent to <resolved channel or person>. If the target is ambiguous or not found, send NOTHING and output one line: Could not resolve \"$target\"." \
-          "${T}${SENDTOOL},${T}slack_search_channels,${T}slack_search_users,${T}slack_list_user_channels,${T}slack_read_user_profile" ;;
+      # Never send through the connector: those posts appear as Tom with a
+      # "Sent using @Claude" footer. Sends go out as the Margie bot only.
+      echo "Sends go out as @Margie, dearie — no Slack bot token is configured (slack_token), so I can't post this." >&2
+      exit 1 ;;
     channels)
       ask "List the Slack channels Tom is a member of, one #name per line, nothing else." "${T}slack_list_user_channels" ;;
     *) echo "usage: slack.sh read [\"<query>\"] | send \"<#channel|@user|name>: <message>\" | channels" >&2; exit 1 ;;
