@@ -94,6 +94,9 @@ const DENY: RegExp[] = [
   /\bgit\s+(push|commit|reset|rebase|merge|tag|clean)\b/,
   /\brm\s+-[rf]/, /(^|[;&|]|\s)rm\s+/, /\bsudo\b/,
   /\b(shutdown|reboot|halt|mkfs|diskutil\s+erase|dd\s+if=)\b/,
+  // The brain never reads its own secrets or helper-script sources (it flailed through both instead of asking).
+  /\.margie\/config\.json/,
+  /\b(cat|sed|head|tail|less|more|bat|grep|rg|awk)\b[^|]*\bscripts\/[a-z0-9-]+\.sh\b/,
 ];
 function denied(cmd: string): boolean {
   return DENY.some((r) => r.test(cmd));
@@ -115,6 +118,7 @@ const OUTWARD: RegExp[] = [
   /\bagent-messages\.sh\s+(send|reply|ack)\b/,
   /\bmr\.sh\s+(create|update)\b/,
   /\bstandup\.sh\s+post\b/,
+  /\bresearch\.sh\s+post\b/,
 ];
 const PENDING_TTL_MS = 3 * 60 * 1000;
 // Several commands can be held in one turn (e.g. two DMs); one "yes" releases
@@ -144,7 +148,7 @@ const BASH_TOOL = {
   function: {
     name: "bash",
     description:
-      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, mr.sh, standup.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
+      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, mr.sh, standup.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh, research.sh, usage.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
     parameters: {
       type: "object",
       properties: { command: { type: "string", description: "The shell command to run." } },
@@ -159,7 +163,7 @@ let currentTurn: { conv?: string; speaker?: string } = {};
 /** In a colleague's conversation Margie may only touch shared project artefacts —
  *  never read other Slack chats, mail, messages, or private files. Deterministic,
  *  because a prompt rule alone let a colleague pump her for another group's chat. */
-const COLLEAGUE_ALLOW = /^(?:\S*\/)?(?:dispatch\.sh\s+(?:spec|show|status|amend|replan|describe|qa|tick)\b|notion\.sh\s+(?:ticket\s+read|find|rows|schema)\b|forge\.sh\b|appsignal\.sh\b|claude-task\.sh\s+(?:status|result|state)\b)/;
+const COLLEAGUE_ALLOW = /^(?:\S*\/)?(?:dispatch\.sh\s+(?:spec|show|status|amend|replan|describe|qa|tick)\b|research\.sh\s+(?:start|show|list)\b|notion\.sh\s+(?:ticket\s+read|find|rows|schema)\b|forge\.sh\b|appsignal\.sh\b|claude-task\.sh\s+(?:status|result|state)\b)/;
 function colleagueDenied(cmd: string): boolean {
   if (!currentTurn.speaker) return false;
   const first = cmd.trim().split(/\s*(?:\|\||&&|;|\|)\s*/)[0].trim();
@@ -183,7 +187,7 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
       `HELD — NOTHING WAS DONE (${pending.length} command${pending.length > 1 ? "s" : ""} now waiting). This acts on Tom's behalf, so confirm first: tell Tom concisely what is about to happen — every held item, quoting message text — then ask for his yes. Use the REAL values (actual links, names); never placeholders like <link>. Do not call any tool now. Everything held runs only after he confirms.`;
     // Margie's own scripts can say precisely what they WOULD do (side-effect
     // free under MARGIE_DESCRIBE=1) — so the read-back is accurate, not guessed.
-    if (/\b(dispatch|notion|agent-messages)\.sh\b/.test(cmd)) {
+    if (/\b(dispatch|notion|agent-messages|research)\.sh\b/.test(cmd)) {
       const described = await runBashRaw(cmd, { MARGIE_DESCRIBE: "1" });
       if (described && !described.startsWith("[")) held += ` Exactly what it would do: ${described.split("\n")[0]}`;
     }
@@ -473,6 +477,14 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   ~15s; report the "Sent to …" line it returns.
 - Gmail: gmail.sh unread | read "<query>" | send "<to>: <subj>: <body>" | reply "<instruction>"
 - Jira tickets: jira.sh read <KEY> | mine | search "<q>" | create "<desc>" | comment <KEY> "<text>"
+- RESEARCH — comparisons, "what are our options", pricing, anything needing the
+  web or more than two lookups: NEVER browse, curl or compare inline. Run
+  research.sh start "<question>" --context "<what it's for, in one line>"
+  [--for <slack target>] and reply at once that it's underway (~5 min). When a
+  "Background task 'research:…' finished" notice arrives: research.sh show <id>,
+  give Tom the gist, and offer research.sh post <id> (held for his yes). "the
+  group with Cody and Tom" → slack.sh channels lists group DMs with their ids;
+  use the id as the target.
 - Spend: usage.sh today | week ("what have you cost me today?", "usage this week")
   prints Claude spend by category (brain turns, planner, QA, other tasks) and the
   daily budget; never estimate spend yourself.

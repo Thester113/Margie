@@ -35,7 +35,7 @@ SEND_AS="$(jq -r '.slack_send_as // empty' "$CFG" 2>/dev/null)"
 # (slack_send_as: "tom" reverts to sending as Tom via the connector/user token).
 BOT_SEND=0
 case "${1:-read}" in
-  send|reply|dm) [ -n "$BTOK" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;   # sends are always the bot
+  send|reply|dm|channels) [ -n "$BTOK" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;   # sends (and the membership listing) are always the bot
 esac
 
 # ── Backend 2: Claude Code's Slack connector (the claude.ai Slack app) ──────────
@@ -179,8 +179,14 @@ $text" >/dev/null 2>&1 || true
       fi
     else echo "Send failed, dearie: $(echo "$RESP" | jq -r '.error // "unknown"')"; exit 1; fi
     ;;
+  channels)
+    # Channels and group DMs Margie is in, with ids — "the group with Cody and Tom" → use the id as the send target.
+    USERS="$(api users.list -d "limit=1000" | jq -c '[.members[]? | {key: .id, value: (.real_name // .name)}] | from_entries')"
+    api conversations.list --get --data-urlencode "types=public_channel,private_channel,mpim" -d "limit=1000" \
+      | jq -r --argjson u "$USERS" '.channels[]? | if .is_mpim then "\(.id)  group DM: \([.name | split("--")[] | ltrimstr("mpdm-") | rtrimstr("-1")] | join(", "))" else "#\(.name)  \(.id)" end' | sort
+    ;;
   *)
-    echo "usage: slack.sh read [query] | send \"<target>: msg\" | reply \"<target>: msg\"" >&2
+    echo "usage: slack.sh read [query] | send \"<target>: msg\" | reply \"<target>: msg\" | channels" >&2
     exit 1
     ;;
 esac
