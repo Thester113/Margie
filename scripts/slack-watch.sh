@@ -61,7 +61,8 @@ CLAUDE_GUARDS=(--disallowedTools "Bash,Edit,Write,NotebookEdit,Agent,WebFetch,We
 
 BTOK="$(cfg slack_token)"
 [ -z "$BTOK" ] && { logl "no slack_token"; exit 0; }
-sapi() { local m="$1"; shift; curl -sS --max-time 15 -H "Authorization: Bearer $BTOK" "$@" "https://slack.com/api/$m"; }
+# curl noise goes to the log, never to stdout: under the daemon, stdout IS the announcement.
+sapi() { local m="$1"; shift; curl -sS --max-time 10 -H "Authorization: Bearer $BTOK" "$@" "https://slack.com/api/$m" 2>>"$LOG"; }
 
 BOTID="$(sapi auth.test | jq -r '.user_id // empty')"
 [ -z "$BOTID" ] && { logl "auth.test failed"; exit 0; }

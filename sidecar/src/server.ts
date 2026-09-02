@@ -218,7 +218,10 @@ async function runPoller(p: Poller) {
   p.lastRun = Date.now();
   try {
     const out = (await runScript(p.cmd)).trim();
-    if (out && out !== "[no output]" && !out.startsWith("[")) {
+    // Only a script's deliberate one-liner becomes a notice — never tool noise,
+    // a timeout marker, or a stack trace.
+    const looksLikeError = /^(curl:|jq:|bash:|Traceback|Error|\[exec error\])/m.test(out) || out.includes("[timed out]");
+    if (out && out !== "[no output]" && !out.startsWith("[") && !looksLikeError) {
       const text = out.split("\n").filter(Boolean).join(" — ").slice(0, 400);
       p.lastNotice = text;
       notice(text);
