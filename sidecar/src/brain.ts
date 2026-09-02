@@ -477,6 +477,14 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   ~15s; report the "Sent to …" line it returns.
 - Gmail: gmail.sh unread | read "<query>" | send "<to>: <subj>: <body>" | reply "<instruction>"
 - Jira tickets: jira.sh read <KEY> | mine | search "<q>" | create "<desc>" | comment <KEY> "<text>"
+- BIG SPECS → TICKETS: when Tom asks to "break it down / into tickets", or the
+  spec's estimate is L/XL, run dispatch.sh breakdown <id> (a few minutes; the
+  notice "Ticket breakdown ready" follows). dispatch.sh show then lists the
+  tickets, and "go" files the umbrella ticket PLUS every child ticket with
+  Blocked-By ordering. Answer "how many tickets?" from show, never from memory.
+- NEVER INVENT WHO IS DOING WHAT: if the spec or a note says something is
+  unverified or open, say exactly that. Do not say a teammate or a vendor is
+  "checking" unless Tom said so in this conversation.
 - IMAGES: when a message contains a screenshot/image path (drag-and-drop gives
   "Screenshot\ 2026…\ PM.png" — backslash-spaces are ONE path), the image is
   attached and you can see it. Read it directly; never ls/open/ocr it.

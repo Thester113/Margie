@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "required": ["epic_title", "summary_spoken", "tickets"],
+  "properties": {
+    "epic_title": { "type": "string" },
+    "summary_spoken": { "type": "string", "description": "≤2 spoken sentences: how many tickets, what comes first and why" },
+    "tickets": {
+      "type": "array", "minItems": 2, "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["key", "title", "goal", "scope", "acceptance_criteria", "test_case_titles", "depends_on", "size", "risk_label"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^T[0-9]+$" },
+          "title": { "type": "string" },
+          "goal": { "type": "string" },
+          "spike": { "type": "boolean", "description": "true when this ticket answers an unverified question before code is committed to" },
+          "scope": { "type": "array", "items": { "type": "string" } },
+          "out_of_scope": { "type": "array", "items": { "type": "string" } },
+          "acceptance_criteria": { "type": "array", "items": { "type": "string" } },
+          "test_case_titles": { "type": "array", "items": { "type": "string" }, "description": "exact titles from the spec's test cases owned by this ticket" },
+          "depends_on": { "type": "array", "items": { "type": "string" } },
+          "size": { "type": "string", "enum": ["S", "M", "L"] },
+          "risk_label": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}

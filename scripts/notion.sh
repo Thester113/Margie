@@ -256,6 +256,21 @@ EOF2
         [ "$(printf '%s' "$REST" | jq 'length')" -gt 0 ] && append_blocks "$PID" "$REST"
         echo "Created $PT \"$TITLE\": $PURL"
         jq -cn --arg pt "$PT" --arg id "$PID" --arg url "$PURL" '{pt:$pt, id:$id, url:$url}' ;;
+      relate)
+        # ticket relate <PT> --blocked-by <PT[,PT…]>   sets the Blocked By relation
+        T="${1:-}"; shift || true; BB=""
+        while [ $# -gt 0 ]; do case "$1" in --blocked-by) BB="${2:-}"; shift 2 ;; *) shift ;; esac; done
+        { [ -z "$T" ] || [ -z "$BB" ]; } && { echo "usage: notion.sh ticket relate <PT> --blocked-by <PT[,PT]>" >&2; exit 1; }
+        desc "would mark ticket $T as blocked by $BB"
+        IFS="$(printf '\t')" read -r pid purl ppt <<EOF2
+$(pt_page "$T")
+EOF2
+        [ -z "$pid" ] && { echo "Couldn't find $T, dearie." >&2; exit 1; }
+        IDS="[]"; for b in $(printf '%s' "$BB" | tr ',' ' '); do
+          bid="$(pt_page "$b" | cut -f1)"; [ -n "$bid" ] && IDS="$(printf '%s' "$IDS" | jq -c --arg i "$bid" '. + [{id:$i}]')"
+        done
+        R="$(api2 PATCH "/pages/$pid" "$(jq -nc --argjson r "$IDS" '{properties:{"Blocked By":{relation:$r}}}')")"; fail_if_error "$R"
+        echo "$T is now blocked by $BB, dearie." ;;
       status)
         [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: notion.sh ticket status <PT> \"<Status>\"" >&2; exit 1; }
         desc "would set ticket $1 to status \"$2\""

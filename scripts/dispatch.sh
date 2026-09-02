@@ -157,6 +157,27 @@ publish_draft() { # publish_draft <dispatch dir>
   return 0
 }
 
+# Ticket breakdown (dispatch.sh breakdown): breakdown.json → breakdown.md
+has_breakdown() { [ -s "$1/breakdown.json" ] && jq -e '.tickets | length >= 2' "$1/breakdown.json" >/dev/null 2>&1; }
+render_breakdown() { # render_breakdown <dir>
+  jq -r '
+    def bl(a): (a // []) | map("- " + .) | join("\n");
+    "## Ticket breakdown — " + .epic_title + "\n" + .summary_spoken + "\n\n" +
+    ((.tickets // []) | map(
+      "### " + .key + " — " + .title + " (" + .size + ", " + .risk_label + (if .spike then ", spike" else "" end) + ")" +
+      (if (.depends_on | length) > 0 then "\nAfter: " + (.depends_on | join(", ")) else "" end) +
+      "\n" + .goal + "\n\nScope:\n" + bl(.scope) +
+      (if ((.out_of_scope // []) | length) > 0 then "\nOut of scope:\n" + bl(.out_of_scope) else "" end) +
+      "\nAcceptance:\n" + ((.acceptance_criteria // []) | map("- [ ] " + .) | join("\n")) +
+      "\nTests: " + ((.test_case_titles // []) | join("; ")) +
+      (if (.notes // "") != "" then "\nNotes: " + .notes else "" end)
+    ) | join("\n\n"))' "$1/breakdown.json" > "$1/breakdown.md"
+}
+spec_text() { # spec_text <dir>  — spec.md plus the ticket breakdown when there is one
+  cat "$1/spec.md"; if has_breakdown "$1"; then echo; [ -s "$1/breakdown.md" ] || render_breakdown "$1"; cat "$1/breakdown.md"
+    echo; echo "Work the tickets in dependency order, ONE MR per ticket (branch <branch_prefix>/<child PT>-<slug>); the umbrella ticket stays In Progress until the last child merges."; fi
+}
+
 spec_ready() { [ -s "$1/spec.json" ] && jq -e '.title and .goal and .acceptance_criteria and .test_cases' "$1/spec.json" >/dev/null 2>&1; }
 
 cmd="${1:-status}"; shift || true
@@ -262,11 +283,33 @@ case "$cmd" in
       "Goal: " + .goal,
       "Story: " + .use_case.story,
       ("Scope: " + ((.scope | length | tostring)) + " items, " + ((.acceptance_criteria | length | tostring)) + " acceptance criteria, " + ((.test_cases | length | tostring)) + " test cases"),
-      (if (.open_questions | length) > 0 then "Open questions: " + (.open_questions | join(" | ")) else "No open questions." end),
-      "Say \"go\" to file the ticket and start Claude, dearie."
+      (if (.open_questions | length) > 0 then "Open questions: " + (.open_questions | join(" | ")) else "No open questions." end)
     ' "$D/spec.json"
+    if has_breakdown "$D"; then
+      jq -r '"Tickets (" + (.tickets|length|tostring) + "): " + (.tickets | map(.key + " " + .title + " (" + .size + (if .spike then ", spike" else "" end) + (if (.depends_on|length)>0 then ", after " + (.depends_on|join("/")) else "" end) + ")") | join("; "))' "$D/breakdown.json"
+      echo "Say \"go\" to file the umbrella ticket plus those tickets and start Claude, dearie."
+    elif [ -f "$D/breakdown-running" ]; then echo "The ticket breakdown is still being drafted, dearie."
+    else
+      echo "Say \"go\" to file the ticket and start Claude, dearie$( [ "$(jq -r .estimate "$D/spec.json")" = L ] || [ "$(jq -r .estimate "$D/spec.json")" = XL ] && echo " — or \"break it into tickets\" first (dispatch.sh breakdown), it's a big one")."
+    fi
     [ -s "$D/draft-page.url" ] && echo "Read the full draft in Notion: $(cat "$D/draft-page.url")"
     ;;
+  breakdown)
+    need_d "${1:-latest}"
+    spec_ready "$D" || { echo "The spec isn't ready yet, dearie — break it down once it is." >&2; exit 1; }
+    case "$(st "$D")" in spec-ready|spec-failed|spec-running) ;; *) echo "Already past planning ($(st "$D")), dearie — split the work in the ticket instead." >&2; exit 1 ;; esac
+    [ -s "$D/spec.md" ] || render_md "$D"
+    P="$(cat "$DIR/prompts/breakdown-planner.md")"
+    P="${P//'{{SPEC}}'/$(spec_text "$D")}"
+    P="${P//'{{REQUEST}}'/$(cat "$D/request.txt")}"
+    while [ "$("$DIR/claude-task.sh" state "breakdown:$(basename "$D")")" != "NONE" ]; do "$DIR/claude-task.sh" detach "breakdown:$(basename "$D")" >/dev/null 2>&1 || break; done
+    rm -f "$D/breakdown.json" "$D/breakdown.md"; touch "$D/breakdown-running"
+    REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
+    MODEL_OPT=(); M="$(cfg planner_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
+    "$DIR/claude-task.sh" start "$WORKDIR" "$P" --plan --no-subagents --schema "$DIR/schemas/breakdown.schema.json" \
+      --effort "$(cfgd planner_effort medium)" --budget "$(cfgd dispatch_budget_usd 4)" \
+      --tag "breakdown:$(basename "$D")" --out "$D/breakdown.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null || { rm -f "$D/breakdown-running"; exit 1; }
+    echo "Splitting \"$(jq -r .title "$D/spec.json")\" into tickets, dearie — a few minutes; I'll say when the list is ready." ;;
 
   file)
     need_d "${1:-latest}"
@@ -274,7 +317,8 @@ case "$cmd" in
     TITLE="$(jq -r .title "$D/spec.json")"
     NTC="$(jq '.test_cases | length' "$D/spec.json")"
     RISK="$(jq -r .security.risk_label "$D/spec.json")"
-    desc "would file Notion ticket \"$TITLE\" ($NTC test cases, $RISK) plus a spec page, in the Tickets database"
+    if has_breakdown "$D"; then desc "would file the umbrella ticket \"$TITLE\" plus $(jq '.tickets|length' "$D/breakdown.json") tickets ($(jq -r '.tickets|map(.key + " " + .title)|join("; ")' "$D/breakdown.json")) with Blocked-By ordering, $NTC test cases spread across them, and a spec page, in the Tickets database"
+    else desc "would file Notion ticket \"$TITLE\" ($NTC test cases, $RISK) plus a spec page, in the Tickets database"; fi
     render_md "$D"
     PRIO="$(jq -r .priority "$D/spec.json")"
     LBLS="$(jq -r '.labels | join(",")' "$D/spec.json")"
@@ -290,7 +334,47 @@ case "$cmd" in
     echo "$OUT" | head -1
     printf '%s\n' "$OUT" | tail -1 > "$D/ticket.json"
     PT="$(jq -r .pt "$D/ticket.json")"; TURL="$(jq -r .url "$D/ticket.json")"; TID="$(jq -r .id "$D/ticket.json")"
-    "$DIR/notion.sh" testcase add "$PT" --json "$D/testcases.json" | { read -r line1; echo "$line1"; cat > "$D/tcmap.json"; }
+    if has_breakdown "$D"; then
+      # Child tickets in dependency order; test cases go to the child that owns them.
+      [ -s "$D/breakdown.md" ] || render_breakdown "$D"
+      echo "[]" > "$D/tickets.json"; : > "$D/tickets.md"
+      N="$(jq '.tickets|length' "$D/breakdown.json")"
+      for ((i=0; i<N; i++)); do
+        T="$(jq -c ".tickets[$i]" "$D/breakdown.json")"; KEY="$(jq -r .key <<<"$T")"
+        jq -r --arg pt "$PT" --arg url "$TURL" '
+          def bl(a): (a // []) | map("- " + .) | join("\n");
+          "> Part of " + $pt + " — " + $url + "\n\n## Goal\n" + .goal +
+          "\n\n## Scope\n" + bl(.scope) +
+          (if ((.out_of_scope // []) | length) > 0 then "\n\n## Out of scope\n" + bl(.out_of_scope) else "" end) +
+          (if (.depends_on | length) > 0 then "\n\n## Depends on\n" + bl(.depends_on) else "" end) +
+          "\n\n## Acceptance\n" + ((.acceptance_criteria // []) | map("- [ ] " + .) | join("\n")) +
+          "\n\n## QA plan\n" + ((.test_case_titles // []) | map("- " + .) | join("\n")) +
+          (if (.notes // "") != "" then "\n\n## Notes\n" + .notes else "" end)' <<<"$T" > "$D/child-$KEY.md"
+        CT="$(jq -r .title <<<"$T")"
+        COUT="$("$DIR/notion.sh" ticket create "$CT" --md "$D/child-$KEY.md" --priority "$PRIO" --labels "$LBLS" ${UCOPT[@]+"${UCOPT[@]}"})" || exit 1
+        echo "$COUT" | head -1
+        CJ="$(printf '%s\n' "$COUT" | tail -1)"; CPT="$(jq -r .pt <<<"$CJ")"
+        jq -c --argjson t "$(jq -c --arg k "$KEY" '. + {key:$k}' <<<"$CJ")" '. + [$t]' "$D/tickets.json" > "$D/tickets.json.tmp" && mv "$D/tickets.json.tmp" "$D/tickets.json"
+        printf -- '- %s — %s (%s): %s\n' "$CPT" "$CT" "$KEY" "$(jq -r .url <<<"$CJ")" >> "$D/tickets.md"
+        jq -c --argjson want "$(jq -c '.test_case_titles // []' <<<"$T")" '[.[] | select(.title as $t | $want | index($t))]' "$D/testcases.json" > "$D/child-$KEY-tc.json"
+        if [ "$(jq 'length' "$D/child-$KEY-tc.json")" -gt 0 ]; then
+          "$DIR/notion.sh" testcase add "$CPT" --json "$D/child-$KEY-tc.json" | { read -r line1; echo "$line1"; cat > "$D/child-$KEY-tcmap.json"; }
+        fi
+      done
+      # Blocked-By relations from depends_on, now that every child has a PT.
+      for ((i=0; i<N; i++)); do
+        KEY="$(jq -r ".tickets[$i].key" "$D/breakdown.json")"; DEPS="$(jq -r ".tickets[$i].depends_on | join(\",\")" "$D/breakdown.json")"
+        [ -z "$DEPS" ] && continue
+        CPT="$(jq -r --arg k "$KEY" '.[] | select(.key==$k) | .pt' "$D/tickets.json")"
+        BB="$(for d in $(tr ',' ' ' <<<"$DEPS"); do jq -r --arg k "$d" '.[] | select(.key==$k) | .pt' "$D/tickets.json"; done | paste -sd, -)"
+        [ -n "$BB" ] && "$DIR/notion.sh" ticket relate "$CPT" --blocked-by "$BB" >/dev/null && echo "$CPT blocked by $BB"
+      done
+      { echo "## Tickets"; cat "$D/tickets.md"; } > "$D/umbrella-tickets.md"
+      "$DIR/notion.sh" ticket append "$PT" --md "$D/umbrella-tickets.md" >/dev/null 2>&1 || true
+      cat "$D/breakdown.md" >> "$D/spec.md"
+    else
+      "$DIR/notion.sh" testcase add "$PT" --json "$D/testcases.json" | { read -r line1; echo "$line1"; cat > "$D/tcmap.json"; }
+    fi
     DOCS="$("$DIR/notion.sh" page create "$PT — Spec & QA plan" --md "$D/spec.md" --parent "$TID")" && echo "$DOCS"
     # The draft page is superseded by the ticket's own spec page; it stays, renamed.
     supersede_draft "$D" "Filed as $PT"
@@ -311,7 +395,7 @@ case "$cmd" in
     P="${P//'{{TICKET_URL}}'/$TURL}"
     P="${P//'{{BRANCH}}'/$BRANCH}"
     P="${P//'{{MR_FILE}}'/$D/mr.md}"
-    P="${P//'{{SPEC}}'/$(cat "$D/spec.md")}"
+    P="${P//'{{SPEC}}'/$(spec_text "$D")}"
     KOUT="$("$DIR/kickoff-claude.sh" "$REPO" --worktree "$BRANCH" ${SUBDIR:+--subdir "$SUBDIR"} "$P")" || exit 1
     echo "$KOUT" | tail -1
     WT="$HOME/.margie/worktrees/$(basename "$REPO")__$(printf '%s' "$BRANCH" | tr '/ ' '--')"
@@ -339,7 +423,7 @@ case "$cmd" in
     P="$(cat "$DIR/prompts/qa-verifier.md")"
     P="${P//'{{PT}}'/$PT}"
     P="${P//'{{TICKET_URL}}'/$TURL}"
-    P="${P//'{{SPEC}}'/$(cat "$D/spec.md")}"
+    P="${P//'{{SPEC}}'/$(spec_text "$D")}"
     if [ "$WATCH" = 1 ]; then
       "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} "$P" | tail -1
     else
@@ -390,7 +474,17 @@ case "$cmd" in
       fi
       SUBDIR="$(dmeta "$D" subdir)"
       case "$S" in
-        spec-running)
+        spec-ready|spec-running)
+          if [ -f "$D/breakdown-running" ]; then
+            if has_breakdown "$D"; then
+              rm -f "$D/breakdown-running"; render_breakdown "$D"
+              [ -s "$D/draft-page.id" ] && "$DIR/notion.sh" page append "$(cat "$D/draft-page.id")" --md "$D/breakdown.md" >/dev/null 2>&1
+              announce "Ticket breakdown ready for \"$(jq -r .title "$D/spec.json")\", dearie — $(jq -r '.tickets|length' "$D/breakdown.json") tickets: $(jq -r '.tickets|map(.key + " " + .title)|join("; ")' "$D/breakdown.json"). $(jq -r .summary_spoken "$D/breakdown.json") It's on the draft page too."
+            elif [ "$("$DIR/claude-task.sh" state "breakdown:$(basename "$D")")" = "FAILED" ]; then
+              rm -f "$D/breakdown-running"; announce "The ticket breakdown for $(basename "$D") failed, dearie."
+            fi
+          fi
+          [ "$(st "$D")" = spec-ready ] && continue
           if spec_ready "$D"; then
             st "$D" spec-ready
             publish_draft "$D"
@@ -487,7 +581,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: dispatch.sh spec <repo> \"<request>\" [--subdir p] | show [id] | file <id> | implement <id> | go <id> | qa <id> [--watch] | status [id] | tick [--announce] | open <id> [spec|qa|mr] | close <id> | describe <id> <stage>" >&2
+    echo "usage: dispatch.sh spec <repo> \"<request>\" [--subdir p] | show [id] | breakdown [id] | file <id> | implement <id> | go <id> | qa <id> [--watch] | status [id] | tick [--announce] | open <id> [spec|qa|mr] | close <id> | describe <id> <stage>" >&2
     exit 1
     ;;
 esac
