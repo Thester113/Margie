@@ -139,7 +139,7 @@ function isNegative(text: string): boolean {
 function isAffirmative(text: string): boolean {
   const t = text.trim().toLowerCase().replace(/[.!,]+$/, "");
   if (t.split(/\s+/).length > 6) return false;
-  return /^(yes|yep|yeah|yup|ok|okay|sure|confirm(ed)?|affirmative|go ahead|send it|do it|proceed|please do|that's right|correct)\b/.test(t);
+  return /^(yes|yep|yeah|yup|ok|okay|sure|confirm(ed)?|affirmative|approved?|go( ahead| for it)?|send( it| that)?|post( it)?|fire( away| it off)?|ship it|do it|file it|proceed|please do|that's right|correct|y)\b/.test(t);
 }
 
 /** The one tool the brain gets: run a shell command (guarded). */
@@ -165,12 +165,24 @@ let currentTurn: { conv?: string; speaker?: string; text?: string; public?: bool
  *  holding it again just asks him twice. Messages to other people always hold. */
 const SOLICIT_RE = /\b(say|type)\s+["“'‘]?(go|yes)["”'’]?\b|say the word/i;
 const TRIGGER_RE = /^(go|yes,?\s*go|go ahead|go for it|do it|file it|ship it|yes)[.!]*$/i;
+const norm = (x: string) => x.toLowerCase().replace(/[*_`"“”'‘’]/g, "").replace(/\s+/g, " ").trim();
+/** Two shapes of "already confirmed":
+ *  1. dispatch.sh go|file after Margie invited the word "go" (see above);
+ *  2. a Slack send / research post whose exact message text Margie quoted in her
+ *     previous reply, and Tom answered with a short yes — the read-back would only
+ *     repeat what he has just read. Anything else outward is held and read back. */
 function solicitedGo(cmd: string): boolean {
   if (currentTurn.speaker) return false;                            // only Tom
-  if (!/\bdispatch\.sh\s+(go|file)\b/.test(cmd)) return false;      // filing tickets only
-  if (!TRIGGER_RE.test((currentTurn.text || "").trim())) return false;
+  const said = (currentTurn.text || "").trim();
   const lastMargie = [...history].reverse().find((m) => m.role === "assistant" && !m.conv);
-  return !!lastMargie && SOLICIT_RE.test(lastMargie.content || "");
+  if (!lastMargie) return false;
+  if (/\bdispatch\.sh\s+(go|file)\b/.test(cmd)) return TRIGGER_RE.test(said) && SOLICIT_RE.test(lastMargie.content || "");
+  const m = cmd.match(/\bslack\.sh\s+(?:send|reply|dm)\s+"[^:"]+:\s*([\s\S]*)"\s*$/);
+  if (m && isAffirmative(said)) {
+    const body = norm(m[1]);
+    return body.length >= 12 && norm(lastMargie.content || "").includes(body);
+  }
+  return false;
 }
 
 /** In a colleague's conversation Margie may only touch shared project artefacts —
@@ -194,8 +206,11 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
   }
   if (!confirmed && outward(cmd) && solicitedGo(cmd)) {
     logBrain(`AUTO-CONFIRMED (Tom's solicited "${(currentTurn.text || "").trim()}"): ${cmd}`);
-    currentEmit?.("tool", `${cmd.slice(0, 100)}   (your "go" was the yes)`);
+    currentEmit?.("tool", `${cmd.slice(0, 100)}   (your "${(currentTurn.text || "").trim().slice(0, 20)}" was the yes)`);
     confirmed = true;
+  }
+  if (!confirmed && outward(cmd) && pending.some((p) => p.cmd === cmd)) {
+    return "ALREADY HELD — that exact command is waiting for Tom's yes. Do not call it again; tell Tom it's waiting and ask for his yes.";
   }
   if (!confirmed && outward(cmd)) {
     pending.push({ cmd, at: Date.now() });
