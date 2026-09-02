@@ -421,6 +421,17 @@ case "$cmd" in
     echo "Dispatch closed, dearie."
     ;;
 
+  replan)
+    # Re-run the planner on the current request (no new context) — e.g. after a launch failure.
+    need_d "${1:-latest}"
+    while [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "NONE" ]; do
+      "$DIR/claude-task.sh" detach "spec:$(basename "$D")" >/dev/null 2>&1 || break
+    done
+    rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+    REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
+    launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
+    st "$D" spec-running
+    echo "Re-planning '$(basename "$D")' from the current request, dearie — a few minutes." ;;
   __resolve)
     resolve_d "${1:-latest}" ;;
   describe)

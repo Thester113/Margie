@@ -181,13 +181,17 @@ function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise
     if (!extraEnv.MARGIE_DESCRIBE && !extraEnv.MARGIE_POLLER) currentEmit?.("tool", cmd.slice(0, 120));
     // Put Margie's scripts dir on PATH so bare names (messages.sh, slack.sh…)
     // resolve even when the model omits the full path.
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...process.env,
       ...extraEnv,
       MARGIE_HOME,
       MARGIE_ENGINE: ENGINE,
       PATH: `${SCRIPTS}:${process.env.PATH || ""}`,
     };
+    // Never let the Agent SDK's own markers reach her helpers: a `claude` launched
+    // with CLAUDE_AGENT_SDK_* set believes it is an SDK child and exits silently
+    // (this killed five planner runs before it was understood).
+    for (const k of Object.keys(env)) if (k.startsWith("CLAUDE_AGENT_SDK") || k === "CLAUDECODE" || k === "CLAUDE_CODE_ENTRYPOINT") delete env[k];
     const child = spawn("bash", ["-c", cmd], { env, cwd: HOME });
     let out = "";
     child.stdout.on("data", (d) => (out += d.toString()));
