@@ -70,8 +70,9 @@ evidence() {
   "$DIR/dispatch.sh" status 2>/dev/null
   echo; echo "## Agent messages handled since $SINCE"
   grep -h "CANCELLED\|Acknowledged\|FASTPATH" ~/.margie/brain.log 2>/dev/null | awk -v s="$SINCE" '$1 >= s' | grep -c . | sed 's/^/- acked\/handled: /'
-  echo; echo "## Recent notices"
-  grep -h "NOTICE:" ~/.margie/brain.log 2>/dev/null | awk -v s="$SINCE" '$1 >= s' | tail -8 | sed 's/^[^ ]* NOTICE: /- /'
+  echo; echo "## Live state now"
+  echo "- agent messages: $("$DIR/agent-messages.sh" check 2>/dev/null | grep . || echo "inbox empty")"
+  echo "- background tasks: $("$DIR/claude-task.sh" status 2>/dev/null | grep -c RUNNING) running"
 }
 
 compose() {
