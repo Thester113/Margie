@@ -162,8 +162,8 @@ case "$cmd" in
     [ -z "$P" ] && { echo "No pipeline on !$NUM yet, dearie." >&2; exit 1; }
     PLAYED=""; SKIPPED=""
     for DS in $(glab api "projects/:id/pipelines/$P/bridges" 2>/dev/null | jq -r '.[] | select(.name|test("review")) | .downstream_pipeline.id // empty'); do
-      for J in $(glab api "projects/:id/pipelines/$DS/jobs?per_page=50" 2>/dev/null | jq -r '.[] | select(.name|test(":request$")) | "\(.id):\(.name):\(.status)"'); do
-        jid="${J%%:*}"; rest="${J#*:}"; jname="${rest%%:*}"; jst="${rest##*:}"
+      for J in $(glab api "projects/:id/pipelines/$DS/jobs?per_page=50" 2>/dev/null | jq -r '.[] | select(.name|test(":request$")) | "\(.id)|\(.name)|\(.status)"'); do
+        jid="${J%%|*}"; rest="${J#*|}"; jname="${rest%%|*}"; jst="${rest##*|}"
         if [ "$jst" = manual ]; then glab api -X POST "projects/:id/jobs/$jid/play" >/dev/null 2>&1 && PLAYED="$PLAYED $jname"; else SKIPPED="$SKIPPED $jname($jst)"; fi
       done
     done

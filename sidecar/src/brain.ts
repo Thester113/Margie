@@ -525,6 +525,11 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
+- REVIEW BOTS & HUMAN/AGENT REVIEW: after the MR's final push, the repo's review
+  bots are asked once per commit (mr.sh request-review; tick does it). Their
+  threads and any reviewer's go into the session to address. If the process
+  notes name an agent reviewer, ask for their review via agent-messages.sh
+  (held) when the MR touches their area.
 - YOU DRIVE DEVELOPMENT AFTER "GO": the pipeline runs itself — the session
   codes and signals, QA runs automatically, the MR is opened by the session,
   you self-review it, watch the pipeline, and send review comments or failures
@@ -902,6 +907,19 @@ function extractImages(text: string): { text: string; images: Array<{ path: stri
   return { text: out, images };
 }
 
+/** Team process notes Tom keeps in ~/.margie/process/<repo>.md — how MRs, reviews
+ *  and merges work in each repo. Company-specific by design, so they live in
+ *  ~/.margie, never in this codebase. */
+function processNotes(): string {
+  try {
+    const dir = `${HOME}/.margie/process`;
+    const files = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+    if (!files.length) return "";
+    return "\n\nTEAM PROCESS NOTES (how work moves in each repo; follow them and cite them when asked):\n" +
+      files.map((f) => `--- ${f.replace(/\.md$/, "")} ---\n${readFileSync(`${dir}/${f}`, "utf8").trim()}`).join("\n");
+  } catch { return ""; }
+}
+
 /** Public rooms: strip the private endearments so Tom is never "dearie"d in front of the team. */
 export function depersonalize(s: string): string {
   const W = "(?:dearie|my dear|love|pet)";
@@ -928,7 +946,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
   const scope = (conv ? `This turn is from Slack conversation ${conv}${speaker ? `, spoken by ${speaker}` : ""}. Only what's in this transcript happened there; do not bring in other groups' messages or look them up. ` : "")
     + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns()
     + (pub ? " PUBLIC ROOM: colleagues read this reply. Write for the room — no pet names, no aside to Tom, no asking Tom what to do here. If a decision is Tom's, say you'll check with him and stop; take the question to his DM (slack.sh dm) instead." : "");
-  const sys = `${MARGIE_SYSTEM_PROMPT}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
+  const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
   try {
     const q = query({

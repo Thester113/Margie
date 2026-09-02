@@ -173,6 +173,10 @@ render_breakdown() { # render_breakdown <dir>
       (if (.notes // "") != "" then "\nNotes: " + .notes else "" end)
     ) | join("\n\n"))' "$1/breakdown.json" > "$1/breakdown.md"
 }
+process_notes() { # process_notes <dir> — the team's written process for this repo, if Tom wrote one
+  local f="$HOME/.margie/process/$(basename "$(dmeta "$1" repo)").md"
+  [ -s "$f" ] && { printf '\n\nTEAM PROCESS FOR THIS REPO (follow it):\n'; cat "$f"; }
+}
 spec_text() { # spec_text <dir>  — spec.md plus the ticket breakdown when there is one
   cat "$1/spec.md"; if has_breakdown "$1"; then echo; [ -s "$1/breakdown.md" ] || render_breakdown "$1"; cat "$1/breakdown.md"
     echo; echo "Work the tickets in dependency order, ONE MR per ticket (branch <branch_prefix>/<child PT>-<slug>); the umbrella ticket stays In Progress until the last child merges."; fi
@@ -311,7 +315,7 @@ case "$cmd" in
     case "$(st "$D")" in spec-ready|spec-failed|spec-running) ;; *) echo "Already past planning ($(st "$D")), dearie — split the work in the ticket instead." >&2; exit 1 ;; esac
     [ -s "$D/spec.md" ] || render_md "$D"
     P="$(cat "$DIR/prompts/breakdown-planner.md")"
-    P="${P//'{{SPEC}}'/$(spec_text "$D")}"
+    P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"
     P="${P//'{{REQUEST}}'/$(cat "$D/request.txt")}"
     while [ "$("$DIR/claude-task.sh" state "breakdown:$(basename "$D")")" != "NONE" ]; do "$DIR/claude-task.sh" detach "breakdown:$(basename "$D")" >/dev/null 2>&1 || break; done
     rm -f "$D/breakdown.json" "$D/breakdown.md"; touch "$D/breakdown-running"
@@ -406,7 +410,7 @@ case "$cmd" in
     P="${P//'{{TICKET_URL}}'/$TURL}"
     P="${P//'{{BRANCH}}'/$BRANCH}"
     P="${P//'{{MR_FILE}}'/$D/mr.md}"
-    P="${P//'{{SPEC}}'/$(spec_text "$D")}"
+    P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"
     KOUT="$("$DIR/kickoff-claude.sh" "$REPO" --worktree "$BRANCH" ${SUBDIR:+--subdir "$SUBDIR"} "$P")" || exit 1
     echo "$KOUT" | tail -1
     WT="$HOME/.margie/worktrees/$(basename "$REPO")__$(printf '%s' "$BRANCH" | tr '/ ' '--')"
@@ -435,7 +439,7 @@ case "$cmd" in
     P="$(cat "$DIR/prompts/qa-verifier.md")"
     P="${P//'{{PT}}'/$PT}"
     P="${P//'{{TICKET_URL}}'/$TURL}"
-    P="${P//'{{SPEC}}'/$(spec_text "$D")}"
+    P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"
     if [ "$WATCH" = 1 ]; then
       "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} "$P" | tail -1
     else
@@ -588,7 +592,7 @@ case "$cmd" in
                 SHA="$(jq -r '.sha // ""' "$D/mr-check.json" 2>/dev/null)"; PSTAT="$(jq -r '.pipeline // "none"' "$D/mr-check.json" 2>/dev/null)"; PID="$(jq -r '.pipeline_id // ""' "$D/mr-check.json" 2>/dev/null)"
                 # self-review once per commit, at most 3 rounds
                 if [ -n "$SHA" ] && [ "$(cat "$D/review-sha" 2>/dev/null)" != "$SHA" ] && [ ! -f "$D/review-running" ] && [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -lt 3 ]; then
-                  P="$(cat "$DIR/prompts/mr-review.md")"; P="${P//'{{MR}}'/$IID}"; P="${P//'{{PT}}'/$PT}"; P="${P//'{{TARGET}}'/$(cfgd mr_target_branch main)}"; P="${P//'{{SPEC}}'/$(spec_text "$D")}"
+                  P="$(cat "$DIR/prompts/mr-review.md")"; P="${P//'{{MR}}'/$IID}"; P="${P//'{{PT}}'/$PT}"; P="${P//'{{TARGET}}'/$(cfgd mr_target_branch main)}"; P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"
                   SUBDIR="$(dmeta "$D" subdir)"; MODEL_OPT=(); M="$(cfg qa_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
                   rm -f "$D/review.json"
                   if "$DIR/claude-task.sh" start "$WT${SUBDIR:+/$SUBDIR}" "$P" --deny "Edit,Write,NotebookEdit" --no-subagents --schema "$DIR/schemas/review.schema.json" \

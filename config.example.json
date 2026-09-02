@@ -72,6 +72,7 @@
   "planner_effort": "medium",
   "qa_effort": "medium",
   "planner_subagents": false,
+  "_process": "Team process notes: write ~/.margie/process/<repo>.md (how MRs, review bots, agent reviewers and merges work in that repo). Injected into every Claude brain turn and into the implement/QA/review prompts. Company-specific content stays out of the codebase.",
   "_budgets": "Every headless Claude run gets --max-budget-usd: dispatch_budget_usd for planner/QA (default 4), task_budget_usd for other tasks (default 5). daily_budget_usd (optional) refuses new headless launches once usage.sh reports today's spend at or above it.",
   "dispatch_budget_usd": 4,
   "task_budget_usd": 5,
