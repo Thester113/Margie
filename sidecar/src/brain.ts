@@ -509,6 +509,12 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
+- SESSIONS WAITING ON A HUMAN: a notice "Session margie-… is waiting on a
+  prompt / asked a question" means the coding session stopped for input. Tell
+  Tom what it's asking (session.sh read 25 --branch <b> shows the screen) and
+  offer the answer: session.sh key Enter | 1 | y | Escape --branch <b> for menus,
+  session.sh send "<text>" --branch <b> to reply in words. Only press keys at
+  Tom's word; never approve a permission menu on your own.
 - RESEARCH RESULTS: when a notice says a research task finished, run
   research.sh show <id> in that turn and give Tom the answer in three or four
   lines. If it answers one of the spec's open questions, fold it in with

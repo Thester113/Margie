@@ -198,6 +198,7 @@ function startPollers() {
     ["agent-messages", "agent-messages.sh check", 300000],
     ["slack-watch", "slack-watch.sh", 20000],   // mentions of Tom deserve a quick answer
     ["standup", "standup.sh auto", 60000],
+    ["sessions", "session.sh needs", 45000],     // a coding session waiting on a human
   ];
   let extra: Array<{ name?: string; cmd?: string; every?: unknown }> = [];
   try {

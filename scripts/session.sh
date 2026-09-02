@@ -7,6 +7,11 @@
 #   session.sh read  [lines] [--branch <b>]   capture what the session is showing
 #   session.sh send  "<text>" [--branch <b>]  inject a prompt + Enter (steer it)
 #   session.sh list                           list the live margie sessions
+#   session.sh needs                          one line per session waiting on a human
+#                                             (permission menu, trust check, y/n, or a
+#                                             question idle > 3 min); silent otherwise —
+#                                             the daemon polls this and Margie tells Tom
+#   session.sh key <key…> [--branch <b>]      press keys: Enter, Escape, y, 1, Down …
 #
 # Default target is the most recently launched session (~/.margie/last-session),
 # falling back to the newest live margie* session. --branch <b> targets a
@@ -61,6 +66,35 @@ case "$cmd" in
     "$TMUX_BIN" capture-pane -t "$SESSION" -p -S "-$LINES" 2>/dev/null \
       | sed 's/[[:space:]]*$//' | grep -v '^$' | tail -c 6000
     ;;
+  needs)
+    ST="$HOME/.margie/session-needs"; mkdir -p "$ST"; NOW="$(date +%s)"
+    for S in $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' || true); do
+      PANE="$("$TMUX_BIN" capture-pane -t "$S" -p -S -40 2>/dev/null | sed 's/[[:space:]]*$//' | grep -v '^$')"
+      [ -z "$PANE" ] && continue
+      TAIL="$(printf '%s\n' "$PANE" | tail -12)"
+      H="$(printf '%s' "$PANE" | shasum | cut -c1-12)"
+      # idle tracking: when did this exact screen first appear?
+      PREV="$(cat "$ST/$S.hash" 2>/dev/null || true)"; SINCE="$(cat "$ST/$S.since" 2>/dev/null || echo "$NOW")"
+      if [ "$PREV" != "$H" ]; then echo "$H" > "$ST/$S.hash"; echo "$NOW" > "$ST/$S.since"; SINCE="$NOW"; fi
+      IDLE=$(( NOW - SINCE ))
+      WHY=""
+      if printf '%s' "$TAIL" | grep -qE 'Enter to confirm|Esc to cancel|Do you want to|Yes, I trust|Yes, and don.t ask|\(y/n\)|\[Y/n\]|\[y/N\]|No, and tell Claude|Allow (once|always)|Press Enter|❯ *1\.|^ *1\. Yes'; then WHY="waiting on a prompt"
+      elif [ "$IDLE" -ge 180 ] && printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | tail -1 | grep -q '?$'; then WHY="asked a question and has been idle $((IDLE/60)) min"
+      fi
+      [ -z "$WHY" ] && continue
+      [ "$(cat "$ST/$S.told" 2>/dev/null || true)" = "$H" ] && continue   # already announced this screen
+      echo "$H" > "$ST/$S.told"
+      SNIP="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | tail -3 | tr '\n' ' ' | cut -c1-220)"
+      echo "Session $S is $WHY: $SNIP"
+    done
+    ;;
+  key | keys)
+    SESSION="$(resolve_session)"
+    [ $# -eq 0 ] && { echo "usage: session.sh key <Enter|Escape|y|1|Down…> [--branch <b>]" >&2; exit 1; }
+    "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null || { echo "No running session, dearie." >&2; exit 1; }
+    "$TMUX_BIN" send-keys -t "$SESSION" "$@"
+    echo "Pressed $* in session $SESSION, dearie."
+    ;;
   send | inject | steer)
     SESSION="$(resolve_session)"
     TEXT="$*"
@@ -74,7 +108,7 @@ case "$cmd" in
     echo "Sent into session $SESSION, dearie."
     ;;
   *)
-    echo "usage: session.sh read [lines] | send \"<text>\" | list [--branch <b>]" >&2
+    echo "usage: session.sh read [lines] | send \"<text>\" | key <keys> | needs | list [--branch <b>]" >&2
     exit 1
     ;;
 esac
