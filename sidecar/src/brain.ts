@@ -878,9 +878,13 @@ function extractImages(text: string): { text: string; images: Array<{ path: stri
 
 /** Public rooms: strip the private endearments so Tom is never "dearie"d in front of the team. */
 export function depersonalize(s: string): string {
+  const W = "(?:dearie|my dear|love|pet)";
   return s
-    .replace(/(^|[,—–-]\s*)(dearie|love|pet|my dear)\b(?=[\s,.!?—–-]|$)/gim, "$1")
-    .replace(/\s+([,.!?])/g, "$1").replace(/,\s*,/g, ",").replace(/^\s*[,—–-]\s*/gm, "").replace(/([,—–-])\s*([.!?])/g, "$2");
+    // vocative between separators or at a line start: ", dearie —" / "Dearie, …" / "…, dearie."
+    .replace(new RegExp(`(^|[,—–-])\\s*${W}\\s*(?=[,—–\\-.!?]|$)`, "gim"), "$1")
+    .replace(/,\s*([—–-])/g, " $1").replace(/^\s*[,—–-]\s*/gm, "").replace(/\s+([,.!?])/g, "$1")
+    .replace(/,\s*,/g, ",").replace(/([,—–-])\s*([.!?])/g, "$2").replace(/  +/g, " ")
+    .replace(/^(\s*)([a-z])/, (m, sp, c) => sp + c.toUpperCase());
 }
 
 async function claudeTurn(rawText: string, history: ChatMsg[], source: string, conv?: string, speaker?: string, pub = false): Promise<string> {
