@@ -549,10 +549,14 @@ NEVER CLAIM SUCCESS THE TOOL DIDN'T REPORT. If a tool result contains
 "Couldn't", "No such", "usage:", "error", "failed" or "DENIED", say exactly that
 in one sentence and what you'd need — never "done", "launched" or "updated".
 
-CRITICAL — your replies are spoken aloud, so be extremely brief. Default to ONE
-short sentence. Only go longer if Tom explicitly asks for detail. Never read
-lists aloud — give a count or the top item ("You have four sessions open, dear;
-the newest is the Margie refactor"). No markdown, no bullet lists, no code.`;
+CRITICAL — brevity. A "CONTEXT NOW" note tells you the reply channel each turn.
+VOICE replies are spoken aloud: ONE short sentence by default, never read lists
+aloud (give a count or the top item), no markdown, no bullets, no code.
+TERMINAL and SLACK replies may use line breaks and short • bullets when Tom asks
+for a breakdown or list; still no headings, tables or code fences, and still
+brief — he can open the full document. When Tom refers to "the spec", "the
+plan", "the SMS assistant" while a dispatch is in flight, he means that
+dispatch (see CONTEXT NOW) — not your messages.sh helper and not an old page.`;
 
 /**
  * Deterministic fast-path for "review PR/MR N" — the one command grok keeps doing
@@ -598,6 +602,44 @@ function runReviewScript(pr: string, repo: string): Promise<string> {
   });
 }
 
+/** Terminal/Slack replies keep their shape: trim, drop headings/fences, keep lists and line breaks. */
+function forText(s: string): string {
+  let t = String(s || "").trim();
+  t = t.replace(/```[a-z]*\n?/g, "");                 // fences (keep the code text)
+  t = t.replace(/^\s*#{1,6}\s*/gm, "");               // headings → plain lines
+  t = t.replace(/^\s*[-*]\s+/gm, "• ");               // uniform bullets
+  t = t.replace(/\*\*([^*]+)\*\*/g, "$1");           // bold markers
+  t = t.replace(/\n{3,}/g, "\n\n").trim();
+  return t || "Done, dear.";
+}
+
+/** What's in flight right now — injected into every turn so "the SMS spec" or
+ *  "that ticket" resolves to the actual dispatch instead of a guess. Cheap:
+ *  reads ~/.margie/dispatch state files, no shelling out. */
+function liveContext(source: string): string {
+  const lines: string[] = [];
+  try {
+    const base = `${HOME}/.margie/dispatch`;
+    const dirs = readdirSync(base).filter((n) => n.startsWith("d-")).sort().reverse().slice(0, 6);
+    for (const n of dirs) {
+      const d = `${base}/${n}`;
+      let state = ""; try { state = readFileSync(`${d}/state`, "utf8").trim(); } catch { /* none */ }
+      if (!state || state === "closed") continue;
+      let title = ""; try { title = JSON.parse(readFileSync(`${d}/spec.json`, "utf8")).title || ""; } catch { /* not yet */ }
+      if (!title) { try { title = readFileSync(`${d}/request.txt`, "utf8").split("\n")[0].slice(0, 80); } catch { /* ignore */ } }
+      let pt = ""; try { pt = JSON.parse(readFileSync(`${d}/ticket.json`, "utf8")).pt || ""; } catch { /* unfiled */ }
+      let draft = ""; try { draft = readFileSync(`${d}/draft-page.url`, "utf8").trim(); } catch { /* none */ }
+      lines.push(`- ${pt ? pt + " " : ""}"${title}" — ${state}${draft ? ` — draft spec in Notion: ${draft}` : ""} (dispatch id ${n})`);
+    }
+  } catch { /* no dispatch dir */ }
+  const where = source === "app" ? "VOICE (spoken aloud: no lists, no line breaks, one or two sentences)"
+              : source === "slack" ? "SLACK DM (short; line breaks and • bullets fine; no markdown headings)"
+              : "TERMINAL (line breaks and short • bullet lists are fine when asked for structure; no headings, tables or code fences)";
+  return `CONTEXT NOW — reply channel: ${where}.\n` +
+    (lines.length ? `Work in flight (when Tom says "the spec", "the plan", "that ticket", this is what he means):\n${lines.join("\n")}` : "No dispatches in flight.") +
+    `\nDate: ${new Date().toISOString().slice(0, 10)}.`;
+}
+
 /** Make a reply safe/pleasant to speak: strip markdown, collapse whitespace. */
 function forSpeech(s: string): string {
   let t = String(s || "").trim();
@@ -617,8 +659,9 @@ function forSpeech(s: string): string {
  * clean {user, assistant} pair to the persistent `history`, so context isn't
  * blown out by intermediate bash I/O and many real turns survive the trim.
  */
-async function handleTurn(text: string, history: ChatMsg[]): Promise<string> {
+async function handleTurn(text: string, history: ChatMsg[], source = "app"): Promise<string> {
   const work: ChatMsg[] = history.slice();
+  work.push({ role: "system", content: liveContext(source) });
   work.push({ role: "user", content: text });
   let finalText: string | null = null;
 
@@ -660,7 +703,7 @@ async function handleTurn(text: string, history: ChatMsg[]): Promise<string> {
     if (!finalText) finalText = "I looked into that, dear, but it needs a proper dig — shall I open a session for it?";
   }
 
-  const spoken = forSpeech(finalText);
+  const spoken = source === "app" ? forSpeech(finalText) : forText(finalText);
   // Commit only the clean turn to persistent history (drop the tool churn).
   history.push({ role: "user", content: text });
   history.push({ role: "assistant", content: spoken });
@@ -713,7 +756,8 @@ async function drain() {
       const held = pending;
       pending = null;
       const out = await runBash(held.cmd, true);
-      const spoken = forSpeech(out.split("\n").filter(Boolean).pop() || "Done, dear.");
+      const last = out.split("\n").filter(Boolean).pop() || "Done, dear.";
+      const spoken = (turn.source || "app") === "app" ? forSpeech(last) : forText(last);
       history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
       trimHistory();
       logBrain(`MARGIE[${id}] (${Date.now() - started}ms, CONFIRMED): ${spoken}`);
@@ -747,7 +791,7 @@ async function drain() {
     let out: string;
     try {
       out = await Promise.race([
-        handleTurn(text, history),
+        handleTurn(text, history, turn.source || "app"),
         new Promise<string>((_, rej) => setTimeout(() => rej(new Error("turn-watchdog")), 150000)),
       ]);
     } catch {
