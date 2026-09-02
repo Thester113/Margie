@@ -104,6 +104,15 @@
   planner/QA default to `planner_model`/`qa_model` (sonnet) at `medium`
   effort, and a re-plan revises `prev-spec.json` instead of re-exploring.
   `usage.sh today|week` / `/usage` in the CLI is the spend report.
+- **After "go" the pipeline drives itself** (`dispatch.sh tick`, every
+  minute): the coding session prints `MARGIE_READY_FOR_QA` → QA runs headless
+  → pass: the session is told to open the MR; fail: findings go back into the
+  session. Once the MR exists: headless self-review per commit (≤3 rounds,
+  `prompts/mr-review.md`), pipeline and review threads watched (`mr.sh check`),
+  failures/comments sent into the session, "ready to merge" announced once per
+  commit. Merging is Tom's word: `dispatch.sh merge` → `mr.sh merge` (OUTWARD;
+  a solicited "merge" confirms). `session.sh needs` (poller) reports sessions
+  stuck on prompts, idle questions, and endings.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on a ≤6-word affirmative within 3 minutes; anything else
