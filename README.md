@@ -116,6 +116,14 @@ npm run tauri dev
 
 No key → she falls back to the system voice, so nothing breaks.
 
+## Standup
+
+Each weekday, when the standup bot posts *"Tom — reply in :thread:"* in the
+standup channel, Margie drafts Tom's answers from evidence (his commits across
+`repos_dir`, MRs, tickets, dispatches), posts them **in that thread** as
+@Margie and DMs him what went out (`standup_mode`: `post` | `draft` | `off`;
+`standup.sh draft|edit|show|post` by hand).
+
 ## Always on
 
 ```bash
