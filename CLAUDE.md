@@ -25,9 +25,9 @@
   (`brain_backend: claude`, `brain_claude_model`, currently Fable 5.1) — no
   API key. Both share the same history, persona and the single guarded
   `bash` tool (an in-process SDK MCP server; built-in Claude Code tools are
-  disabled and no project settings are loaded). Historically the brain ran on the xAI chat API with one guarded
-  `bash` tool** — not the Claude Agent SDK and not `bypassPermissions` as
-  README/AGENTS.md still say. Safety guards (`DENY` regexes: no `git push/
+  disabled and no project settings are loaded). Not `bypassPermissions` in
+  the sense README once described — the SDK runs with it only because the
+  sidecar's own gates are the permission system. Safety guards (`DENY` regexes: no `git push/
   commit`, no `gh pr review/merge`, no `rm`, no `sudo`) are enforced in the
   sidecar itself. Keep them; extend, don't loosen.
 - **Margie is a dispatcher, not the engineer.** Real coding work happens in
