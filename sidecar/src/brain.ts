@@ -119,6 +119,7 @@ const OUTWARD: RegExp[] = [
   /\bmr\.sh\s+(create|update)\b/,
   /\bstandup\.sh\s+post\b/,
   /\bresearch\.sh\s+post\b/,
+  /\bdispatch\.sh\s+merge\b/, /\bmr\.sh\s+merge\b/,
 ];
 const PENDING_TTL_MS = 3 * 60 * 1000;
 // Several commands can be held in one turn (e.g. two DMs); one "yes" releases
@@ -163,8 +164,8 @@ let currentTurn: { conv?: string; speaker?: string; text?: string; public?: bool
 /** A solicited "go": Margie's previous reply invited exactly this word, and Tom
  *  gave it. For internal filing (dispatch.sh go|file) that IS the confirmation —
  *  holding it again just asks him twice. Messages to other people always hold. */
-const SOLICIT_RE = /\b(say|type)\s+["“'‘]?(go|yes)["”'’]?\b|say the word/i;
-const TRIGGER_RE = /^(go|yes,?\s*go|go ahead|go for it|do it|file it|ship it|yes)[.!]*$/i;
+const SOLICIT_RE = /\b(say|type)\s+["“'‘]?(go|yes|merge)["”'’]?\b|say the word/i;
+const TRIGGER_RE = /^(go|yes,?\s*go|go ahead|go for it|do it|file it|ship it|yes|merge( it)?|yes,?\s*merge)[.!]*$/i;
 const norm = (x: string) => x.toLowerCase().replace(/[*_`"“”'‘’]/g, "").replace(/\s+/g, " ").trim();
 /** Two shapes of "already confirmed":
  *  1. dispatch.sh go|file after Margie invited the word "go" (see above);
@@ -176,7 +177,7 @@ function solicitedGo(cmd: string): boolean {
   const said = (currentTurn.text || "").trim();
   const lastMargie = [...history].reverse().find((m) => m.role === "assistant" && !m.conv);
   if (!lastMargie) return false;
-  if (/\bdispatch\.sh\s+(go|file)\b/.test(cmd)) return TRIGGER_RE.test(said) && SOLICIT_RE.test(lastMargie.content || "");
+  if (/\bdispatch\.sh\s+(go|file|merge)\b/.test(cmd)) return TRIGGER_RE.test(said) && SOLICIT_RE.test(lastMargie.content || "");
   const m = cmd.match(/\bslack\.sh\s+(?:send|reply|dm)\s+"[^:"]+:\s*([\s\S]*)"\s*$/);
   if (m && isAffirmative(said)) {
     const body = norm(m[1]);
@@ -524,6 +525,16 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
+- YOU DRIVE DEVELOPMENT AFTER "GO": the pipeline runs itself — the session
+  codes and signals, QA runs automatically, the MR is opened by the session,
+  you self-review it, watch the pipeline, and send review comments or failures
+  back into the session; every step arrives as a notice. Your job on each
+  notice: relay it in one line and name any blocker that needs Tom (a handset
+  test, a product decision, a review he must give) as "on you: …". Never let a
+  dispatch sit: if dispatch.sh status shows a stage with nothing running, act
+  (dispatch.sh qa <id>, session.sh read/send, dispatch.sh tick). Merging is
+  Tom's word: when the notice says "ready to merge", tell him and say "say
+  merge"; his "merge" runs dispatch.sh merge <id>.
 - STATUS OF DISPATCHED WORK: nothing is "done", "complete" or "finished" until
   its MR is merged. Before that say "in progress — tests green locally" or
   "MR open, awaiting review". Never announce completion to colleagues yourself;

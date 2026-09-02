@@ -6,6 +6,8 @@
 #                                          [held] push the branch, open the MR, link the ticket
 #   mr.sh update <PT|!n> [--title <t>] [--description-file <f>]      [held]
 #   mr.sh view   <PT|!n> [repo]                read-only (forge.sh mr)
+#   mr.sh check  <PT|!n> [--repo r]            one JSON line: state, pipeline, unresolved, approvals, sha
+#   mr.sh merge  <PT|!n> [--repo r]            merge it (held; the session's branch is removed)
 #
 # The description is the repo's own MR template, fully filled, ending with the
 # one `/label ~"… Risk"` quick action the release job requires. For a dispatch
@@ -25,6 +27,7 @@ TARGET_DEFAULT="$(cfg mr_target_branch)"; TARGET_DEFAULT="${TARGET_DEFAULT:-main
 slug() { printf '%s' "$1" | tr 'A-Z/ ' 'a-z--' | tr -cd 'a-z0-9-'; }
 
 cmd="${1:-draft}"; shift || true
+BRANCH_OF_D=""
 REF=""; BRANCH=""; REPO_ARG=""; DRAFT=0; TARGET="$TARGET_DEFAULT"; TITLE_OPT=""; DESC_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -48,8 +51,9 @@ if [ -n "$BRANCH" ]; then
   WT="$HOME/.margie/worktrees/$(basename "$REPO")__$(printf '%s' "$BRANCH" | tr '/ ' '--')"
   [ -d "$WT" ] || WT="$REPO"
   STATE="$MRDIR/$(basename "$REPO")__$(slug "$BRANCH")"; mkdir -p "$STATE"
-elif [ -n "$REF" ] && [ "$cmd" != "view" ]; then
+elif [ -n "$REF" ] && [ "$cmd" != "view" ] && ! printf '%s' "$REF" | grep -qE '^!?[0-9]+$'; then
   D="$("$DIR/dispatch.sh" __resolve "$REF" 2>/dev/null || true)"
+  [ -n "$D" ] && BRANCH_OF_D="$(jq -r '.branch // empty' "$D/impl.json" 2>/dev/null)"
   [ -z "$D" ] && { p="$MDIR/$REF"; [ -e "$p" ] && D="$(cd "$p" && pwd -P)"; }
   [ -n "$D" ] && [ -s "$D/impl.json" ] || { echo "No implemented dispatch matches '$REF', dearie — give me a PT id or --branch <b>." >&2; exit 1; }
   WT="$(jq -r .worktree "$D/impl.json")"; BRANCH="$(jq -r .branch "$D/impl.json")"
@@ -148,9 +152,31 @@ case "$cmd" in
     [ -z "$NUM" ] && { echo "Which MR, dearie? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
     R="$(cd "${WT:-$PWD}" && glab mr update "$NUM" ${TITLE_OPT:+--title "$TITLE_OPT"} ${DESC_FILE:+--description "$(cat "$DESC_FILE")"} 2>&1 | tail -1)"
     echo "Updated MR !$NUM, dearie. $R" ;;
+  check|merge)
+    NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"
+    [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // (.url // "" | capture("(?<n>[0-9]+)$").n) // empty' "$D/mr.json" 2>/dev/null)"
+    if [ -z "$NUM" ] && [ -n "${BRANCH_OF_D:-}" ]; then NUM="$(cd "${WT:-$PWD}" && glab mr list --source-branch "$BRANCH_OF_D" -F json 2>/dev/null | jq -r '.[0].iid // empty')"; fi
+    [ -z "$NUM" ] && { echo "Which MR, dearie? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
+    cd "${WT:-${REPO_ARG:-$PWD}}" || exit 1
+    if [ "$cmd" = check ]; then
+      V="$(glab mr view "$NUM" -F json 2>/dev/null)"; [ -z "$V" ] && { echo "Couldn't read MR !$NUM, dearie." >&2; exit 1; }
+      UNRES="$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq '[.[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false))] | length' 2>/dev/null || echo 0)"
+      APPR="$(glab api "projects/:id/merge_requests/$NUM/approvals" 2>/dev/null | jq -c '{approved, approvals_left}' 2>/dev/null || echo '{}')"
+      PIPE="$(glab api "projects/:id/merge_requests/$NUM/pipelines" 2>/dev/null | jq -c '.[0] // {}' 2>/dev/null || echo '{}')"
+      printf '%s' "$V" | jq -c --argjson unres "${UNRES:-0}" --argjson appr "$APPR" --argjson pipe "$PIPE" \
+        '{iid, title, state, merge_status: (.detailed_merge_status // .merge_status), conflicts: (.has_conflicts // false), sha, url: .web_url,
+          pipeline: ($pipe.status // .head_pipeline.status // "none"), pipeline_id: ($pipe.id // null), pipeline_url: ($pipe.web_url // null),
+          unresolved: $unres, approved: ($appr.approved // true), approvals_left: ($appr.approvals_left // 0)}'
+    else
+      T="$(glab mr view "$NUM" -F json 2>/dev/null | jq -r '.title // "?"')"
+      desc "would merge MR !$NUM (\"$T\") into $TARGET and delete its source branch"
+      OUT="$(glab mr merge "$NUM" --yes --remove-source-branch 2>&1 | tail -2 | tr '\n' ' ')"
+      case "$OUT" in *rror*|*failed*|*cannot*|*Cannot*) echo "Merge of !$NUM didn't go through, dearie: $OUT"; exit 1 ;; esac
+      echo "Merged MR !$NUM (\"$T\") into $TARGET, dearie. $OUT"
+    fi ;;
   view)
     "$DIR/forge.sh" mr "$(printf '%s' "$REF" | grep -oE '[0-9]+$')" "${1:-}" ;;
   *)
-    echo "usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f] | view <!n> [repo]" >&2
+    echo "usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f] | view <!n> [repo] | check <PT|!n> | merge <PT|!n>" >&2
     exit 1 ;;
 esac

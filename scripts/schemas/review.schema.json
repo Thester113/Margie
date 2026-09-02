@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "required": ["verdict", "summary_spoken", "findings"],
+  "properties": {
+    "verdict": { "type": "string", "enum": ["approve", "request_changes"] },
+    "summary_spoken": { "type": "string", "description": "≤2 sentences for Tom" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "file", "issue", "fix"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["blocker", "major", "minor", "nit"] },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "issue": { "type": "string" },
+          "fix": { "type": "string" }
+        }
+      }
+    }
+  }
+}

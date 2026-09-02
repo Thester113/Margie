@@ -454,6 +454,7 @@ case "$cmd" in
         SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"
         tmux has-session -t "$SESS" 2>/dev/null && LINE="$LINE, session live" || LINE="$LINE, session ended"
       fi
+      [ -s "$D/mr.json" ] && LINE="$LINE, MR !$(jq -r .iid "$D/mr.json")$( [ -s "$D/mr-check.json" ] && echo " (pipeline $(jq -r .pipeline "$D/mr-check.json"), $(jq -r .unresolved "$D/mr-check.json") open threads$( [ -f "$D/review-approved" ] && echo ", review clean"))")"
       spec_ready "$D" && LINE="$LINE — $(jq -r .title "$D/spec.json" | cut -c1-60)"
       echo "$LINE"
     done
@@ -559,6 +560,63 @@ case "$cmd" in
                   && announce "QA passed on $PT — I've told the session to open the MR, dearie."
               fi
             fi
+            # ── MR lifecycle (after QA passed): detect the MR, self-review it, watch the
+            # pipeline, send fixes back to the session, report "ready to merge".
+            if [ "$S" = qa-pass ]; then
+              if [ ! -s "$D/mr.json" ]; then
+                IID="$(cd "$WT" 2>/dev/null && glab mr list --source-branch "$BR" -F json 2>/dev/null | jq -r '.[0].iid // empty')"
+                if [ -n "$IID" ]; then
+                  (cd "$WT" && glab mr view "$IID" -F json 2>/dev/null | jq -c '{iid, url: .web_url, title}') > "$D/mr.json"
+                  announce "MR !$IID is open for $PT ($(jq -r .url "$D/mr.json")). I'll review it and watch the pipeline, dearie."
+                fi
+              fi
+              if [ -s "$D/mr.json" ]; then
+                IID="$(jq -r .iid "$D/mr.json")"
+                CHK="$("$DIR/mr.sh" check "!$IID" --repo "$WT" 2>/dev/null || true)"; [ -n "$CHK" ] && printf '%s' "$CHK" > "$D/mr-check.json"
+                if [ -s "$D/mr-check.json" ]; then
+                SHA="$(jq -r '.sha // ""' "$D/mr-check.json" 2>/dev/null)"; PSTAT="$(jq -r '.pipeline // "none"' "$D/mr-check.json" 2>/dev/null)"; PID="$(jq -r '.pipeline_id // ""' "$D/mr-check.json" 2>/dev/null)"
+                # self-review once per commit, at most 3 rounds
+                if [ -n "$SHA" ] && [ "$(cat "$D/review-sha" 2>/dev/null)" != "$SHA" ] && [ ! -f "$D/review-running" ] && [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -lt 3 ]; then
+                  P="$(cat "$DIR/prompts/mr-review.md")"; P="${P//'{{MR}}'/$IID}"; P="${P//'{{PT}}'/$PT}"; P="${P//'{{TARGET}}'/$(cfgd mr_target_branch main)}"; P="${P//'{{SPEC}}'/$(spec_text "$D")}"
+                  SUBDIR="$(dmeta "$D" subdir)"; MODEL_OPT=(); M="$(cfg qa_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
+                  rm -f "$D/review.json"
+                  if "$DIR/claude-task.sh" start "$WT${SUBDIR:+/$SUBDIR}" "$P" --deny "Edit,Write,NotebookEdit" --no-subagents --schema "$DIR/schemas/review.schema.json" \
+                       --effort "$(cfgd qa_effort medium)" --budget "$(cfgd dispatch_budget_usd 4)" --tag "review:$(basename "$D")" --out "$D/review.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} >/dev/null 2>&1; then
+                    echo "$SHA" > "$D/review-sha"; touch "$D/review-running"; echo $(( $(cat "$D/review-rounds" 2>/dev/null || echo 0) + 1 )) > "$D/review-rounds"
+                  fi
+                fi
+                if [ -f "$D/review-running" ] && [ -s "$D/review.json" ] && jq -e .verdict "$D/review.json" >/dev/null 2>&1; then
+                  rm -f "$D/review-running"; RV="$(jq -r .verdict "$D/review.json")"
+                  if [ "$RV" = approve ]; then
+                    touch "$D/review-approved"; announce "Reviewed MR !$IID for $PT: $(jq -r .summary_spoken "$D/review.json")"
+                  else
+                    rm -f "$D/review-approved"
+                    FND="$(jq -r '[.findings[] | select(.severity=="blocker" or .severity=="major") | .severity + " " + .file + (if .line then ":" + (.line|tostring) else "" end) + " — " + .issue + " → " + .fix] | join(" | ")' "$D/review.json" | cut -c1-1800)"
+                    "$DIR/session.sh" send "Review of MR !$IID requested changes: $FND. Address each one, keep tests green, commit and push to the MR, then print MARGIE_MR_UPDATED." --branch "$BR" >/dev/null 2>&1
+                    announce "Review of MR !$IID for $PT asked for changes — I've sent them into the session to fix, dearie: $(jq -r .summary_spoken "$D/review.json")"
+                  fi
+                  cp "$D/review.json" "$D/review-$(date +%H%M).json"
+                elif [ -f "$D/review-running" ] && [ "$("$DIR/claude-task.sh" state "review:$(basename "$D")")" = FAILED ]; then
+                  rm -f "$D/review-running"; announce "My review run on MR !$IID failed to complete, dearie — I'll retry on the next commit."
+                fi
+                # pipeline failed -> once per pipeline, send it back
+                if [ "$PSTAT" = failed ] && [ -n "$PID" ] && [ "$(cat "$D/pipeline-failed" 2>/dev/null)" != "$PID" ]; then
+                  echo "$PID" > "$D/pipeline-failed"
+                  "$DIR/session.sh" send "The MR pipeline failed: $(jq -r .pipeline_url "$D/mr-check.json"). Read the failing job logs (glab ci view / glab api), fix the cause, commit and push, then print MARGIE_MR_UPDATED." --branch "$BR" >/dev/null 2>&1
+                  announce "Pipeline failed on MR !$IID for $PT — I've sent it back to the session to fix, dearie."
+                fi
+                # ready to merge -> tell Tom once per commit; merging is his word (dispatch.sh merge)
+                if [ "$PSTAT" = success ] && [ "$(jq -r .unresolved "$D/mr-check.json")" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ -f "$D/review-approved" ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
+                  echo "$SHA" > "$D/merge-ready"
+                  announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, no open threads, review clean. Say \"merge\" and I'll merge it."
+                elif [ "$(jq -r .unresolved "$D/mr-check.json")" != 0 ] && [ "$(cat "$D/threads-told" 2>/dev/null)" != "$SHA:$(jq -r .unresolved "$D/mr-check.json")" ]; then
+                  echo "$SHA:$(jq -r .unresolved "$D/mr-check.json")" > "$D/threads-told"
+                  "$DIR/session.sh" send "MR !$IID has $(jq -r .unresolved "$D/mr-check.json") unresolved review thread(s). Use the repo's /address-mr-reviews skill to address them, push, and resolve the threads you fixed; then print MARGIE_MR_UPDATED." --branch "$BR" >/dev/null 2>&1
+                  announce "MR !$IID for $PT has review comments — I've asked the session to address them, dearie."
+                fi
+                fi  # mr-check.json
+              fi
+            fi
             # Merge detection: MR for the branch merged -> ticket Done, dispatch closed.
             if [ -d "$WT" ]; then
               MRSTATE="$(cd "$WT" && glab mr view "$BR" -F json 2>/dev/null | jq -r '.state // empty')"
@@ -603,6 +661,16 @@ case "$cmd" in
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
     st "$D" spec-running
     echo "Re-planning '$(basename "$D")' from the current request, dearie — a few minutes." ;;
+  merge)
+    need_d "${1:-latest}"
+    [ -s "$D/mr.json" ] || { echo "No MR on this dispatch yet, dearie." >&2; exit 1; }
+    IID="$(jq -r .iid "$D/mr.json")"; WT="$(jq -r .worktree "$D/impl.json")"; PT="$(jq -r .pt "$D/ticket.json")"
+    CHK="$("$DIR/mr.sh" check "!$IID" --repo "$WT" 2>/dev/null || true)"
+    if [ -n "$CHK" ] && [ "${MARGIE_DESCRIBE:-0}" != 1 ]; then
+      P="$(jq -r .pipeline <<<"$CHK")"; U="$(jq -r .unresolved <<<"$CHK")"
+      { [ "$P" != success ] || [ "$U" != 0 ]; } && { echo "Not merging !$IID yet, dearie — pipeline is $P and $U review thread(s) are open."; exit 1; }
+    fi
+    "$DIR/mr.sh" merge "!$IID" --repo "$WT" ;;
   __resolve)
     resolve_d "${1:-latest}" ;;
   describe)
@@ -611,7 +679,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: dispatch.sh spec <repo> \"<request>\" [--subdir p] | show [id] | breakdown [id] | file <id> | implement <id> | go <id> | qa <id> [--watch] | status [id] | tick [--announce] | open <id> [spec|qa|mr] | close <id> | describe <id> <stage>" >&2
+    echo "usage: dispatch.sh spec <repo> \"<request>\" [--subdir p] | show [id] | breakdown [id] | file <id> | merge <id> | implement <id> | go <id> | qa <id> [--watch] | status [id] | tick [--announce] | open <id> [spec|qa|mr] | close <id> | describe <id> <stage>" >&2
     exit 1
     ;;
 esac
