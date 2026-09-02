@@ -158,7 +158,7 @@ const BASH_TOOL = {
 };
 
 /** The turn being handled right now (turns are serialised through the queue). */
-let currentTurn: { conv?: string; speaker?: string; text?: string } = {};
+let currentTurn: { conv?: string; speaker?: string; text?: string; public?: boolean } = {};
 
 /** A solicited "go": Margie's previous reply invited exactly this word, and Tom
  *  gave it. For internal filing (dispatch.sh go|file) that IS the confirmation —
@@ -509,6 +509,10 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
+- STATUS OF DISPATCHED WORK: nothing is "done", "complete" or "finished" until
+  its MR is merged. Before that say "in progress — tests green locally" or
+  "MR open, awaiting review". Never announce completion to colleagues yourself;
+  Tom does that, or the merge does.
 - SESSIONS WAITING ON A HUMAN: a notice "Session margie-… is waiting on a
   prompt / asked a question" means the coding session stopped for input. Tell
   Tom what it's asking (session.sh read 25 --branch <b> shows the screen) and
@@ -872,7 +876,14 @@ function extractImages(text: string): { text: string; images: Array<{ path: stri
   return { text: out, images };
 }
 
-async function claudeTurn(rawText: string, history: ChatMsg[], source: string, conv?: string, speaker?: string): Promise<string> {
+/** Public rooms: strip the private endearments so Tom is never "dearie"d in front of the team. */
+export function depersonalize(s: string): string {
+  return s
+    .replace(/(^|[,—–-]\s*)(dearie|love|pet|my dear)\b(?=[\s,.!?—–-]|$)/gim, "$1")
+    .replace(/\s+([,.!?])/g, "$1").replace(/,\s*,/g, ",").replace(/^\s*[,—–-]\s*/gm, "").replace(/([,—–-])\s*([.!?])/g, "$2");
+}
+
+async function claudeTurn(rawText: string, history: ChatMsg[], source: string, conv?: string, speaker?: string, pub = false): Promise<string> {
   const { text, images } = extractImages(rawText);
   if (images.length) logBrain(`IMAGES attached: ${images.map((i) => i.path).join(", ")}`);
   // With images the prompt is one user message with content blocks (streaming-input form).
@@ -885,7 +896,8 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
       })()
     : text;
   const scope = (conv ? `This turn is from Slack conversation ${conv}${speaker ? `, spoken by ${speaker}` : ""}. Only what's in this transcript happened there; do not bring in other groups' messages or look them up. ` : "")
-    + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns();
+    + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns()
+    + (pub ? " PUBLIC ROOM: colleagues read this reply. Write for the room — no pet names, no aside to Tom, no asking Tom what to do here. If a decision is Tom's, say you'll check with him and stop; take the question to his DM (slack.sh dm) instead." : "");
   const sys = `${MARGIE_SYSTEM_PROMPT}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
   try {
@@ -927,11 +939,12 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
     // Claude unavailable (usage cap, outage): fall back to the fast brain so she keeps working.
     if (XAI_API_KEY) {
       logBrain("CLAUDE unavailable — falling back to grok for this turn");
-      return xaiTurn(text, history, source, conv, speaker);
+      return xaiTurn(text, history, source, conv, speaker, pub);
     }
     finalText = "Sorry dearie, my brain hit a snag reaching Claude.";
   }
-  const shaped = neutralize(source === "app" ? forSpeech(finalText) : forText(finalText));
+  let shaped = neutralize(source === "app" ? forSpeech(finalText) : forText(finalText));
+  if (pub) shaped = depersonalize(shaped);
   history.push({ role: "user", content: text, conv, speaker });
   history.push({ role: "assistant", content: shaped, conv });
   return shaped;
@@ -943,14 +956,14 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
  * clean {user, assistant} pair to the persistent `history`, so context isn't
  * blown out by intermediate bash I/O and many real turns survive the trim.
  */
-async function handleTurn(text: string, history: ChatMsg[], source = "app", conv?: string, speaker?: string): Promise<string> {
-  currentTurn = { conv, speaker, text };
+async function handleTurn(text: string, history: ChatMsg[], source = "app", conv?: string, speaker?: string, pub = false): Promise<string> {
+  currentTurn = { conv, speaker, text, public: pub };
   const backend = source === "app" ? BRAIN_VOICE : BRAIN_TEXT;
-  if (backend === "claude") return claudeTurn(text, history, source, conv, speaker);
-  return xaiTurn(text, history, source, conv, speaker);
+  if (backend === "claude") return claudeTurn(text, history, source, conv, speaker, pub);
+  return xaiTurn(text, history, source, conv, speaker, pub);
 }
 
-async function xaiTurn(text: string, history: ChatMsg[], source = "app", conv?: string, speaker?: string): Promise<string> {
+async function xaiTurn(text: string, history: ChatMsg[], source = "app", conv?: string, speaker?: string, pub = false): Promise<string> {
   // Same isolation for the fast brain: only the history this turn may see.
   const work: ChatMsg[] = [history[0], ...visibleHistory(history, conv, speaker).map((m) => ({ role: m.role, content: m.role === "user" && m.speaker ? `[${speakerLabel(m)}] ${m.content}` : m.content }))];
   work.push({ role: "system", content: liveContext(source) });
@@ -995,7 +1008,8 @@ async function xaiTurn(text: string, history: ChatMsg[], source = "app", conv?: 
     if (!finalText) finalText = "I looked into that, dearie, but it needs a proper dig — shall I open a session for it?";
   }
 
-  const spoken = neutralize(source === "app" ? forSpeech(finalText) : forText(finalText));
+  let spoken = neutralize(source === "app" ? forSpeech(finalText) : forText(finalText));
+  if (pub) spoken = depersonalize(spoken);
   // Commit only the clean turn to persistent history (drop the tool churn).
   history.push({ role: "user", content: text, conv, speaker });
   history.push({ role: "assistant", content: spoken, conv });
@@ -1024,6 +1038,7 @@ export interface Turn {
   source?: string; // "stdio" | "app" | "cli" | "slack"
   conv?: string;    // Slack conversation id (isolation key)
   speaker?: string; // who spoke; undefined = the owner
+  public?: boolean; // the reply lands where colleagues can read it
   reply: (text: string) => void;
   emit?: (event: string, text: string) => void; // tool/held progress (daemon clients)
 }
@@ -1089,7 +1104,7 @@ async function drain() {
     let out: string;
     try {
       out = await Promise.race([
-        handleTurn(text, history, turn.source || "app", turn.conv, turn.speaker),
+        handleTurn(text, history, turn.source || "app", turn.conv, turn.speaker, !!turn.public),
         new Promise<string>((_, rej) => setTimeout(() => rej(new Error("turn-watchdog")), 150000)),
       ]);
     } catch {

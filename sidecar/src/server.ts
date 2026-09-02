@@ -168,6 +168,7 @@ function handleLine(client: Client, line: string) {
       source,
       conv: msg.conv,
       speaker: msg.speaker,
+      public: msg.public,
       reply: (text) => send(client.sock, { id: msg.id, text }),
       emit: (event, text) => send(client.sock, { id: msg.id, event: event as WireOut["event"], text }),
     });

@@ -279,6 +279,7 @@ async function main() {
     if (args[i] === "-q") continue;
     if (args[i] === "--conv") { extra.conv = args[++i]; continue; }
     if (args[i] === "--speaker") { extra.speaker = args[++i]; continue; }
+    if (args[i] === "--public") { extra.public = true; continue; }
     rest.push(args[i]);
   }
   const cmd = rest[0];
