@@ -116,6 +116,20 @@ npm run tauri dev
 
 No key → she falls back to the system voice, so nothing breaks.
 
+## Always on
+
+```bash
+npm run tauri build                    # release .app (one-time, and after UI/Rust changes)
+scripts/install-always-on.sh           # brain daemon under launchd + app opened at login
+scripts/install-always-on.sh status    # what's running; `uninstall` reverses it
+```
+
+The brain daemon (`ai.margie.brain`) starts at login and restarts on crash, so
+her pollers — Slack watcher, agent messages, dispatch/task notices — run even
+with the app closed. The app (`ai.margie.app`) is opened by a second launchd
+agent (no Login-Item/AppleScript prompts). Rebuilding `sidecar/dist` still
+makes the daemon drain and restart on its own.
+
 ## Project layout
 
 ```

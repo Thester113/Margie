@@ -73,6 +73,11 @@
   headless one), ends with the single `/label ~"… Risk"` line, opens the MR
   and links the ticket. `create|update` are OUTWARD-held; raw `glab mr
   create` stays DENIED so the brain can never bypass the read-back.
+- **Always-on**: `scripts/install-always-on.sh` owns the two launchd agents
+  (`ai.margie.brain` runs `node dist/index.js --daemon` in the foreground via
+  `MARGIE_DAEMON_CHILD=1`; `ai.margie.app` opens /Applications/Margie.app).
+  Don't use AppleScript Login Items — they trigger macOS Automation prompts
+  that hang non-interactive shells.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on a ≤6-word affirmative within 3 minutes; anything else

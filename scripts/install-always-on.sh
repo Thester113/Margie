@@ -4,14 +4,14 @@
 #   1. Brain daemon under launchd (starts at login, restarts on crash, survives
 #      the app and every terminal closing). Pollers (Slack watcher, agent
 #      messages, dispatch/task notices) therefore run 24/7.
-#   2. The overlay app as a Login Item — from the release build
-#      (`npm run tauri build`) installed into /Applications.
+#   2. The overlay app opened at login by a second launchd agent — from the
+#      release build (`npm run tauri build`) installed into /Applications.
 #
 #   install-always-on.sh            install/refresh both (app step skipped if no build)
 #   install-always-on.sh daemon     just the launchd agent
-#   install-always-on.sh app        just copy the release .app + add the Login Item
+#   install-always-on.sh app        just copy the release .app + start-at-login agent
 #   install-always-on.sh status     what's running
-#   install-always-on.sh uninstall  remove the launchd agent + Login Item
+#   install-always-on.sh uninstall  remove both launchd agents
 #
 # Paths are derived from this checkout; nothing is hardcoded.
 set -uo pipefail
@@ -68,19 +68,34 @@ EOF
   echo "launchctl bootstrap kept failing — try: launchctl bootstrap gui/$UID_ $PLIST" >&2; return 1
 }
 
+APP_LABEL="ai.margie.app"
+APP_PLIST="$HOME/Library/LaunchAgents/$APP_LABEL.plist"
+
 install_app() {
   [ -n "$APP_SRC" ] || { echo "No release build yet — run: npm run tauri build   (then re-run: install-always-on.sh app)"; return 1; }
+  pkill -f "Margie.app/Contents/MacOS" 2>/dev/null; sleep 1
   rm -rf "$APP_DST" && cp -R "$APP_SRC" "$APP_DST" && echo "Installed $APP_DST"
-  # Login Item (System Events). Replace any existing one.
-  osascript >/dev/null 2>&1 <<EOF
-tell application "System Events"
-  repeat with li in (every login item whose name is "Margie")
-    delete li
-  end repeat
-  make login item at end with properties {path:"$APP_DST", hidden:false}
-end tell
+  # Start-at-login via a launchd agent that simply opens the app: no Login Item,
+  # no AppleScript, so no macOS Automation permission prompt. RunAtLoad opens it
+  # now; launchd re-runs it at every login.
+  cat > "$APP_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$APP_LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/bin/open</string><string>-a</string><string>$APP_DST</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+</dict>
+</plist>
 EOF
-  echo "Margie.app added as a Login Item."
+  plutil -lint "$APP_PLIST" >/dev/null || { echo "app plist invalid" >&2; return 1; }
+  launchctl bootout "gui/$UID_/$APP_LABEL" >/dev/null 2>&1 || true
+  for _ in $(seq 1 20); do launchctl print "gui/$UID_/$APP_LABEL" >/dev/null 2>&1 || break; sleep 0.5; done
+  for _ in $(seq 1 5); do launchctl bootstrap "gui/$UID_" "$APP_PLIST" 2>/dev/null && break; sleep 1; done
+  echo "Margie.app opens at login ($APP_LABEL) — and is opening now."
 }
 
 status() {
@@ -89,13 +104,13 @@ status() {
   else echo "daemon: NOT under launchd (on-demand only)"; fi
   [ -d "$APP_DST" ] && echo "app: $APP_DST installed" || echo "app: not installed in /Applications"
   pgrep -fq "Margie.app/Contents/MacOS" && echo "app: running" || echo "app: not running"
-  osascript -e 'tell application "System Events" to get the name of every login item' 2>/dev/null | tr ',' '\n' | grep -q "Margie" && echo "login item: yes" || echo "login item: no"
+  launchctl print "gui/$UID_/$APP_LABEL" >/dev/null 2>&1 && echo "app at login: yes ($APP_LABEL)" || echo "app at login: no"
 }
 
 uninstall() {
   launchctl bootout "gui/$UID_/$LABEL" >/dev/null 2>&1; rm -f "$PLIST"
-  osascript -e 'tell application "System Events" to delete (every login item whose name is "Margie")' >/dev/null 2>&1
-  echo "Removed launchd agent and Login Item (app bundle left in /Applications)."
+  launchctl bootout "gui/$UID_/$APP_LABEL" >/dev/null 2>&1; rm -f "$APP_PLIST"
+  echo "Removed both launchd agents (app bundle left in /Applications)."
 }
 
 case "${1:-all}" in
