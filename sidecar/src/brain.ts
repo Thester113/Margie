@@ -696,8 +696,15 @@ async function claudeTurn(text: string, history: ChatMsg[], source: string): Pro
         model: BRAIN_CLAUDE_MODEL,
         tools: [],                                   // no built-in Claude Code tools
         mcpServers: { margie: margieTools },
+        strictMcpConfig: true,                       // ONLY our server — not Tom's claude.ai connectors, plugins, .mcp.json
         allowedTools: ["mcp__margie__bash"],
-        permissionMode: "bypassPermissions",         // our gate IS the permission system
+        // Belt and braces: anything that isn't our bash is denied at the permission
+        // layer too, so no connector/built-in can ever act outside the gate.
+        permissionMode: "default",
+        canUseTool: async (toolName: string) =>
+          toolName === "mcp__margie__bash"
+            ? { behavior: "allow" as const }
+            : { behavior: "deny" as const, message: `Tool ${toolName} is not available to Margie's brain — use the bash helper scripts (slack.sh, notion.sh, …), which carry Tom's confirmation gate.` },
         maxTurns: MAX_TOOL_STEPS,
         cwd: HOME,
         settingSources: [],                          // don't load CLAUDE.md / hooks / MCP from Tom's projects
