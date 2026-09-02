@@ -35,14 +35,18 @@ function wrap(text: string, indent = "  "): string {
   }
   return out.join("\n");
 }
-/** Light syntax colouring for the things that matter in her replies. */
+/** Light syntax colouring — ONE pass with a combined pattern, so an inserted
+ *  colour code (which contains digits) is never re-scanned by a later rule. */
 function flair(text: string): string {
-  return text
-    .replace(/"([^"\n]{1,160})"/g, `${ITAL}${LAV}“$1”${RESET}`)                 // quoted text
-    .replace(/\b(PT-\d+|!\d{2,6}|MR !?\d+|#\d{2,6})\b/g, `${MINT}$1${RESET}`)     // tickets & MRs
-    .replace(/(https?:\/\/[^\s)]+)/g, `${DIM}$1${RESET}`)                        // urls
-    .replace(/\b(yes\?|Yes\?)$/m, `${PEACH}$1${RESET}`)                            // the confirmation question
-    .replace(/\b(\d+(?:\.\d+)?%?)\b/g, `${PEACH}$1${RESET}`);                       // numbers
+  const re = /("[^"\n]{1,160}")|(https?:\/\/[^\s)]+)|(\b(?:PT-\d+|MR !?\d+|!\d{2,6}|#\d{2,6})\b)|(\b(?:yes|Yes)\?)|(\b\d+(?:[.,]\d+)?%?\b)/g;
+  return text.replace(re, (m, quote, url, ticket, yes, num) => {
+    if (quote) return `${ITAL}${LAV}${quote}${RESET}`;
+    if (url) return `${DIM}${url}${RESET}`;
+    if (ticket) return `${MINT}${ticket}${RESET}`;
+    if (yes) return `${PEACH}${yes}${RESET}`;
+    if (num) return `${PEACH}${num}${RESET}`;
+    return m;
+  });
 }
 function renderReply(text: string): string {
   const body = wrap(flair(text), "   ");

@@ -267,9 +267,9 @@ session directly. Run the dispatch pipeline (one command per turn):
 REFINEMENTS while planning ("also use X", "it's a monorepo", "actually target Y",
    "add this constraint") are NOT a new dispatch — NEVER run dispatch.sh spec
    again. Run: dispatch.sh amend latest "<the extra context, Tom's words>" — it
-   re-plans the same dispatch with the request extended. Nothing exists in Notion
-   until Tom says go: if he asks for the Notion link before that, say the spec is
-   local until he files it and offer dispatch.sh open to read it.
+   re-plans the same dispatch with the request extended. When a spec is ready it
+   is published as a DRAFT page in Notion (dispatch.sh show prints the link) — give
+   Tom that link when he asks to read the plan. The ticket itself is created on go.
 "Go / file it / do it" → dispatch.sh go   (it is HELD; read back what it says it
    will do and wait for Tom's yes. That one yes covers the Notion ticket, the
    test cases, the spec page and starting the Claude Code session.)

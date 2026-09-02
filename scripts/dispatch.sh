@@ -122,6 +122,22 @@ launch_planner() { # launch_planner <dispatch dir> <workdir> "<request text>"
       --tag "spec:$(basename "$D")" --out "$D/spec.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null
 }
 
+# Publish the finished spec as a read-only draft page under notion_drafts_parent
+# so Tom can read the plan in Notion before "go". Replaces any earlier draft.
+publish_draft() { # publish_draft <dispatch dir>
+  local d="$1" parent title old url
+  parent="$(cfg notion_drafts_parent)"; [ -z "$parent" ] && return 0
+  spec_ready "$d" || return 0
+  [ -s "$d/spec.md" ] || render_md "$d"
+  title="Draft — $(jq -r .title "$d/spec.json")"
+  old="$(cat "$d/draft-page.id" 2>/dev/null)"
+  url="$("$DIR/notion.sh" page create "$title" --md "$d/spec.md" --parent "$parent" 2>/dev/null | grep -oE 'https://[^ ]+' | head -1)"
+  [ -z "$url" ] && return 0
+  printf '%s' "$url" > "$d/draft-page.url"; printf '%s' "$url" | grep -oE '[0-9a-f]{32}' | tail -1 > "$d/draft-page.id"
+  [ -n "$old" ] && "$DIR/notion.sh" page archive "$old" >/dev/null 2>&1
+  return 0
+}
+
 spec_ready() { [ -s "$1/spec.json" ] && jq -e '.title and .goal and .acceptance_criteria and .test_cases' "$1/spec.json" >/dev/null 2>&1; }
 
 cmd="${1:-status}"; shift || true
@@ -186,6 +202,7 @@ case "$cmd" in
     done
     printf '\n\nADDENDUM (%s): %s' "$(date -u +%FT%TZ)" "$EXTRA" >> "$D/request.txt"
     rm -f "$D/spec.json" "$D/spec.md" "$D/body.md"
+    [ -s "$D/draft-page.id" ] && { "$DIR/notion.sh" page archive "$(cat "$D/draft-page.id")" >/dev/null 2>&1; rm -f "$D/draft-page.id" "$D/draft-page.url"; }
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
     st "$D" spec-running
@@ -201,6 +218,7 @@ case "$cmd" in
       esac
       exit 0
     fi
+    [ -s "$D/draft-page.url" ] || publish_draft "$D"
     jq -r '
       "Spec: " + .title + " (" + .estimate + ", " + .security.risk_label + ")",
       "Goal: " + .goal,
@@ -209,6 +227,7 @@ case "$cmd" in
       (if (.open_questions | length) > 0 then "Open questions: " + (.open_questions | join(" | ")) else "No open questions." end),
       "Say \"go\" to file the ticket and start Claude, dear."
     ' "$D/spec.json"
+    [ -s "$D/draft-page.url" ] && echo "Read the full draft in Notion: $(cat "$D/draft-page.url")"
     ;;
 
   file)
@@ -235,6 +254,8 @@ case "$cmd" in
     PT="$(jq -r .pt "$D/ticket.json")"; TURL="$(jq -r .url "$D/ticket.json")"; TID="$(jq -r .id "$D/ticket.json")"
     "$DIR/notion.sh" testcase add "$PT" --json "$D/testcases.json" | { read -r line1; echo "$line1"; cat > "$D/tcmap.json"; }
     DOCS="$("$DIR/notion.sh" page create "$PT — Spec & QA plan" --md "$D/spec.md" --parent "$TID")" && echo "$DOCS"
+    # The draft page is superseded by the ticket's own spec page.
+    [ -s "$D/draft-page.id" ] && "$DIR/notion.sh" page archive "$(cat "$D/draft-page.id")" >/dev/null 2>&1 && rm -f "$D/draft-page.id" "$D/draft-page.url"
     printf '%s' "$DOCS" | grep -oE 'https://[^ ]+' | head -1 > "$D/docs-page.url" || true
     ln -sfn "$D" "$MDIR/$PT"
     st "$D" filed
@@ -325,7 +346,8 @@ case "$cmd" in
         spec-running)
           if spec_ready "$D"; then
             st "$D" spec-ready
-            announce "The spec for \"$(jq -r .title "$D/spec.json")\" is ready, dear — $(jq '.acceptance_criteria|length' "$D/spec.json") criteria, $(jq '.test_cases|length' "$D/spec.json") tests, $(jq -r .security.risk_label "$D/spec.json")."
+            publish_draft "$D"
+            announce "The spec for \"$(jq -r .title "$D/spec.json")\" is ready, dear — $(jq '.acceptance_criteria|length' "$D/spec.json") criteria, $(jq '.test_cases|length' "$D/spec.json") tests, $(jq -r .security.risk_label "$D/spec.json").$( [ -s "$D/draft-page.url" ] && echo " The draft is in Notion." )"
           elif [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" = "FAILED" ]; then
             st "$D" spec-failed
             announce "The spec run for $(basename "$D") failed, dear."

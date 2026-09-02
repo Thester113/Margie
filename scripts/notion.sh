@@ -351,9 +351,9 @@ EOF2
         while [ $# -gt 0 ]; do case "$1" in --md) MD="${2:-}"; shift 2 ;; --parent) PARENT="${2:-}"; shift 2 ;; *) [ -z "$TITLE" ] && TITLE="$1" || TITLE="$TITLE $1"; shift ;; esac; done
         [ -z "$TITLE" ] || [ -z "$PARENT" ] && { echo "usage: notion.sh page create \"<title>\" --md <file> --parent <id|url>" >&2; exit 1; }
         desc "would create a page \"$TITLE\" under $(printf '%.24s' "$PARENT")…"
-        PPID="$(nid "$PARENT")"
+        PARENT_ID="$(nid "$PARENT")"
         CH="$(md_blocks "$MD")"
-        R="$(api2 POST /pages "$(jq -n --arg p "$PPID" --arg t "$TITLE" --argjson c "$CH" \
+        R="$(api2 POST /pages "$(jq -n --arg p "$PARENT_ID" --arg t "$TITLE" --argjson c "$CH" \
               '{parent:{page_id:$p}, properties:{title:{title:[{type:"text",text:{content:$t}}]}}, children: $c[0:100]}')")"
         fail_if_error "$R"
         PID="$(printf '%s' "$R" | jq -r .id)"
@@ -368,7 +368,12 @@ EOF2
         desc "would append notes to page $(printf '%.24s' "$TARGET")…"
         append_blocks "$(nid "$TARGET")" "$(md_blocks "$MD")"
         echo "Appended, dear." ;;
-      *) echo "usage: notion.sh page create \"<title>\" --md <file> --parent <id|url> | append <id|url> --md <file>" >&2; exit 1 ;;
+      archive)
+        [ -z "${1:-}" ] && { echo "usage: notion.sh page archive <id|url>" >&2; exit 1; }
+        desc "would archive Notion page $(printf '%.24s' "$1")…"
+        R="$(api2 PATCH "/pages/$(nid "$1")" '{"archived": true}')"; fail_if_error "$R"
+        echo "Archived, dear." ;;
+      *) echo "usage: notion.sh page create \"<title>\" --md <file> --parent <id|url> | append <id|url> --md <file> | archive <id|url>" >&2; exit 1 ;;
     esac ;;
   *) echo "usage: notion.sh whoami | search \"<q>\" | recent [n] | read <id|url> | dbs | query <db> [\"<text>\"] | create \"<title>: <body>\" [--parent <id>] | append <id|url> \"<text>\"" >&2; exit 1 ;;
 esac
