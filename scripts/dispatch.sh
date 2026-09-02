@@ -178,7 +178,18 @@ spec_text() { # spec_text <dir>  — spec.md plus the ticket breakdown when ther
     echo; echo "Work the tickets in dependency order, ONE MR per ticket (branch <branch_prefix>/<child PT>-<slug>); the umbrella ticket stays In Progress until the last child merges."; fi
 }
 
-spec_ready() { [ -s "$1/spec.json" ] && jq -e '.title and .goal and .acceptance_criteria and .test_cases' "$1/spec.json" >/dev/null 2>&1; }
+# Umbrella and child tickets move together through the lifecycle; spike tickets
+# (human verification work) are left where they are and named as blockers.
+status_all() { # status_all <dispatch dir> "<Status>"
+  local d="$1" stt="$2" pt
+  pt="$(jq -r '.pt // empty' "$d/ticket.json" 2>/dev/null)"; [ -n "$pt" ] && "$DIR/notion.sh" ticket status "$pt" "$stt" >/dev/null 2>&1
+  [ -s "$d/tickets.json" ] || return 0
+  for pt in $(jq -r --slurpfile b "$d/breakdown.json" '.[] | select(.key as $k | ($b[0].tickets[] | select(.key==$k) | .spike // false) | not) | .pt' "$d/tickets.json" 2>/dev/null); do
+    "$DIR/notion.sh" ticket status "$pt" "$stt" >/dev/null 2>&1
+  done
+}
+
+spec_ready() { [ -s "$1/spec.json" ] ] && jq -e '.title and .goal and .acceptance_criteria and .test_cases' "$1/spec.json" >/dev/null 2>&1; }
 
 cmd="${1:-status}"; shift || true
 
@@ -400,7 +411,7 @@ case "$cmd" in
     echo "$KOUT" | tail -1
     WT="$HOME/.margie/worktrees/$(basename "$REPO")__$(printf '%s' "$BRANCH" | tr '/ ' '--')"
     jq -n --arg branch "$BRANCH" --arg wt "$WT" '{branch:$branch, worktree:$wt}' > "$D/impl.json"
-    "$DIR/notion.sh" ticket status "$PT" "In Progress" >/dev/null && echo "$PT is In Progress."
+    status_all "$D" "In Progress" && echo "$PT is In Progress$( [ -s "$D/tickets.json" ] && echo " (and its $(jq length "$D/tickets.json") child tickets)")."
     st "$D" implementing
     ;;
 
@@ -517,10 +528,10 @@ case "$cmd" in
               "$DIR/notion.sh" page append "$(cat "$D/docs-page.url")" --md "$D/docs.md" >/dev/null 2>&1
             fi
             if [ "$V" = "pass" ]; then
-              "$DIR/notion.sh" ticket status "$PT" "In Review" >/dev/null 2>&1
+              status_all "$D" "In Review"
               st "$D" qa-pass
             else
-              "$DIR/notion.sh" ticket status "$PT" "Needs Attention" >/dev/null 2>&1
+              status_all "$D" "Needs Attention"
               st "$D" qa-fail
             fi
             announce "QA on $PT: $(jq -r .summary_spoken "$D/qa.json")"
@@ -622,7 +633,7 @@ case "$cmd" in
               MRSTATE="$(cd "$WT" && glab mr view "$BR" -F json 2>/dev/null | jq -r '.state // empty')"
               if [ "$MRSTATE" = "merged" ]; then
                 PT="$(jq -r .pt "$D/ticket.json")"
-                "$DIR/notion.sh" ticket status "$PT" "Done" >/dev/null 2>&1
+                status_all "$D" "Done"
                 st "$D" closed
                 announce "$PT merged and closed, dearie."
               fi
@@ -645,7 +656,7 @@ case "$cmd" in
     need_d "${1:-latest}"
     PT="$(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null)"
     desc "would cancel ${PT:-this dispatch}'s ticket and close the dispatch"
-    [ -n "$PT" ] && "$DIR/notion.sh" ticket status "$PT" "Canceled" | tail -1
+    [ -n "$PT" ] && { status_all "$D" "Canceled"; echo "$PT canceled$( [ -s "$D/tickets.json" ] && echo " with its child tickets")."; }
     st "$D" closed
     echo "Dispatch closed, dearie."
     ;;
