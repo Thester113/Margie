@@ -64,7 +64,10 @@ launch() { # launch <id> <dir> <prompt> [extra claude flags...]  (honors PERM/TA
   # often the launchd-managed brain daemon, and launchd kills a job's whole process
   # group when the job exits, which silently took every planner with each rebuild.
   rm -f "$TASKS/$id.pid"
-  ( cd "$dir" && LOGF="$TASKS/$id.log" PIDF="$TASKS/$id.pid" nohup perl -e 'use POSIX qw(setsid close); setsid(); POSIX::close($_) for 3..1023; exec @ARGV or die "exec: $!"' -- bash -c 'echo $$ > "$PIDF"; CLAUDE_BIN="$1"; PF="$2"; OUT="$3"; shift 3; "$CLAUDE_BIN" -p "$(cat "$PF")" --output-format json "$@" > "$OUT" 2>> "$LOGF" < /dev/null; echo "[claude exited $?]" >> "$LOGF"' _ "$CLAUDE_BIN" "$pf" "$TASKS/$id.json" "${PERM[@]:---dangerously-skip-permissions}" "$@" \
+  # NB: a simple command is backgrounded, never a `cd && …` list — bash runs an
+  # async list inside a helper shell that waits for nohup in the foreground and
+  # keeps the caller's stdout open for the life of the task.
+  ( cd "$dir" || exit 1; LOGF="$TASKS/$id.log" PIDF="$TASKS/$id.pid" nohup perl -e 'use POSIX qw(setsid close); setsid(); POSIX::close($_) for 3..1023; exec @ARGV or die "exec: $!"' -- bash -c 'echo $$ > "$PIDF"; CLAUDE_BIN="$1"; PF="$2"; OUT="$3"; shift 3; "$CLAUDE_BIN" -p "$(cat "$PF")" --output-format json "$@" > "$OUT" 2>> "$LOGF" < /dev/null; echo "[claude exited $?]" >> "$LOGF"' _ "$CLAUDE_BIN" "$pf" "$TASKS/$id.json" "${PERM[@]:---dangerously-skip-permissions}" "$@" \
       >> "$TASKS/$id.log" 2>&1 < /dev/null & )
   # The wrapper records its own pid (the exec chain may not preserve $!).
   local pid="" i; for i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TASKS/$id.pid" ] && { pid="$(cat "$TASKS/$id.pid")"; break; }; sleep 0.3; done
