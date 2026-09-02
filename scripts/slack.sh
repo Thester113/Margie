@@ -167,7 +167,14 @@ case "$cmd" in
     cid="$(resolve_target "$target")"
     [ -z "$cid" ] && { echo "Couldn't find '$target' on Slack, dear (bot must be a member of the channel)." >&2; exit 1; }
     RESP="$(api chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$text")"
-    if echo "$RESP" | ok; then echo "Sent to $target, dear$([ "$KIND" = bot ] && echo " (as the margie bot)").";
+    if echo "$RESP" | ok; then
+      echo "Sent to $target, dear$([ "$KIND" = bot ] && echo " (as the margie bot)")."
+      # cc the owner: a bot's DM with someone else is invisible to Tom, so he gets a copy.
+      OWNER_ID="$(jq -r '.slack_owner_id // empty' "$CFG" 2>/dev/null)"
+      if [ -n "$OWNER_ID" ] && [ "$cid" != "$(api conversations.list --get --data-urlencode "types=im" -d "limit=1000" | jq -r --arg u "$OWNER_ID" '.channels[]? | select(.user==$u) | .id' | head -1)" ] && [ "$(jq -r '.slack_cc_owner // "true"' "$CFG")" != "false" ]; then
+        api chat.postMessage --get --data-urlencode "channel=$OWNER_ID" --data-urlencode "text=📋 Copy of what I sent to *$target*:
+$text" >/dev/null 2>&1 || true
+      fi
     else echo "Send failed, dear: $(echo "$RESP" | jq -r '.error // "unknown"')"; exit 1; fi
     ;;
   *)
