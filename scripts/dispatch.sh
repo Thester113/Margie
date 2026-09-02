@@ -37,11 +37,12 @@ st() { # st <dir> [new-state]
 dmeta() { jq -r ".$2 // empty" "$1/d.json" 2>/dev/null; }
 resolve_d() { # id | PT-### | latest | fuzzy word -> dispatch dir (follows the PT symlink)
   local x="${1:-latest}" p m
-  [ "$x" = "latest" ] && { ls -td "$MDIR"/d-* 2>/dev/null | head -1; return; }
+  [ "$x" = "latest" ] && { ls -td "$MDIR"/d-* 2>/dev/null | grep -v -- '--' | head -1; return; }
   p="$MDIR/$x"
   [ -e "$p" ] && { cd "$p" 2>/dev/null && pwd -P; return; }
   # Fuzzy: newest dispatch whose id or spec title mentions the word ("healthz").
-  m="$(ls -td "$MDIR"/d-* 2>/dev/null | grep -i -- "$(printf '%s' "$x" | tr 'A-Z ' 'a-z-')" | head -1)"
+  m="$(ls -td "$MDIR"/d-* 2>/dev/null | grep -v -- '--' | grep -i -- "$(printf '%s' "$x" | tr 'A-Z ' 'a-z-')" | head -1)"
+  [ -z "$m" ] && m="$(ls -td "$MDIR"/d-*--* 2>/dev/null | grep -i -- "$(printf '%s' "$x" | tr 'A-Z ' 'a-z-')" | head -1)"
   [ -n "$m" ] && { echo "$m"; return; }
   for p in $(ls -td "$MDIR"/d-* 2>/dev/null); do
     jq -re --arg x "$x" '.title | ascii_downcase | contains($x | ascii_downcase)' "$p/spec.json" >/dev/null 2>&1 && { echo "$p"; return; }
@@ -186,12 +187,12 @@ make_child() { # make_child <parent dir> <key>  → creates the child dispatch d
   jq -c --arg id "$(basename "$c")" '. + {id:$id}' "$d/d.json" > "$c/d.json"
   cp "$d/request.txt" "$c/request.txt"
   # scoped spec: the child's goal/scope/AC/tests over the parent's architecture and use case
-  jq -c --arg key "$key" --slurpfile b "$d/breakdown.json" '
+  jq -c --arg key "$key" --slurpfile b "$d/breakdown.json" 'def norm: ascii_downcase | gsub("\\s*\\([^)]*\\)\\s*$";"") | gsub("[^a-z0-9]+";" ") | gsub("^ +| +$";"");
     ($b[0].tickets[] | select(.key==$key)) as $t
     | . + {title: $t.title, goal: $t.goal, scope: $t.scope, out_of_scope: ($t.out_of_scope // []),
            acceptance_criteria: $t.acceptance_criteria, estimate: $t.size,
            slug: ($t.title | ascii_downcase | gsub("[^a-z0-9]+";"-") | gsub("^-+|-+$";"") | .[0:28]),
-           test_cases: [.test_cases[] | select(.title as $x | $t.test_case_titles | index($x))],
+           test_cases: (($t.test_case_titles | map(norm)) as $w | [.test_cases[] | select((.title | norm) as $x | $w | index($x))]),
            security: (.security + {risk_label: ($t.risk_label // .security.risk_label)}),
            open_questions: [], parent_title: .title, ticket_key: $key, spike: ($t.spike // false)}' "$d/spec.json" > "$c/spec.json"
   jq -c --arg key "$key" '.[] | select(.key==$key) | {pt, id, url}' "$d/tickets.json" > "$c/ticket.json"
@@ -414,7 +415,7 @@ case "$cmd" in
         CJ="$(printf '%s\n' "$COUT" | tail -1)"; CPT="$(jq -r .pt <<<"$CJ")"
         jq -c --argjson t "$(jq -c --arg k "$KEY" '. + {key:$k}' <<<"$CJ")" '. + [$t]' "$D/tickets.json" > "$D/tickets.json.tmp" && mv "$D/tickets.json.tmp" "$D/tickets.json"
         printf -- '- %s — %s (%s): %s\n' "$CPT" "$CT" "$KEY" "$(jq -r .url <<<"$CJ")" >> "$D/tickets.md"
-        jq -c --argjson want "$(jq -c '.test_case_titles // []' <<<"$T")" '[.[] | select(.title as $t | $want | index($t))]' "$D/testcases.json" > "$D/child-$KEY-tc.json"
+        jq -c --argjson want "$(jq -c '.test_case_titles // []' <<<"$T")" 'def norm: ascii_downcase | gsub("\\s*\\([^)]*\\)\\s*$";"") | gsub("[^a-z0-9]+";" ") | gsub("^ +| +$";""); ($want | map(norm)) as $w | [.[] | select((.title | norm) as $t | $w | index($t))]' "$D/testcases.json" > "$D/child-$KEY-tc.json"
         if [ "$(jq 'length' "$D/child-$KEY-tc.json")" -gt 0 ]; then
           "$DIR/notion.sh" testcase add "$CPT" --json "$D/child-$KEY-tc.json" | { read -r line1; echo "$line1"; cat > "$D/child-$KEY-tcmap.json"; }
         fi
