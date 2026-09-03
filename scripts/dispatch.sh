@@ -506,6 +506,13 @@ case "$cmd" in
     PT="$(jq -r .pt "$D/ticket.json")"; TURL="$(jq -r .url "$D/ticket.json")"
     WT="$(jq -r .worktree "$D/impl.json")"; SUBDIR="$(dmeta "$D" subdir)"
     [ -d "$WT" ] || { echo "The worktree is gone, dearie ($WT)." >&2; exit 1; }
+    # Nothing to verify if the branch has no commits yet — running QA here yields a
+    # misleading "nothing implemented" verdict that jams the pipeline. Wait for code.
+    AHEAD="$(cd "$WT" && git rev-list --count "$(cfgd mr_target_branch main)"..HEAD 2>/dev/null || echo 0)"
+    if [ "${AHEAD:-0}" = 0 ]; then
+      echo "No commits on $PT's branch yet, dearie — nothing to QA. The session hasn't committed the work; I'll wait for it." >&2
+      st "$D" implementing; exit 0
+    fi
     P="$(cat "$DIR/prompts/qa-verifier.md")"
     P="${P//'{{PT}}'/$PT}"
     P="${P//'{{TICKET_URL}}'/$TURL}"
