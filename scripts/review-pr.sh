@@ -54,6 +54,14 @@ STAMP="$(date +%s)"
 # Unique session per review so it never kills a running session (finalized +
 # recorded to last-session after the uniqueness check below).
 SESSION="margie-review-$STAMP"
+# Don't start a second review of the same MR: if a review session for this ref is already
+# live, point at it instead of burning another.
+for E in $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie-review-'); do
+  if "$TMUX_BIN" display -t "$E" -p '#{pane_title}' 2>/dev/null | grep -qE "([Mm]erge request|[Pp]ull request|PR|MR) $REF\b"; then
+    echo "A review of $REF is already running in session '$E', dearie — watch it with /watch $E. Not starting a second."
+    exit 0
+  fi
+done
 TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
 
 REVIEW_SKILL="$(cfg review_skill)"
@@ -127,4 +135,8 @@ else
   sleep 1.5
   open -a Warp
 fi
-echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — up in Warp, dearie."
+if [ "$(jq -r '.warp_mode // "window"' "$HOME/.margie/config.json" 2>/dev/null)" = "quiet" ]; then
+  echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — session '$SESSION' (watch it with /watch $SESSION), dearie."
+else
+  echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — up in Warp (session '$SESSION'), dearie."
+fi

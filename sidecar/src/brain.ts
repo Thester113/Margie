@@ -1,5 +1,5 @@
 import { mkdirSync, appendFileSync, readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
@@ -33,6 +33,7 @@ const HOME = process.env.HOME || "/";
 // (sidecar/dist/index.js → repo root) so nothing depends on a hardcoded user path.
 const MARGIE_HOME =
   process.env.MARGIE_HOME || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const TMUX = process.env.MARGIE_TMUX || "/opt/homebrew/bin/tmux";
 const SCRIPTS = `${MARGIE_HOME}/scripts`;
 const TASK_LOG_DIR = `${HOME}/.margie/tasks`;
 
@@ -352,8 +353,11 @@ harness and dispatcher for Claude Code.
 
 YOUR PRIMARY JOB is to dispatch to, steer and supervise ${ENGINE_NAME} sessions on
 Tom's behalf — the way an engineering lead delegates to and supervises engineers.
-Interactive sessions run in Warp tabs Tom can watch; quiet background tasks run
-headless via claude-task.sh; MR reviews run in their own watchable session.
+Interactive sessions run in their own watchable tmux session (Tom sees a live
+play-by-play and can attach with /watch <session>); quiet background tasks run
+headless via claude-task.sh. Before launching a review or session, CHECK the
+LIVE CODING SESSIONS list in the context — never start a second one for the same
+MR/ticket; point Tom at the running one instead.
 
 ⚠️ YOU ARE A DISPATCHER, NOT THE ENGINEER. You delegate work to the helper
 scripts and the watchable Warp/coding sessions they spawn — you do NOT do the
@@ -924,6 +928,19 @@ function liveContext(source: string): string {
       lines.push(`- ${pt ? pt + " " : ""}"${title}" — ${state}${draft ? ` — draft spec in Notion: ${draft}` : ""} (dispatch id ${n})`);
     }
   } catch { /* no dispatch dir */ }
+  try {
+    const out = execSync(`${SCRIPTS}/session.sh list 2>/dev/null`, { encoding: "utf8" }).trim();
+    const names = out.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("margie"));
+    if (names.length) {
+      const rows = names.map((nm) => {
+        let title = "", working = false;
+        try { title = execSync(`${TMUX} display -t ${nm} -p '#{pane_title}' 2>/dev/null`, { encoding: "utf8" }).replace(/^[✳✻*\s]+/, "").trim(); } catch { /* */ }
+        try { working = /esc to interrupt/.test(execSync(`${TMUX} capture-pane -t ${nm} -p 2>/dev/null`, { encoding: "utf8" })); } catch { /* */ }
+        return `- ${title || nm} — ${working ? "working" : "idle/done"} (session ${nm})`;
+      });
+      lines.push(`LIVE CODING SESSIONS (you started these; NEVER start a duplicate for the same MR/ticket — check here first; "/watch <session>" shows one):\n${rows.join("\n")}`);
+    }
+  } catch { /* no tmux */ }
   const where = source === "app" ? "VOICE (spoken aloud: no lists, no line breaks, one or two sentences)"
               : source === "slack" ? "SLACK DM (short; line breaks and • bullets fine; no markdown headings)"
               : "TERMINAL (line breaks and short • bullet lists are fine when asked for structure; no headings, tables or code fences)";
