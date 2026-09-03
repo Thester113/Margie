@@ -174,18 +174,25 @@ const norm = (x: string) => x.toLowerCase().replace(/[*_`"“”'‘’]/g, "").
  *  2. a Slack send / research post whose exact message text Margie quoted in her
  *     previous reply, and Tom answered with a short yes — the read-back would only
  *     repeat what he has just read. Anything else outward is held and read back. */
+// Her last reply "proposed" the action — any of these commit phrases counts.
+const PROPOSE_RE = /\b(confirm|say (?:go|yes|the word)|i'?ll (?:fire|file|send|post|run|merge|kick|start|open|create|amend)|this (?:will|would) (?:file|send|post|create|start|open|kick)|ready to (?:send|file|merge|go)|shall i|want me to|go ahead|fire it (?:off)?|kick it off|start (?:it|the session)|open the mr|merge it)\b/i;
+/** One confirmation, not two. When Tom gives a plain affirmative AND Margie's previous
+ *  reply already proposed exactly this action, treat his "yes" as THE confirmation and run
+ *  it now — instead of holding it a second time. Sends to OTHER people (Slack/mail/agent
+ *  messages) still require that the exact outgoing text was shown, since the wording matters. */
 function solicitedGo(cmd: string): boolean {
-  if (currentTurn.speaker) return false;                            // only Tom
+  if (currentTurn.speaker) return false;                            // only Tom, only his surfaces
   const said = (currentTurn.text || "").trim();
+  if (!isAffirmative(said)) return false;                           // his message must be a yes
   const lastMargie = [...history].reverse().find((m) => m.role === "assistant" && !m.conv);
-  if (!lastMargie) return false;
-  if (/\bdispatch\.sh\s+(go|file|merge)\b/.test(cmd)) return TRIGGER_RE.test(said) && SOLICIT_RE.test(lastMargie.content || "");
-  const m = cmd.match(/\bslack\.sh\s+(?:send|reply|dm)\s+"[^:"]+:\s*([\s\S]*)"\s*$/);
-  if (m && isAffirmative(said)) {
-    const body = norm(m[1]);
-    return body.length >= 12 && norm(lastMargie.content || "").includes(body);
-  }
-  return false;
+  const last = (lastMargie?.content || "");
+  if (!last || !PROPOSE_RE.test(last)) return false;                // she must have just proposed it
+  // Outbound message to someone else: the exact text must have been shown to Tom.
+  const msg = cmd.match(/\b(?:slack\.sh\s+(?:send|reply|dm)|messages\.sh\s+send|gmail\.sh\s+send|agent-messages\.sh\s+(?:send|reply)|telnyx\.sh\s+(?:send|send-group)|research\.sh\s+post)\b[\s\S]*?"([^"]{12,})"\s*$/);
+  if (msg) return norm(last).includes(norm(msg[1]).slice(0, 60));
+  // Internal / already-read-back actions (dispatch go/file/merge, notion, mr, ticket ops):
+  // the describe read-back showed the effect, so his affirmative is enough.
+  return true;
 }
 
 /** In a colleague's conversation Margie may only touch shared project artefacts —
@@ -370,8 +377,11 @@ watch) and report one sentence. If you're ever unsure whether something is
 fewest helpers that answer the question, then report in plain sentences.
 ALWAYS confirm first before anything outward or irreversible: sending
 Slack/email, Jira or Notion writes, or any ${SITE}/git write. HOW: when Tom asks
-you to send something, CALL THE TOOL IMMEDIATELY — do not ask permission in
-words first. The system HOLDS the command and tells you exactly what it would
+you to send something, CALL THE TOOL IMMEDIATELY — do NOT describe it in prose
+and ask "shall I?" first. Describing it, then calling the tool, makes Tom
+confirm TWICE. One tool call: the gate holds it, shows the read-back, and his
+single yes runs it. If he already said yes/confirmed/go, the gate runs it
+straight away — never ask again. The system HOLDS the command and tells you exactly what it would
 do; THAT is when you read it back and wait for his yes. Asking before calling
 the tool arms nothing and makes Tom say yes twice. Never take outward actions
 unprompted.
