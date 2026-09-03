@@ -54,15 +54,17 @@ STAMP="$(date +%s)"
 # Unique session per review so it never kills a running session (finalized +
 # recorded to last-session after the uniqueness check below).
 SESSION="margie-review-$STAMP"
-# Don't start a second review of the same MR: if a review session for this ref is already
-# live, point at it instead of burning another.
+TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
+
+# Don't start a second review of the same MR: if a review session for this number is
+# already live, point at it instead of burning another. ($PR is the MR/PR number.)
 for E in $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie-review-'); do
-  if "$TMUX_BIN" display -t "$E" -p '#{pane_title}' 2>/dev/null | grep -qE "([Mm]erge request|[Pp]ull request|PR|MR) $REF\b"; then
-    echo "A review of $REF is already running in session '$E', dearie — watch it with /watch $E. Not starting a second."
+  T="$("$TMUX_BIN" display -t "$E" -p '#{pane_title}' 2>/dev/null)"
+  if printf '%s' "$T" | grep -qE "(request|MR|PR|#) *0*${PR}( |$|[^0-9])"; then
+    echo "A review of $NOUN $REF$PR is already running in session '$E', dearie — watch it with /watch $E. Not starting a second."
     exit 0
   fi
 done
-TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
 
 REVIEW_SKILL="$(cfg review_skill)"
 if [ -n "$REVIEW_SKILL" ]; then
