@@ -717,14 +717,19 @@ case "$cmd" in
               if printf '%s' "$SCREEN" | grep -qE "^MARGIE_MR_OPEN|/-/merge_requests/[0-9]+|![0-9]{2,} (opened|created)"; then
                 announce "QA passed on $PT and the session already has an MR open — MR text at $D/mr.md if it needs updating (mr.sh update), dearie."
               else
-                SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"; WT="$(jq -r .worktree "$D/impl.json")"
-                if tmux has-session -t "$SESS" 2>/dev/null; then
-                  "$DIR/session.sh" send "QA passed — open the MR now with the repo's /merge-request skill, using the prepared description at $D/mr.md (title on the first line). When it's open print MARGIE_MR_OPEN <url>." --branch "$BR" >/dev/null 2>&1
+                # Open the MR DETERMINISTICALLY with mr.sh (push + create from the prepared
+                # mr.md) — never by queuing an instruction into a session, which used to stall.
+                WT="$(jq -r .worktree "$D/impl.json")"
+                ( cd "$WT" && git push -u origin "$BR" >/dev/null 2>&1 )
+                TITLE="$(head -1 "$D/mr.md" 2>/dev/null)"; sed -n '2,$p' "$D/mr.md" 2>/dev/null > "$D/mr-body.md"
+                MRURL="$( cd "$WT" && glab mr create --source-branch "$BR" --target-branch "$(cfgd mr_target_branch main)" --title "$TITLE" --description "$(cat "$D/mr-body.md" 2>/dev/null)" --yes 2>/dev/null | grep -oE 'https://[^ ]+/merge_requests/[0-9]+' | head -1 )"
+                if [ -n "$MRURL" ]; then
+                  IID="$(printf '%s' "$MRURL" | grep -oE '[0-9]+$')"
+                  ( cd "$WT" && glab mr view "$IID" -F json 2>/dev/null | jq -c '{iid, url: .web_url, title}' ) > "$D/mr.json"
+                  announce "QA passed on $PT — I opened MR !$IID ($MRURL), dearie. It'll go through review and merge on its own."
                 else
-                  P="You are on branch $BR (ticket $PT); the work is committed and QA passed. Open the merge request with the repo's /merge-request skill, using the prepared description at $D/mr.md (title on the first line). Push the branch, open the MR, then print MARGIE_MR_OPEN <url> and stop."
-                  "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$P" >/dev/null 2>&1
+                  announce "QA passed on $PT but I couldn't open the MR automatically, dearie — the branch may need a manual push. mr.sh create $PT."
                 fi
-                announce "QA passed on $PT — opening the MR, dearie."
               fi
             fi
             # ── MR lifecycle (after QA passed): detect the MR, self-review it, watch the
