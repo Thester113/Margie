@@ -90,8 +90,9 @@ case "$cmd" in
       # along without watching the tab. Label the session by its Claude-set window title.
       if [ "$NARRATE" != "off" ] && printf '%s' "$TAIL" | grep -q 'esc to interrupt'; then
         ACT="$(printf '%s' "$PANE" | grep -E '^⏺' | tail -1 | sed 's/^⏺ *//' | cut -c1-160)"
+        NOW2="$(date +%s)"
         if [ -n "$ACT" ] && [ "$(cat "$ST/$S.act" 2>/dev/null || true)" != "$ACT" ]; then
-          printf '%s' "$ACT" > "$ST/$S.act"
+          printf '%s' "$ACT" > "$ST/$S.act"; echo "$NOW2" > "$ST/$S.actat"; rm -f "$ST/$S.beat"
           # Claude Code sets the PANE title to a task summary; prefer it, then a PT from
           # a worktree session name, then the window name.
           WLABEL="$("$TMUX_BIN" display -t "$S" -p '#{pane_title}' 2>/dev/null | sed 's/^[^A-Za-z0-9#/]*//; s/^ *//' | cut -c1-40)"
@@ -99,6 +100,15 @@ case "$cmd" in
           [ -z "$WLABEL" ] && WLABEL="$("$TMUX_BIN" display -t "$S" -p '#{window_name}' 2>/dev/null | sed 's/^[^A-Za-z0-9#/]*//; s/^ *//' | cut -c1-40)"
           case "$WLABEL" in ""|bash|zsh|node) WLABEL="$S";; esac
           echo "[$WLABEL] $ACT"
+        elif [ -n "$ACT" ]; then
+          # same action for a while — reassure with a heartbeat every ~2 min so it isn't read as hung
+          AAT="$(cat "$ST/$S.actat" 2>/dev/null || echo "$NOW2")"; MINS=$(( (NOW2 - AAT) / 60 ))
+          LASTBEAT="$(cat "$ST/$S.beat" 2>/dev/null || echo 0)"
+          if [ "$MINS" -ge 2 ] && [ $(( NOW2 - LASTBEAT )) -ge 120 ]; then
+            echo "$NOW2" > "$ST/$S.beat"
+            WLABEL="$("$TMUX_BIN" display -t "$S" -p '#{pane_title}' 2>/dev/null | sed 's/^[^A-Za-z0-9#/]*//; s/^ *//' | cut -c1-40)"; [ -z "$WLABEL" ] && WLABEL="$S"
+            echo "[$WLABEL] still working (${MINS}m): $ACT"
+          fi
         fi
       fi
       printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|^ *───|Update installed' | grep -vE 'auto mode on|shift\+tab' | tail -3 | tr '\n' ' ' > "$ST/$S.tail"
