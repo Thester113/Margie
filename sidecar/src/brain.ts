@@ -231,6 +231,17 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
   return runBashRaw(cmd);
 }
 
+let sentThisTurn = false;   // a slack send actually succeeded in this turn
+/** Deterministic honesty check: a reply that claims to have posted/sent when no send
+ *  succeeded this turn gets corrected before Tom sees it. */
+function honest(text: string): string {
+  if (sentThisTurn) return text;
+  if (/\b(I(?:'ve| have)? (?:just )?(?:posted|sent|replied)|reply I (?:just )?posted|posted (?:it|this|that|the reply)|message (?:is )?sent)\b/i.test(text)) {
+    logBrain("HONESTY: reply claimed a post/send that did not happen — corrected");
+    return "Nothing has actually been posted — the send is still waiting for your yes (or failed). " + text.replace(/\b(I(?:'ve| have)? (?:just )?)(posted|sent|replied)\b/gi, "$1drafted");
+  }
+  return text;
+}
 function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise<string> {
   return new Promise((resolve) => {
     logBrain(`BASH${extraEnv.MARGIE_DESCRIBE ? " (describe)" : ""}: ${cmd}`);
@@ -260,6 +271,7 @@ function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise
       clearTimeout(timer);
       let r = out.trim();
       if (r.length > 4000) r = r.slice(0, 4000) + "\n…[truncated]";
+      if (/\bslack\.sh\s+(send|reply|dm)\b/.test(cmd) && /^Sent to /m.test(r)) sentThisTurn = true;
       if (!extraEnv.MARGIE_DESCRIBE && !extraEnv.MARGIE_POLLER) {
         const first = (r.split("\n").find((l) => l.trim()) || "[no output]").slice(0, 160);
         const more = r.split("\n").filter((l) => l.trim()).length - 1;
@@ -606,6 +618,12 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   do you ask for his "merge". Session permission prompts are answered yes for
   Tom by the watcher; only dangerous ones (force push, reset, secrets, deploys)
   are escalated — those you relay as "on you".
+- SLACK THREADS: to answer in a specific thread, pass the permalink as the target:
+  slack.sh reply "<https://…/archives/C…/p…?thread_ts=…>: <message>" — the reply
+  lands in that thread. Never read the helper's source or guess flags.
+- NEVER SAY "POSTED"/"SENT" unless the tool replied "Sent to …" this turn. Held
+  means NOT sent — say "it's waiting for your yes" and read it back. No
+  placeholders (PT-xxx): tickets that don't exist yet are "planned, not filed".
 - GROUP SLACK RULE (Tom's): in any channel or group DM you speak only when
   tagged @Margie or named "Margie" in the message. Never volunteer status,
   follow-ups or corrections there; take those to Tom's DM.
@@ -1122,6 +1140,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
     }
     finalText = "Sorry dearie, my brain hit a snag reaching Claude.";
   }
+  finalText = honest(finalText);
   let shaped = neutralize(source === "app" ? forSpeech(finalText) : forText(finalText));
   if (pub) shaped = depersonalize(shaped);
   history.push({ role: "user", content: text, conv, speaker });
@@ -1137,6 +1156,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
  */
 async function handleTurn(text: string, history: ChatMsg[], source = "app", conv?: string, speaker?: string, pub = false): Promise<string> {
   currentTurn = { conv, speaker, text, public: pub };
+  sentThisTurn = false;
   const backend = source === "app" ? BRAIN_VOICE : BRAIN_TEXT;
   if (backend === "claude") return claudeTurn(text, history, source, conv, speaker, pub);
   return xaiTurn(text, history, source, conv, speaker, pub);
@@ -1187,6 +1207,7 @@ async function xaiTurn(text: string, history: ChatMsg[], source = "app", conv?: 
     if (!finalText) finalText = "I looked into that, dearie, but it needs a proper dig — shall I open a session for it?";
   }
 
+  finalText = honest(finalText);
   let spoken = neutralize(source === "app" ? forSpeech(finalText) : forText(finalText));
   if (pub) spoken = depersonalize(spoken);
   // Commit only the clean turn to persistent history (drop the tool churn).

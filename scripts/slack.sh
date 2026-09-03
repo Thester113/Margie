@@ -50,7 +50,8 @@ if [ "$BOT_SEND" = 0 ] && { [ -z "$TOKEN" ] || [ "$VIA" = "claude" ]; }; then
     local out; out="$(cd "$HOME" && "$CLAUDE_BIN" -p "$1" --model "$CMODEL" --output-format json --allowedTools "$2" 2>/dev/null | jq -r '.result // empty')"
     [ -n "$out" ] && printf '%s\n' "$out" || { echo "Slack via Claude returned nothing, dearie — is the Slack connector connected (claude mcp list)?" >&2; return 1; }
   }
-  cmd="${1:-read}"; shift || true; args="$*"
+  cmd="${1:-read}"; shift || true
+ARGS2=(); while [ $# -gt 0 ]; do case "$1" in --thread) export SLACK_THREAD_TS="${2:-}"; shift 2 ;; *) ARGS2+=("$1"); shift ;; esac; done; set -- ${ARGS2[@]+"${ARGS2[@]}"}; args="$*"
   case "$cmd" in
     read|search|unread)
       if [ -n "$args" ]; then Q="Search Tom's Slack for: $args."; else Q="Show Tom's most recent DMs and @mentions (last day or so)."; fi
@@ -76,7 +77,8 @@ ok() { jq -e '.ok == true' >/dev/null 2>&1; }
 # id → display name cache-ish resolver
 uname_of() { api users.info --get --data-urlencode "user=$1" | jq -r '.user.profile.display_name // .user.real_name // .user.name // "?"'; }
 
-cmd="${1:-read}"; shift || true; args="$*"
+cmd="${1:-read}"; shift || true
+ARGS2=(); while [ $# -gt 0 ]; do case "$1" in --thread) export SLACK_THREAD_TS="${2:-}"; shift 2 ;; *) ARGS2+=("$1"); shift ;; esac; done; set -- ${ARGS2[@]+"${ARGS2[@]}"}; args="$*"
 
 read_via_search() { # user token only
   local RESP; RESP="$(api search.messages --get --data-urlencode "query=$1" -d "count=15" -d "sort=timestamp")"
@@ -160,17 +162,26 @@ case "$cmd" in
     fi
     ;;
   send|reply|dm)
-    target="${args%%:*}"; text="${args#*:}"
-    target="$(echo "$target" | sed 's/^ *//;s/ *$//')"; text="$(echo "$text" | sed 's/^ *//;s/ *$//')"
+    # Target may be a Slack permalink (…/archives/<channel>/p<ts>[?thread_ts=…]) → reply IN that thread.
+    THREAD_TS="${SLACK_THREAD_TS:-}"
+    if printf '%s' "$args" | grep -qE '^https?://[^ ]+/archives/[A-Z0-9]+/p[0-9]+'; then
+      url="$(printf '%s' "$args" | grep -oE '^https?://[^ ]+')"; text="${args#"$url"}"; text="$(printf '%s' "$text" | sed 's/^[ :]*//;s/ *$//')"
+      target="$(printf '%s' "$url" | grep -oE '/archives/[A-Z0-9]+' | cut -d/ -f3)"
+      pts="$(printf '%s' "$url" | grep -oE '/p[0-9]+' | tr -d '/p')"; pts="${pts:0:10}.${pts:10}"
+      THREAD_TS="$(printf '%s' "$url" | grep -oE 'thread_ts=[0-9.]+' | cut -d= -f2)"; [ -z "$THREAD_TS" ] && THREAD_TS="$pts"
+    else
+      target="${args%%:*}"; text="${args#*:}"
+      target="$(echo "$target" | sed 's/^ *//;s/ *$//')"; text="$(echo "$text" | sed 's/^ *//;s/ *$//')"
+    fi
     if [ -z "$target" ] || [ -z "$text" ] || [ "$target" = "$args" ]; then
       echo "FORMAT ERROR — nothing sent. The argument must be \"<target>: <message>\" with a colon after the target, e.g. slack.sh send \"@Tom: hello\" or slack.sh send \"#team-engineering: hello\". Retry with a target." >&2
       exit 1
     fi
     cid="$(resolve_target "$target")"
     [ -z "$cid" ] && { echo "Couldn't find '$target' on Slack, dearie (bot must be a member of the channel)." >&2; exit 1; }
-    RESP="$(api chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$text")"
+    RESP="$(api chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$text" ${THREAD_TS:+--data-urlencode "thread_ts=$THREAD_TS"})"
     if echo "$RESP" | ok; then
-      echo "Sent to $target, dearie$([ "$KIND" = bot ] && echo " (as the margie bot)")."
+      echo "Sent to $target${THREAD_TS:+ (in the thread)}, dearie$([ "$KIND" = bot ] && echo " (as the margie bot)")."
       # cc the owner: a bot's DM with someone else is invisible to Tom, so he gets a copy.
       OWNER_ID="$(jq -r '.slack_owner_id // empty' "$CFG" 2>/dev/null)"
       if [ -n "$OWNER_ID" ] && [ "$cid" != "$(api conversations.list --get --data-urlencode "types=im" -d "limit=1000" | jq -r --arg u "$OWNER_ID" '.channels[]? | select(.user==$u) | .id' | head -1)" ] && [ "$(jq -r '.slack_cc_owner // "true"' "$CFG")" != "false" ]; then
