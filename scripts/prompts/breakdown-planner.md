@@ -15,7 +15,9 @@ RULES
 - If the spec has an UNVERIFIED technical question that changes the design
   (e.g. whether a provider threads group MMS natively), ticket T1 is a short
   spike that answers it with a concrete procedure and a written result; mark
-  `spike: true`. Never attribute the answer to a teammate or a vendor reply.
+  `spike: true` and list in `needs_from_owner` everything a human must provide
+  before it can run (accounts, purchased numbers, devices, credentials,
+  decisions). Never attribute the answer to a teammate or a vendor reply.
 - Every acceptance criterion and every test case of the spec belongs to exactly
   one ticket; copy test-case titles EXACTLY. Add nothing the spec doesn't contain.
 - Each ticket's `scope` names the files/modules it touches; keep each ticket to

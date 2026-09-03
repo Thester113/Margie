@@ -511,6 +511,16 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   ~15s; report the "Sent to …" line it returns.
 - Gmail: gmail.sh unread | read "<query>" | send "<to>: <subj>: <body>" | reply "<instruction>"
 - Jira tickets: jira.sh read <KEY> | mine | search "<q>" | create "<desc>" | comment <KEY> "<text>"
+- STATUS QUESTIONS ("where are we on X", "what's done / what's next", "what's on
+  me"): run dispatch.sh brief <id|PT|word> — ONE command, it has everything
+  (ticket, epic, MR + merge state, tickets, what's on Tom and what it needs,
+  the assumptions, the next step). Do not rummage through notion.sh/jira.sh/
+  forge for status. Never offer an action the brief shows is already done
+  (a merged MR is not "opened", a closed ticket is not "filed").
+- ASSUMPTIONS ≠ QUESTIONS: a spec's open questions are decisions the planner
+  already made. Present them as "we assumed X — say if that's wrong"; never as
+  a list of questions Tom must answer. Spike/human tickets: lead with what
+  they need from Tom (accounts, numbers, devices) before anything else.
 - IMPLEMENTATION PLAN / TICKETS / SIZING: the spec plus its ticket breakdown IS
   the implementation plan. Run dispatch.sh show and report its "Tickets (N): …"
   line verbatim (key, title, size, order) — that line means the plan exists and
@@ -806,6 +816,12 @@ function forText(s: string): string {
  *  reads ~/.margie/dispatch state files, no shelling out. */
 function liveContext(source: string): string {
   const lines: string[] = [];
+  // Which optional integrations exist here, so she never calls an unconfigured helper.
+  const off: string[] = [];
+  if (!cfg("jira_base_url")) off.push("jira.sh (no Jira here)");
+  if (!cfg("slack_token")) off.push("slack.sh");
+  if (!cfg("notion_token")) off.push("notion.sh");
+  if (off.length) lines.push(`NOT CONFIGURED — never call: ${off.join(", ")}.`);
   try {
     const base = `${HOME}/.margie/dispatch`;
     const dirs = readdirSync(base).filter((n) => n.startsWith("d-")).sort().reverse().slice(0, 6);

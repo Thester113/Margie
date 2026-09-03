@@ -518,6 +518,39 @@ case "$cmd" in
     fi
     ;;
 
+  brief)
+    # One screen that answers "what's the status of X, what's done, what's next" — the
+    # brain reads THIS instead of rummaging through Notion/Jira/forge.
+    need_d "${1:-latest}"
+    S="$(st "$D")"; PT="$(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null)"; T="$(jq -r '.title // "(no spec yet)"' "$D/spec.json" 2>/dev/null)"
+    echo "== $T"; echo "Ticket: ${PT:-not filed}$( [ -s "$D/ticket.json" ] && echo " — $(jq -r .url "$D/ticket.json")")   Stage: $S"
+    [ -s "$D/epic.json" ] && echo "Epic: $(jq -r .url "$D/epic.json")"
+    if [ -s "$D/mr.json" ]; then
+      MST="$( [ -s "$D/mr-check.json" ] && jq -r '"state \(.state), pipeline \(.pipeline), \(.unresolved) open threads"' "$D/mr-check.json")"
+      [ "$S" = closed ] && MST="MERGED"
+      echo "MR: !$(jq -r .iid "$D/mr.json") — $MST — $(jq -r .url "$D/mr.json")"
+    fi
+    if has_breakdown "$D"; then
+      echo "Tickets:"
+      jq -r --slurpfile t "$D/tickets.json" '.tickets[] | .key as $k | "  \(( $t[0][] | select(.key==$k) | .pt ) // $k)  \(.title)  [\(.size)\(if .spike then ", spike — human work" else "" end)]" + (if ((.needs_from_owner // []) | length) > 0 then "  needs from Tom: " + (.needs_from_owner | join("; ")) else "" end)' "$D/breakdown.json" 2>/dev/null
+      for c in "$MDIR/$(basename "$D")--"*; do [ -d "$c" ] && echo "  ↳ $(cat "$c/key") $(st "$c")$( [ -s "$c/mr.json" ] && echo " MR !$(jq -r .iid "$c/mr.json")")"; done
+    fi
+    ONTOM="$(jq -r '[.tickets[]? | select(.spike // false) | .title + (if ((.needs_from_owner // []) | length) > 0 then " (needs: " + (.needs_from_owner | join("; ")) + ")" else "" end)] | join(" | ")' "$D/breakdown.json" 2>/dev/null)"
+    [ -n "$ONTOM" ] && [ "$S" != closed ] && echo "On Tom: $ONTOM"
+    [ -n "$ONTOM" ] && [ "$S" = closed ] && echo "Still on Tom after the merge: $ONTOM"
+    echo "Assumptions the spec made (say if any is wrong; nothing is being asked):"
+    jq -r '.open_questions[]? | "  - " + (.[0:220])' "$D/spec.json" 2>/dev/null | head -8
+    echo "Next:"
+    case "$S" in
+      spec-running) echo "  planner is drafting the spec" ;;
+      spec-ready) echo "  $( has_breakdown "$D" && echo 'say "go" to file the Epic + tickets and start ticket 1' || echo 'say "go" to file the ticket and start the session' )" ;;
+      filed|implementing) echo "  coding session in progress; QA and the MR follow automatically" ;;
+      qa-running) echo "  QA verifier running" ;; qa-pass) echo "  MR under review; merge is automatic when green with all threads resolved" ;;
+      qa-fail) echo "  findings sent back to the session" ;;
+      closed) echo "  merged and done — only the human items above remain" ;;
+      *) echo "  $S" ;;
+    esac
+    ;;
   status)
     if [ -n "${1:-}" ]; then DIRS="$(resolve_d "$1")"; else DIRS="$(ls -td "$MDIR"/d-* 2>/dev/null)"; fi
     [ -z "$DIRS" ] && { echo "No dispatches, dearie."; exit 0; }
@@ -542,7 +575,7 @@ case "$cmd" in
       fi
       if has_breakdown "$D" && [ -s "$D/tickets.json" ] && [ "$S" != closed ]; then
         SPK="$(jq -r --slurpfile t "$D/tickets.json" '[.tickets[] | select(.spike // false) | .key as $k | (($t[0][] | select(.key==$k) | .pt) // $k) + " " + .title] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
-        [ -n "$SPK" ] && LINE="$LINE, on Tom: $SPK"
+        [ -n "$SPK" ] && LINE="$LINE, on Tom: $SPK$(jq -r '[.tickets[] | select(.spike // false) | .needs_from_owner[]?] | if length>0 then " (needs: " + join("; ") + ")" else "" end' "$D/breakdown.json" 2>/dev/null)"
       fi
       [ -s "$D/mr.json" ] && LINE="$LINE, MR !$(jq -r .iid "$D/mr.json")$( [ -s "$D/mr-check.json" ] && echo " (pipeline $(jq -r .pipeline "$D/mr-check.json"), $(jq -r .unresolved "$D/mr-check.json") open threads$( [ -f "$D/review-approved" ] && echo ", review clean"))")"
       spec_ready "$D" && LINE="$LINE — $(jq -r .title "$D/spec.json" | cut -c1-60)"
@@ -815,7 +848,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: dispatch.sh spec <repo> \"<request>\" [--subdir p] | show [id] | breakdown [id] | file <id> | merge <id> | implement <id> | go <id> | qa <id> [--watch] | status [id] | tick [--announce] | open <id> [spec|qa|mr] | close <id> | describe <id> <stage>" >&2
+    echo "usage: dispatch.sh spec <repo> \"<request>\" [--subdir p] | show [id] | brief [id] | breakdown [id] | file <id> | merge <id> | implement <id> | go <id> | qa <id> [--watch] | status [id] | tick [--announce] | open <id> [spec|qa|mr] | close <id> | describe <id> <stage>" >&2
     exit 1
     ;;
 esac

@@ -14,6 +14,7 @@
           "title": { "type": "string" },
           "goal": { "type": "string" },
           "spike": { "type": "boolean", "description": "true when this ticket answers an unverified question before code is committed to" },
+          "needs_from_owner": { "type": "array", "items": { "type": "string" }, "description": "for spike/human tickets: accounts, numbers, devices, credentials or decisions the owner must provide first (e.g. 'a Telnyx account and one MMS-enabled number', 'an iPhone and an Android phone')" },
           "scope": { "type": "array", "items": { "type": "string" } },
           "out_of_scope": { "type": "array", "items": { "type": "string" } },
           "acceptance_criteria": { "type": "array", "items": { "type": "string" } },

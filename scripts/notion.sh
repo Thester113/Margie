@@ -137,7 +137,11 @@ case "$cmd" in
     OUT="$(printf '%s' "$R" | jq -r ".results[]? | \"\($TITLE_JQ)  [\(.id | gsub(\"-\";\"\"))]\"")"
     [ -n "$OUT" ] && echo "$OUT" || echo "No databases visible to the Margie integration, dearie." ;;
   query)
-    id="$(nid "${1:-}")"; [ -z "$id" ] && { echo "usage: notion.sh query <db id|url> [\"<text>\"]" >&2; exit 1; }; shift || true
+    case "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" in tickets|testcases|usecases|requirements|epics|"test cases"|"use cases")
+      A="$(printf '%s' "$1" | tr 'A-Z ' 'a-z' | tr -d ' ')"; shift || true
+      "$0" rows "$A" 100 | { if [ -n "$*" ]; then grep -i -- "$*"; else cat; fi; }; exit 0 ;;
+    esac
+    id="$(nid "${1:-}")"; [ -z "$id" ] && { echo "usage: notion.sh query <db id|url|tickets|testcases|usecases|requirements|epics> [\"<text>\"]" >&2; exit 1; }; shift || true
     R="$(api POST "/databases/$id/query" '{"page_size":50}')"; fail_if_error "$R"
     OUT="$(printf '%s' "$R" | jq -r ".results[]? | \"\($TITLE_JQ)  (\(.last_edited_time[:10]))  [\(.id | gsub(\"-\";\"\"))]\"")"
     [ -n "$*" ] && OUT="$(printf '%s\n' "$OUT" | grep -i -- "$*")"
