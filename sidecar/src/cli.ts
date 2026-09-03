@@ -280,9 +280,13 @@ async function repl() {
     rl.setPrompt(held ? `${PEACH}⏸ ${short(held, 44)}${RESET}\n${PINK}you${RESET} ❯ ` : `${PINK}you${RESET} ❯ `);
     try { rl.prompt(true); } catch { /* closed */ }
   };
+  let lastNotice = ""; let lastNoticeAt = 0;
   const hook = (client: Client) => {
     client.onEvent = (m) => renderEvent(m, spin, process.stdout);
     client.onNotice = (t) => {
+      const now = Date.now();
+      if (t === lastNotice && now - lastNoticeAt < 2500) return;   // drop a duplicate broadcast
+      lastNotice = t; lastNoticeAt = now;
       spin.clear();
       // A session play-by-play line ("[label] <action>") renders as a quiet progress
       // line so it's distinct from her own ✿ notices.
@@ -292,9 +296,10 @@ async function repl() {
       prompt();
     };
     client.onClose = () => {
+      client.onNotice = null; client.onEvent = null;   // stop the dead connection delivering
       spin.stop();
       process.stdout.write(`\r\x1b[2K${DIM}(brain restarted — reconnecting…)${RESET}\n`);
-      ensureDaemon().then((nc) => { c = nc; hook(c); prompt(); }).catch(() => prompt());
+      ensureDaemon().then((nc) => { try { c.close(); } catch { /* */ } c = nc; hook(c); prompt(); }).catch(() => prompt());
     };
   };
   hook(c);
