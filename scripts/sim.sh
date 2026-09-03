@@ -10,7 +10,13 @@
 #   sim.sh run <worktree> [--subdir d] [--device udid] [--log f]   build+run Flutter on the branch in the booted sim (background); waits for launch
 #   sim.sh shot [--out png] [--device udid]                        screenshot the booted sim; prints the PNG path
 #   sim.sh stop                           kill any `flutter run` this started (leaves the sim booted)
-#   sim.sh tap <x> <y> [--device udid]    tap (needs `idb`; prints how to install it if missing)
+#   sim.sh scroll [down|up] [count]       swipe the sim's list (cliclick; needs Accessibility perm)
+#   sim.sh tap <x> <y> [--device udid]    tap device-pixel (x,y): idb if present, else cliclick-mapped
+#
+# scroll/tap drive the Simulator window on screen with cliclick, so the terminal
+# (or Margie.app) needs macOS Accessibility permission. tap maps device-screen
+# pixels (as seen in `sim.sh shot`) to window points; it is approximate without
+# idb. The visual-verify session uses these to reach the changed screen.
 #
 # Nothing here is OUTWARD (no sends, no merges); it only drives a local sim.
 set -uo pipefail
@@ -24,6 +30,12 @@ cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
 FLUTTER="$(command -v flutter || echo "$HOME/development/flutter/bin/flutter")"
 SIMDIR="$HOME/.margie/sims"; mkdir -p "$SIMDIR"
 
+# On-screen bounds of the Simulator window as "x,y,w,h" (points), or empty.
+# Reading "front window" needs Simulator frontmost, so activate first.
+win_bounds() {
+  osascript -e 'tell application "Simulator" to activate' >/dev/null 2>&1; sleep 0.4
+  osascript -e 'tell application "System Events" to get {position, size} of front window of process "Simulator"' 2>/dev/null | tr -d ' '
+}
 pick_device() {
   local d; d="$(cfg sim_device)"; [ -n "$d" ] && { echo "$d"; return; }
   d="$(xcrun simctl list devices booted 2>/dev/null | grep -oE '\([0-9A-F-]{36}\)' | head -1 | tr -d '()')"; [ -n "$d" ] && { echo "$d"; return; }
@@ -78,10 +90,39 @@ case "$cmd" in
     [ -f "$SIMDIR/run.pid" ] && kill "$(cat "$SIMDIR/run.pid")" 2>/dev/null || true
     pkill -f "flutter run.*$DEVICE" 2>/dev/null || true
     echo "Stopped the flutter run (sim stays booted), dearie." ;;
+  scroll)
+    DIR="${1:-down}"; N="${2:-1}"
+    command -v cliclick >/dev/null 2>&1 || { echo "cliclick not installed, dearie (brew install cliclick)." >&2; exit 1; }
+    B="$(win_bounds)"; [ -z "$B" ] && { echo "Can't read the Simulator window, dearie — grant Accessibility to the terminal/Margie in System Settings > Privacy." >&2; exit 1; }
+    IFS=, read -r WX WY WW WH <<EOF
+$B
+EOF
+    CX=$(( WX + WW/2 )); TOP=$(( WY + WH*30/100 )); MIDY=$(( WY + WH*51/100 )); BOT=$(( WY + WH*72/100 ))
+    SAVE="$(cliclick p 2>/dev/null)"
+    osascript -e 'tell application "Simulator" to activate' >/dev/null 2>&1; sleep 0.3
+    i=0; while [ "$i" -lt "$N" ]; do
+      if [ "$DIR" = up ]; then cliclick dd:$CX,$TOP w:60 m:$CX,$MIDY w:40 m:$CX,$BOT w:40 du:$CX,$BOT >/dev/null 2>&1
+      else cliclick dd:$CX,$BOT w:60 m:$CX,$MIDY w:40 m:$CX,$TOP w:40 du:$CX,$TOP >/dev/null 2>&1; fi
+      sleep 0.6; i=$((i+1))
+    done
+    [ -n "$SAVE" ] && cliclick m:$SAVE >/dev/null 2>&1
+    echo "Scrolled $DIR x$N, dearie." ;;
   tap)
     X="${1:?x}"; Y="${2:?y}"
-    if command -v idb >/dev/null 2>&1; then idb ui tap --udid "$DEVICE" "$X" "$Y" && echo "tapped $X,$Y"; else
-      echo "No tap tool, dearie — install idb for headless taps: brew install idb-companion && pipx install fb-idb (or python3 -m pip install fb-idb)." >&2; exit 1
-    fi ;;
-  *) echo "usage: sim.sh device | boot [udid] | run <worktree> [--subdir d] [--device udid] [--log f] | shot [--out png] | stop | tap <x> <y>" >&2; exit 1 ;;
+    if command -v idb >/dev/null 2>&1; then idb ui tap --udid "$DEVICE" "$X" "$Y" >/dev/null 2>&1 && { echo "tapped $X,$Y (idb)"; exit 0; }; fi
+    command -v cliclick >/dev/null 2>&1 || { echo "No tap tool, dearie — grant Accessibility for cliclick, or install idb (brew tap facebook/fb && brew install idb-companion && pipx install fb-idb)." >&2; exit 1; }
+    B="$(win_bounds)"; [ -z "$B" ] && { echo "Can't read the Simulator window, dearie — grant Accessibility." >&2; exit 1; }
+    TMP="$SIMDIR/.dim.png"; xcrun simctl io "$DEVICE" screenshot "$TMP" >/dev/null 2>&1 || xcrun simctl io booted screenshot "$TMP" >/dev/null 2>&1
+    DW="$(sips -g pixelWidth "$TMP" 2>/dev/null | awk '/pixelWidth/{print $2}')"; DH="$(sips -g pixelHeight "$TMP" 2>/dev/null | awk '/pixelHeight/{print $2}')"
+    [ -z "$DW" ] || [ -z "$DH" ] && { echo "Couldn't read device screen size, dearie." >&2; exit 1; }
+    IFS=, read -r WX WY WW WH <<EOF
+$B
+EOF
+    SX=$(( WX + X*WW/DW )); SY=$(( WY + Y*WH/DH ))
+    SAVE="$(cliclick p 2>/dev/null)"
+    osascript -e 'tell application "Simulator" to activate' >/dev/null 2>&1; sleep 0.3
+    cliclick c:$SX,$SY >/dev/null 2>&1
+    [ -n "$SAVE" ] && cliclick m:$SAVE >/dev/null 2>&1
+    echo "tapped device($X,$Y) -> screen($SX,$SY) via cliclick (approx)" ;;
+  *) echo "usage: sim.sh device | boot [udid] | run <worktree> [--subdir d] [--device udid] [--log f] | shot [--out png] | stop | scroll [down|up] [count] | tap <x> <y>" >&2; exit 1 ;;
 esac
