@@ -545,7 +545,7 @@ case "$cmd" in
     [ -n "$ONTOM" ] && [ "$S" = closed ] && echo "Still on Tom after the merge: $ONTOM"
     for f in "$HOME/.margie/projects"/*.md; do [ -f "$f" ] || continue
       for w in $(printf '%s' "$T" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' ' ' | tr ' ' '\n' | awk 'length>3' | head -6); do
-        grep -qi -- "$w" "$f" && { echo "Project note ($(basename "$f" .md)):"; sed 's/^/  /' "$f" | head -40; break; }; done; done 2>/dev/null
+        grep -qi -- "$w" "$f" && { echo "Project note ($(basename "$f" .md)) — the CURRENT state; trust it over older ticket text:"; sed 's/^/  /' "$f" | head -90; break; }; done; done 2>/dev/null
     echo "Assumptions the spec made (say if any is wrong; nothing is being asked):"
     jq -r '.open_questions[]? | "  - " + (.[0:220])' "$D/spec.json" 2>/dev/null | head -8
     echo "Next:"
