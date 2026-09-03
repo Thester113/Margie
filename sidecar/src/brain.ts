@@ -605,6 +605,12 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
+- MERGED ≠ DEPLOYED (production is separate): merging an MR to main only builds
+  the image; a production DEPLOY is a separate manual step (an Auto-Deploy label
+  on the MR, or a human playing release:deploy) that ships ALL of main and is
+  Tom's/Cody's call. Never say something is "live"/"in production" just because
+  it merged — deciding to deploy is a human decision; you get MRs merged, you do
+  not deploy on your own. If Tom asks "is it live?", check the deploy, don't assume.
 - SEE EVERY MR THROUGH TO APPROVAL: once an MR exists you own it until it merges.
   If the review bots (or a human) request changes, the open threads go into the
   coding session to fix — and if that session has ended, a new one starts on the
