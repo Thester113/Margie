@@ -611,7 +611,10 @@ case "$cmd" in
               [ -s "$D/draft-page.id" ] && "$DIR/notion.sh" page append "$(cat "$D/draft-page.id")" --md "$D/breakdown.md" >/dev/null 2>&1
               announce "Ticket breakdown ready for \"$(jq -r .title "$D/spec.json")\", dearie — $(jq -r '.tickets|length' "$D/breakdown.json") tickets: $(jq -r '.tickets|map(.key + " " + .title)|join("; ")' "$D/breakdown.json"). $(jq -r .summary_spoken "$D/breakdown.json") It's on the draft page too."
             elif [ "$("$DIR/claude-task.sh" state "breakdown:$(basename "$D")")" = "FAILED" ]; then
-              rm -f "$D/breakdown-running"; announce "The ticket breakdown for $(basename "$D") failed, dearie."
+              rm -f "$D/breakdown-running"
+              if [ ! -f "$D/breakdown-retried" ]; then   # planners occasionally miss the schema; one retry is cheap
+                touch "$D/breakdown-retried"; "$0" breakdown "$(basename "$D")" >/dev/null 2>&1 && announce "The ticket breakdown for \"$(jq -r .title "$D/spec.json")\" stumbled once — retrying it, dearie."
+              else announce "The ticket breakdown for \"$(jq -r .title "$D/spec.json")\" failed twice, dearie — say \"break it down\" to try again."; fi
             fi
           fi
           [ "$(st "$D")" = spec-ready ] && continue
