@@ -525,11 +525,12 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
-- REVIEW BOTS & HUMAN/AGENT REVIEW: after the MR's final push, the repo's review
-  bots are asked once per commit (mr.sh request-review; tick does it). Their
-  threads and any reviewer's go into the session to address. If the process
-  notes name an agent reviewer, ask for their review via agent-messages.sh
-  (held) when the MR touches their area.
+- REVIEWS: the repo's review bots run by themselves on a new MR — you never
+  request them (tick has one fallback if they provably never ran). Your job is
+  the follow-through: every review thread goes into the coding session to fix
+  and resolve, then the MR is "ready to merge" and Tom's "merge" is the
+  approval. If the process notes name a required human/agent reviewer, ask via
+  agent-messages.sh (held) or tell Tom "on you: reviewer".
 - SMALL MRs: Large/XL specs are always split into S/M tickets before filing
   (automatic on spec-ready; "go" refuses to file a big spec whole). S/M specs
   stay one ticket, one MR.

@@ -180,10 +180,12 @@ case "$cmd" in
       UNRES="$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq '[.[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false))] | length' 2>/dev/null || echo 0)"
       APPR="$(glab api "projects/:id/merge_requests/$NUM/approvals" 2>/dev/null | jq -c '{approved, approvals_left}' 2>/dev/null || echo '{}')"
       PIPE="$(glab api "projects/:id/merge_requests/$NUM/pipelines" 2>/dev/null | jq -c '.[0] // {}' 2>/dev/null || echo '{}')"
-      printf '%s' "$V" | jq -c --argjson unres "${UNRES:-0}" --argjson appr "$APPR" --argjson pipe "$PIPE" \
+      NPIPES="$(glab api "projects/:id/merge_requests/$NUM/pipelines" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+      BOTN="$(glab api "projects/:id/merge_requests/$NUM/notes?per_page=100" 2>/dev/null | jq '[.[] | select(.system==false and (.author.username|test("^service_account_|bot|review";"i")))] | length' 2>/dev/null || echo 0)"
+      printf '%s' "$V" | jq -c --argjson unres "${UNRES:-0}" --argjson appr "$APPR" --argjson pipe "$PIPE" --argjson npipes "${NPIPES:-0}" --argjson botn "${BOTN:-0}" \
         '{iid, title, state, merge_status: (.detailed_merge_status // .merge_status), conflicts: (.has_conflicts // false), sha, url: .web_url,
           pipeline: ($pipe.status // .head_pipeline.status // "none"), pipeline_id: ($pipe.id // null), pipeline_url: ($pipe.web_url // null),
-          unresolved: $unres, approved: ($appr.approved // true), approvals_left: ($appr.approvals_left // 0)}'
+          unresolved: $unres, approved: ($appr.approved // true), approvals_left: ($appr.approvals_left // 0), pipelines: $npipes, bot_notes: $botn}'
     else
       T="$(glab mr view "$NUM" -F json 2>/dev/null | jq -r '.title // "?"')"
       desc "would merge MR !$NUM (\"$T\") into $TARGET and delete its source branch"

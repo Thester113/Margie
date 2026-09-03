@@ -692,12 +692,15 @@ case "$cmd" in
                 elif [ -f "$D/review-running" ] && [ "$("$DIR/claude-task.sh" state "review:$(basename "$D")")" = FAILED ]; then
                   rm -f "$D/review-running"; announce "My review run on MR !$IID failed to complete, dearie — I'll retry on the next commit."
                 fi
-                # the repo's review bots only auto-run on an MR's FIRST pipeline; ask them once per commit
-                if [ -n "$SHA" ] && [ "$PSTAT" != running ] && [ "$PSTAT" != pending ] && [ "$(cat "$D/bots-requested" 2>/dev/null)" != "$SHA" ] \
-                   && [ "$UNRES" = 0 ] && [ "$(cat "$D/bot-rounds" 2>/dev/null || echo 0)" -lt "$(cfgd review_rounds 2)" ]; then
-                  echo "$SHA" > "$D/bots-requested"; echo $(( $(cat "$D/bot-rounds" 2>/dev/null || echo 0) + 1 )) > "$D/bot-rounds"
+                # The repo's review bots run by themselves on the MR's first pipeline — Margie does
+                # not request reviews. One fallback only: the MR has settled, more than one pipeline
+                # ran (so the auto-run may have stood down) and the bots have posted nothing at all.
+                if [ ! -f "$D/bots-fallback" ] && [ "$PSTAT" != running ] && [ "$PSTAT" != pending ] \
+                   && [ "$(jq -r '.bot_notes // 0' "$D/mr-check.json")" = 0 ] && [ "$(jq -r '.pipelines // 0' "$D/mr-check.json")" -gt 1 ] \
+                   && [ $(( $(date +%s) - $(stat -f %m "$D/mr.json") )) -gt 900 ]; then
+                  touch "$D/bots-fallback"
                   RR="$("$DIR/mr.sh" request-review "!$IID" --repo "$WT" 2>/dev/null || true)"
-                  case "$RR" in Requested*) announce "Asked the repo's review bots to look at MR !$IID for $PT, dearie." ;; esac
+                  case "$RR" in Requested*) announce "The repo's review bots never ran on MR !$IID for $PT (a second pipeline pre-empted them), so I asked them once, dearie." ;; esac
                 fi
                 # pipeline failed -> once per pipeline, send it back
                 if [ "$PSTAT" = failed ] && [ -n "$PID" ] && [ "$(cat "$D/pipeline-failed" 2>/dev/null)" != "$PID" ]; then
