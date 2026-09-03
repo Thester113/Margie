@@ -33,6 +33,8 @@
   "_standup": "Margie drafts the owner's daily standup from git/MR/ticket evidence on weekdays at standup_time: mode draft = DM the draft and wait for 'post my standup'; post = post it herself; off.",
   "slack_owner_id": "U0AAAAAAAAA",
   "owner_first_name": "Tom",
+  "telnyx_api_key": "",
+  "_telnyx": "Optional. A Telnyx v2 API key lets telnyx.sh buy/assign numbers and send test (group) MMS for spikes; telnyx_number and telnyx_profile_id are filled in by the script.",
   "pronouns": { "Cody Poll": "they/them" },
   "conversation_notes": { "C0XXXXXXXXX": "Group DM with X. X asked: track work in Notion, don't post status here; reply only when addressed." },
   "_slack_watch": "Watcher for @Margie and @<owner> mentions in channels the bot is in: off | preview (drafts DM'd to the owner, nothing posted) | live (replies in-thread as the owner's assistant). slack_owner_id: the owner's Slack user id (falls back to the agent roster).",

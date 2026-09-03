@@ -120,6 +120,7 @@ const OUTWARD: RegExp[] = [
   /\bstandup\.sh\s+post\b/,
   /\bresearch\.sh\s+post\b/,
   /\bdispatch\.sh\s+merge\b/, /\bmr\.sh\s+merge\b/,
+  /\btelnyx\.sh\s+(buy|send|send-group|spike)\b/,   // spends money / texts real phones
 ];
 const PENDING_TTL_MS = 3 * 60 * 1000;
 // Several commands can be held in one turn (e.g. two DMs); one "yes" releases
@@ -149,7 +150,7 @@ const BASH_TOOL = {
   function: {
     name: "bash",
     description:
-      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, mr.sh, standup.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh, research.sh, usage.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
+      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, mr.sh, standup.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh, research.sh, usage.sh, telnyx.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
     parameters: {
       type: "object",
       properties: { command: { type: "string", description: "The shell command to run." } },
@@ -221,7 +222,7 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
       `HELD — NOTHING WAS DONE (${pending.length} command${pending.length > 1 ? "s" : ""} now waiting). This acts on Tom's behalf, so confirm first: tell Tom concisely what is about to happen — every held item, quoting message text — then ask for his yes. Use the REAL values (actual links, names); never placeholders like <link>. Do not call any tool now. Everything held runs only after he confirms.`;
     // Margie's own scripts can say precisely what they WOULD do (side-effect
     // free under MARGIE_DESCRIBE=1) — so the read-back is accurate, not guessed.
-    if (/\b(dispatch|notion|agent-messages|research)\.sh\b/.test(cmd)) {
+    if (/\b(dispatch|notion|agent-messages|research|telnyx)\.sh\b/.test(cmd)) {
       const described = await runBashRaw(cmd, { MARGIE_DESCRIBE: "1" });
       if (described && !described.startsWith("[")) held += ` Exactly what it would do: ${described.split("\n")[0]}`;
     }
@@ -597,6 +598,9 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   give Tom the gist, and offer research.sh post <id> (held for his yes). "the
   group with Cody and Tom" → slack.sh channels lists group DMs with their ids;
   use the id as the target.
+- TELNYX (SMS provider ops, when telnyx_api_key is set): telnyx.sh numbers |
+  search <area> | buy <+1> | profile | assign <+1> | send-group "<+1,+1>" "<text>"
+  | spike "<agent>,<client>". buy/send/spike are held (money, real phones).
 - Spend: usage.sh today | week ("what have you cost me today?", "usage this week")
   prints Claude spend by category (brain turns, planner, QA, other tasks) and the
   daily budget; never estimate spend yourself.
