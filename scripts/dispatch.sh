@@ -237,7 +237,7 @@ status_all() { # status_all <dispatch dir> "<Status>"
   done
 }
 
-spec_ready() { [ -s "$1/spec.json" ] ] && jq -e '.title and .goal and .acceptance_criteria and .test_cases' "$1/spec.json" >/dev/null 2>&1; }
+spec_ready() { [ -s "$1/spec.json" ] && jq -e '.title and .goal and .acceptance_criteria and .test_cases' "$1/spec.json" >/dev/null 2>&1; }
 
 cmd="${1:-status}"; shift || true
 
