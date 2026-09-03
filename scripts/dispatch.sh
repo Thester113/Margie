@@ -793,7 +793,14 @@ case "$cmd" in
                 fi
                 # ready to merge -> tell Tom once per commit; merging is his word (dispatch.sh merge)
                 REVIEW_OK=0; { [ -f "$D/review-approved" ] || [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -ge "$(cfgd review_rounds 2)" ]; } && REVIEW_OK=1
-                if [ "$PSTAT" = success ] && [ "$UNRES" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ "$REVIEW_OK" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
+                # The bots must have ACTUALLY reviewed before merge — "0 open threads" is
+                # trivially true before they post. Require the review bridges finished and the
+                # bots posted (or none exist in this repo). This stops merging unreviewed.
+                BOTS_OK=1
+                if [ "$(jq -r '.reviews_seen // false' "$D/mr-check.json")" = true ]; then
+                  { [ "$(jq -r '.reviews_done // false' "$D/mr-check.json")" = true ] && [ "$(jq -r '.bot_notes // 0' "$D/mr-check.json")" -gt 0 ]; } || BOTS_OK=0
+                fi
+                if [ "$PSTAT" = success ] && [ "$UNRES" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ "$REVIEW_OK" = 1 ] && [ "$BOTS_OK" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
                   echo "$SHA" > "$D/merge-ready"
                   # Tom's explicit instruction (2026-09-03): a green MR with every thread resolved is
                   # merged by Margie herself (config auto_merge, default true); no "say merge" step.

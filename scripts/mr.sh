@@ -193,10 +193,21 @@ case "$cmd" in
       PIPE="$(glab api "projects/:id/merge_requests/$NUM/pipelines" 2>/dev/null | jq -c '.[0] // {}' 2>/dev/null || echo '{}')"
       NPIPES="$(glab api "projects/:id/merge_requests/$NUM/pipelines" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
       BOTN="$(glab api "projects/:id/merge_requests/$NUM/notes?per_page=100" 2>/dev/null | jq '[.[] | select(.system==false and (.author.username|test("^service_account_|bot|review";"i")))] | length' 2>/dev/null || echo 0)"
-      printf '%s' "$V" | jq -c --argjson unres "${UNRES:-0}" --argjson appr "$APPR" --argjson pipe "$PIPE" --argjson npipes "${NPIPES:-0}" --argjson botn "${BOTN:-0}" \
+      # Have the review-bot bridges finished on the latest pipeline? (they are allow_failure
+      # children, so the parent pipeline can be "success" while a review is still running.)
+      LPID="$(printf '%s' "$PIPE" | jq -r '.id // empty')"; REVIEWS_DONE=1; REVIEWS_SEEN=0
+      if [ -n "$LPID" ]; then
+        for DS in $(glab api "projects/:id/pipelines/$LPID/bridges" 2>/dev/null | jq -r '.[] | select(.name|test("review")) | .downstream_pipeline.id // empty'); do
+          REVIEWS_SEEN=1
+          st="$(glab api "projects/:id/pipelines/$DS" 2>/dev/null | jq -r '.status // "unknown"')"
+          case "$st" in success|failed|canceled|skipped|manual) ;; *) REVIEWS_DONE=0 ;; esac
+        done
+      fi
+      printf '%s' "$V" | jq -c --argjson unres "${UNRES:-0}" --argjson appr "$APPR" --argjson pipe "$PIPE" --argjson npipes "${NPIPES:-0}" --argjson botn "${BOTN:-0}" --argjson rdone "${REVIEWS_DONE:-1}" --argjson rseen "${REVIEWS_SEEN:-0}" \
         '{iid, title, state, merge_status: (.detailed_merge_status // .merge_status), conflicts: (.has_conflicts // false), sha, url: .web_url,
           pipeline: ($pipe.status // .head_pipeline.status // "none"), pipeline_id: ($pipe.id // null), pipeline_url: ($pipe.web_url // null),
-          unresolved: $unres, approved: ($appr.approved // true), approvals_left: ($appr.approvals_left // 0), pipelines: $npipes, bot_notes: $botn}'
+          unresolved: $unres, approved: ($appr.approved // true), approvals_left: ($appr.approvals_left // 0), pipelines: $npipes, bot_notes: $botn,
+          reviews_done: ($rdone==1), reviews_seen: ($rseen==1)}'
     else
       T="$(glab mr view "$NUM" -F json 2>/dev/null | jq -r '.title // "?"')"
       desc "would merge MR !$NUM (\"$T\") into $TARGET and delete its source branch"
