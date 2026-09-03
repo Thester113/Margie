@@ -180,8 +180,17 @@ $Q" 2>/dev/null)"
       echo "No running session to steer, dearie — start one first with kickoff-claude.sh."
       exit 1
     fi
-    "$TMUX_BIN" send-keys -t "$SESSION" -l -- "$TEXT"
-    "$TMUX_BIN" send-keys -t "$SESSION" Enter
+    # Collapse to a single line: a multi-line block is treated as a paste attachment
+    # by Claude Code and a lone Enter won't submit it (it gets stuck in the input box).
+    ONE="$(printf '%s' "$TEXT" | tr '\n' ' ' | sed 's/  */ /g')"
+    "$TMUX_BIN" send-keys -t "$SESSION" C-u 2>/dev/null   # clear anything half-typed first
+    "$TMUX_BIN" send-keys -t "$SESSION" -l -- "$ONE"
+    sleep 0.4; "$TMUX_BIN" send-keys -t "$SESSION" Enter
+    # Verify it submitted (input box empties); one retry if it didn't.
+    sleep 0.8
+    if "$TMUX_BIN" capture-pane -t "$SESSION" -p 2>/dev/null | grep -E '^❯' | tail -1 | grep -q "$(printf '%s' "$ONE" | cut -c1-20)"; then
+      "$TMUX_BIN" send-keys -t "$SESSION" Enter
+    fi
     echo "Sent into session $SESSION, dearie."
     ;;
   *)
