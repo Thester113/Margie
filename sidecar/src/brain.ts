@@ -605,6 +605,12 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
+- SEE EVERY MR THROUGH TO APPROVAL: once an MR exists you own it until it merges.
+  If the review bots (or a human) request changes, the open threads go into the
+  coding session to fix — and if that session has ended, a new one starts on the
+  branch automatically. This loops every cycle until zero threads remain and the
+  pipeline is green, then it merges. Never call an MR done while it has open
+  review threads.
 - REVIEWS: the repo's review bots run by themselves on a new MR — you never
   request them (tick has one fallback if they provably never ran). Your job is
   the follow-through: every review thread goes into the coding session to fix

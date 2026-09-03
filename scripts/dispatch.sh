@@ -774,11 +774,27 @@ case "$cmd" in
                   else
                     announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, every review thread resolved$( [ -f "$D/review-approved" ] && echo ", my review clean" || echo " (review rounds used up; the findings were addressed in the threads)"). Say \"merge\" and I'll merge it."
                   fi
-                elif [ "$UNRES" != 0 ] && [ $(( $(date +%s) - $(cat "$D/threads-told-at" 2>/dev/null || echo 0) )) -gt 900 ]; then
-                  # once per fix cycle (15 min), not once per thread-count change
-                  date +%s > "$D/threads-told-at"
-                  "$DIR/session.sh" send "MR !$IID has $UNRES unresolved review thread(s). Use the repo's /address-mr-reviews skill to address them, push, and resolve the threads you fixed; then print MARGIE_MR_UPDATED and STOP — do not poll the pipeline, Margie watches it and will tell you if anything fails." --branch "$BR" >/dev/null 2>&1
-                  announce "MR !$IID for $PT has $UNRES review thread(s) — the session is addressing them, dearie."
+                elif [ "$UNRES" != 0 ]; then
+                  # See the MR through to approval: keep a coding session working on the open
+                  # review threads (bot or human) until none remain. Restart the session if it
+                  # has exited; nudge it (throttled) if it is still alive.
+                  SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"
+                  THREADS="$("$DIR/mr.sh" threads "!$IID" --repo "$WT" 2>/dev/null | head -20)"
+                  if ! tmux has-session -t "$SESS" 2>/dev/null; then
+                    if [ "$(cat "$D/threads-restart-sha" 2>/dev/null)" != "$SHA:$UNRES" ]; then
+                      echo "$SHA:$UNRES" > "$D/threads-restart-sha"; date +%s > "$D/threads-told-at"
+                      SUBDIR="$(dmeta "$D" subdir)"
+                      P="You are back on branch $BR (ticket $PT). MR !$IID has $UNRES unresolved review thread(s) from the review bots/reviewers that MUST be resolved before it can merge:
+$THREADS
+Address every one with the repo's /address-mr-reviews skill: fix the code, keep the tests green, commit, push to the MR, and RESOLVE each thread you fixed. When all threads are resolved print MARGIE_MR_UPDATED and stop — Margie watches the pipeline."
+                      "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$P" >/dev/null 2>&1
+                      announce "MR !$IID for $PT has $UNRES open review thread(s) and its session had ended — I restarted a session to address them, dearie."
+                    fi
+                  elif [ $(( $(date +%s) - $(cat "$D/threads-told-at" 2>/dev/null || echo 0) )) -gt 900 ]; then
+                    date +%s > "$D/threads-told-at"
+                    "$DIR/session.sh" send "MR !$IID still has $UNRES unresolved review thread(s): $THREADS  Address each with /address-mr-reviews, push, resolve the threads you fixed, then print MARGIE_MR_UPDATED and stop." --branch "$BR" >/dev/null 2>&1
+                    announce "MR !$IID for $PT has $UNRES review thread(s) — the session is addressing them, dearie."
+                  fi
                 fi
                 fi  # mr-check.json
               fi

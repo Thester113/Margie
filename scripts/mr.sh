@@ -9,6 +9,7 @@
 #   mr.sh check  <PT|!n> [--repo r]            one JSON line: state, pipeline, unresolved, approvals, sha
 #   mr.sh merge  <PT|!n> [--repo r]            merge it (held; the session's branch is removed)
 #   mr.sh request-review <PT|!n> [--repo r]    play the manual review-bot jobs on the MR's latest pipeline
+#   mr.sh threads <PT|!n>                      the unresolved review threads (bot or human), one per line
 #
 # The description is the repo's own MR template, fully filled, ending with the
 # one `/label ~"… Risk"` quick action the release job requires. For a dispatch
@@ -153,6 +154,16 @@ case "$cmd" in
     [ -z "$NUM" ] && { echo "Which MR, dearie? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
     R="$(cd "${WT:-$PWD}" && glab mr update "$NUM" ${TITLE_OPT:+--title "$TITLE_OPT"} ${DESC_FILE:+--description "$(cat "$DESC_FILE")"} 2>&1 | tail -1)"
     echo "Updated MR !$NUM, dearie. $R" ;;
+  threads)
+    NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"; [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // empty' "$D/mr.json" 2>/dev/null)"
+    [ -z "$NUM" ] && { echo "usage: mr.sh threads <PT|!n>" >&2; exit 1; }
+    cd "${WT:-${REPO_ARG:-$PWD}}" || exit 1
+    glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq -r '
+      .[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false))
+      | .notes[0] as $n
+      | "• " + ($n.author.username // "?") + ($n.position.new_path // "" | if .=="" then "" else " (" + . + (($n.position.new_line // "" | tostring)|if .=="" or .=="null" then "" else ":" + . end) + ")" end) + ": "
+        + ($n.body | gsub("\n";" ") | .[0:400])' 2>/dev/null
+    [ -z "$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq -r '[.[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false))] | length')" ] && echo "(none)" ;;
   request-review)
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"
     [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // empty' "$D/mr.json" 2>/dev/null)"
