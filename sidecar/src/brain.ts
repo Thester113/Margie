@@ -635,6 +635,9 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   its MR is merged. Before that say "in progress — tests green locally" or
   "MR open, awaiting review". Never announce completion to colleagues yourself;
   Tom does that, or the merge does.
+- WHERE SESSIONS LIVE: with warp_mode quiet, sessions run in tmux without opening
+  windows; when you start one, tell Tom its name and that "/watch <name>" in the
+  CLI (or session.sh attach) shows it live.
 - AD-HOC SESSIONS ("have Claude do X"): kickoff-claude.sh wraps your prompt in a
   proper brief, but YOUR prompt must still carry the decisions: what exactly
   to do, why, the names/versions/defaults to use, what done looks like. Never

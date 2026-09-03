@@ -116,7 +116,15 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
   exit 0
 fi
 
-open "warp://launch/$NAME"
-sleep 1.5
-open -a Warp
+# warp_mode (config): window = a new Warp window per session (the original behaviour);
+# quiet = the session runs in tmux with no window at all — watch any session from one
+# place with `margie` → /watch <name>, or `session.sh attach <name>` in any terminal.
+if [ "$(jq -r '.warp_mode // "window"' "$HOME/.margie/config.json" 2>/dev/null)" = "quiet" ]; then
+  "$TMUX_BIN" new-session -d -s "$SESSION" "bash $INNER"
+  echo "(quiet mode: session '$SESSION' is running in tmux — watch it with /watch $SESSION in the margie CLI)"
+else
+  open "warp://launch/$NAME"
+  sleep 1.5
+  open -a Warp
+fi
 echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — up in Warp, dearie."

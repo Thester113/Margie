@@ -2,6 +2,8 @@
   "_comment": "Copy to ~/.margie/config.json (chmod 600). Omit any key you don't use — the scripts treat a missing key as 'not configured', but an empty string is NOT treated as missing by jq.",
 
   "engine": "claude",
+  "warp_mode": "quiet",
+  "_warp_mode": "window = every session opens its own Warp window; quiet = sessions run in tmux with no window and are watched from the margie CLI (/watch <name>) or `session.sh attach <name>`.",
   "claude_model": "claude-fable-5-1[1m]",
   "_claude_model": "Default --model for EVERY Claude Code run Margie dispatches (interactive sessions, reviews, headless tasks, planner, QA). Omit to use the CLI's own default. planner_model / qa_model override it per stage.",
   "_engine": "CLI the dispatched sessions run (kickoff-claude.sh / review-pr.sh / simulate.sh): 'claude' (default, Claude Code) or 'grok'. Overridden by MARGIE_ENGINE. Omit unless you want grok.",

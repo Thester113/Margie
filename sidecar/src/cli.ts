@@ -265,6 +265,7 @@ const HELP = `${PINK}✿${RESET} ${NAME} ${GREY}— your assistant, dearie. One 
   ${CYAN}/spec${RESET}     latest spec in full             ${CYAN}/qa${RESET}   ${CYAN}/mr${RESET}    latest QA report / MR text
   ${CYAN}/verbose${RESET}  show the raw commands behind her steps
   ${CYAN}/flair${RESET}    toggle the knitting granny while she works
+  ${CYAN}/watch${RESET}    watch a coding session right here (${CYAN}/watch <name>${RESET}, ${CYAN}/sessions${RESET} to list)
   ${CYAN}/log${RESET}      her recent brain log            ${CYAN}/clear${RESET}     ${CYAN}/quit${RESET}
   ${GREY}▸ what she ran   ⎿ what it said   ⏸ waiting for your yes   ✿ something she noticed in the background${RESET}`;
 
@@ -308,6 +309,17 @@ async function repl() {
     if (text === "/status") { await cmdStatus(); held = await heldSummary(c); return; }
     if (text === "/held") { console.log(held ? `${YEL}⏸ ${held}${RESET}` : `${DIM}nothing held${RESET}`); return; }
     if (text === "/usage" || text === "/usage week") { spawnSync(`${SCRIPTS}/usage.sh`, [text.endsWith("week") ? "week" : "today"], { stdio: "inherit" }); return; }
+    if (text === "/sessions") { spawnSync(`${SCRIPTS}/session.sh`, ["list"], { stdio: "inherit" }); return; }
+    if (text === "/watch" || text.startsWith("/watch ")) {
+      // Hand the terminal to tmux for the session; ctrl-b d comes back here.
+      const name = text.slice(6).trim();
+      console.log(`${DIM}(watching${name ? " " + name : " the latest session"} — ctrl-b then d to come back; ctrl-b s to switch sessions)${RESET}`);
+      try { rl?.pause(); (process.stdin as any).setRawMode?.(false); } catch { /* not a tty */ }
+      try { spawnSync(`${SCRIPTS}/session.sh`, name ? ["attach", name] : ["attach"], { stdio: "inherit" }); } finally {
+        try { (process.stdin as any).setRawMode?.(true); rl?.resume(); rl?.prompt(); } catch { /* ignore */ }
+      }
+      return;
+    }
     if (text === "/flair") { FLAIR = !FLAIR; console.log(`${DIM}granny ${FLAIR ? "on" : "off"}${RESET}`); return; }
     if (text === "/verbose") { VERBOSE = !VERBOSE; console.log(`${DIM}raw commands ${VERBOSE ? "shown" : "hidden"}${RESET}`); return; }
     if (text === "/log") { spawnSync("tail", ["-25", `${HOME}/.margie/brain.log`], { stdio: "inherit" }); return; }

@@ -12,6 +12,7 @@
 #                                             question idle > 3 min); silent otherwise —
 #                                             the daemon polls this and Margie tells Tom
 #   session.sh key <key…> [--branch <b>]      press keys: Enter, Escape, y, 1, Down …
+#   session.sh attach [name]                  watch a session here (tmux attach; detach with ctrl-b d)
 #
 # Default target is the most recently launched session (~/.margie/last-session),
 # falling back to the newest live margie* session. --branch <b> targets a
@@ -143,6 +144,10 @@ $Q" 2>/dev/null)"
       echo "Session $S is $WHY: $SNIP"
     done
     ;;
+  attach | watch)
+    SESSION="$(resolve_session)"; [ -n "${1:-}" ] && SESSION="$1"
+    "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null || { echo "No session '$SESSION', dearie. Live: $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' | tr '\n' ' ')" >&2; exit 1; }
+    exec "$TMUX_BIN" attach -t "$SESSION" ;;
   key | keys)
     SESSION="$(resolve_session)"
     [ $# -eq 0 ] && { echo "usage: session.sh key <Enter|Escape|y|1|Down…> [--branch <b>]" >&2; exit 1; }
