@@ -226,7 +226,10 @@ async function runPoller(p: Poller) {
     // Only a script's deliberate one-liner becomes a notice — never tool noise,
     // a timeout marker, or a stack trace.
     const looksLikeError = /^(curl:|jq:|bash:|Traceback|Error|\[exec error\])/m.test(out) || out.includes("[timed out]");
-    if (out && out !== "[no output]" && !out.startsWith("[") && !looksLikeError) {
+    // Drop only the real status markers, NOT legitimate lines that begin with a
+    // bracketed label like "[PT-831 …] running tests" (the session play-by-play).
+    const isMarker = /^\[(no output|timed out|exec error|claude exited|done)\b/.test(out);
+    if (out && out !== "[no output]" && !isMarker && !looksLikeError) {
       const text = out.split("\n").filter(Boolean).join(" — ").slice(0, 400);
       p.lastNotice = text;
       notice(text);
