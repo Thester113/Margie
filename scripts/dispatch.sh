@@ -433,7 +433,12 @@ case "$cmd" in
       jq -s 'add // {}' "$D"/child-*-tcmap.json > "$D/tcmap.json" 2>/dev/null || echo '{}' > "$D/tcmap.json"
       if [ -n "$(cfg notion_epics_ds)" ]; then
         ALLPT="$PT,$(jq -r 'map(.pt) | join(",")' "$D/tickets.json")"
-        EOUT="$("$DIR/notion.sh" epic create "$TITLE" --md "$D/body.md" --status Planning --tickets "$ALLPT" 2>/dev/null)" && { echo "$EOUT" | head -1; printf '%s\n' "$EOUT" | tail -1 > "$D/epic.json"; }
+        if [ -s "$D/epic.json" ]; then
+          # an epic.json placed here beforehand means: file under THAT existing Epic
+          "$DIR/notion.sh" epic relate "$(jq -r .id "$D/epic.json")" --tickets "$ALLPT,$(cat "$D/epic-existing-tickets" 2>/dev/null)" >/dev/null 2>&1 && echo "Linked to the existing Epic: $(jq -r .url "$D/epic.json")"
+        else
+          EOUT="$("$DIR/notion.sh" epic create "$TITLE" --md "$D/body.md" --status Planning --tickets "$ALLPT" 2>/dev/null)" && { echo "$EOUT" | head -1; printf '%s\n' "$EOUT" | tail -1 > "$D/epic.json"; }
+        fi
       fi
       { echo "## Tickets"; cat "$D/tickets.md"; } > "$D/umbrella-tickets.md"
       "$DIR/notion.sh" ticket append "$PT" --md "$D/umbrella-tickets.md" >/dev/null 2>&1 || true
