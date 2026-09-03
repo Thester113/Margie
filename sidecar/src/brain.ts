@@ -1001,8 +1001,34 @@ export function depersonalize(s: string): string {
     .replace(/^(\s*)([a-z])/, (m, sp, c) => sp + c.toUpperCase());
 }
 
+/** Status questions are answered from the brief, never from memory: when Tom asks
+ *  "status / what's next / where are we", the matching dispatch's brief is fetched
+ *  BEFORE the model speaks and handed over as the source of truth. */
+const STATUS_RE = /\b(status|what'?s next|whats next|where are we|update on|how('?s| is| are) .{0,40}(going|coming|looking)|what have we done|what'?s (left|missing|done)|progress|what'?s on me)\b/i;
+async function preBrief(text: string): Promise<string> {
+  if (!STATUS_RE.test(text)) return "";
+  try {
+    const base = `${HOME}/.margie/dispatch`;
+    const dirs = readdirSync(base).filter((n) => n.startsWith("d-") && !n.includes("--"));
+    const words = (text.toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter((w) => !["what", "next", "status", "where", "work", "with", "this", "that", "have", "done"].includes(w));
+    let best = "", bestScore = -1;
+    for (const n of dirs) {
+      let title = "", state = "";
+      try { title = String(JSON.parse(readFileSync(`${base}/${n}/spec.json`, "utf8")).title || "").toLowerCase(); } catch { /* no spec */ }
+      try { state = readFileSync(`${base}/${n}/state`, "utf8").trim(); } catch { /* none */ }
+      const score = words.filter((w) => title.includes(w) || n.includes(w)).length + (state !== "closed" ? 0.5 : 0) + (statSync(`${base}/${n}`).mtimeMs / 1e15);
+      if (score > bestScore) { bestScore = score; best = n; }
+    }
+    if (!best) return "";
+    const out = await runBashRaw(`${SCRIPTS}/dispatch.sh brief ${best}`);
+    if (!out || out.startsWith("[")) return "";
+    return `\n\nCURRENT BRIEF (fetched for you — answer from THIS, not memory: lead with the answer in one sentence, name what's blocked and on whom, end with the next step as a statement):\n${out.slice(0, 6000)}`;
+  } catch { return ""; }
+}
+
 async function claudeTurn(rawText: string, history: ChatMsg[], source: string, conv?: string, speaker?: string, pub = false): Promise<string> {
   const { text, images } = extractImages(rawText);
+  const briefNote = speaker ? "" : await preBrief(text);
   if (images.length) logBrain(`IMAGES attached: ${images.map((i) => i.path).join(", ")}`);
   // With images the prompt is one user message with content blocks (streaming-input form).
   const prompt = images.length
@@ -1017,7 +1043,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
     + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns()
     + convNotes(conv)
     + (pub ? " PUBLIC ROOM: colleagues read this reply. Write for the room — no pet names, no aside to Tom, no asking Tom what to do here. If a decision is Tom's, say you'll check with him and stop; take the question to his DM (slack.sh dm) instead." : "");
-  const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
+  const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}${briefNote}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
   try {
     const q = query({
