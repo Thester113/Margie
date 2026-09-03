@@ -1,4 +1,4 @@
-import { mkdirSync, appendFileSync, readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { mkdirSync, appendFileSync, readFileSync, writeFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -29,6 +29,7 @@ export function logBrain(line: string) {
  */
 
 const HOME = process.env.HOME || "/";
+const MARGIE_DIR = `${HOME}/.margie`;
 // Margie's checkout. MARGIE_HOME overrides; otherwise derive it from this file
 // (sidecar/dist/index.js → repo root) so nothing depends on a hardcoded user path.
 const MARGIE_HOME =
@@ -126,7 +127,14 @@ const OUTWARD: RegExp[] = [
 const PENDING_TTL_MS = 3 * 60 * 1000;
 // Several commands can be held in one turn (e.g. two DMs); one "yes" releases
 // them all in order, anything else drops them all.
-let pending: { cmd: string; at: number }[] = [];
+const PENDING_FILE = `${MARGIE_DIR}/pending.json`;
+function loadPending(): { cmd: string; at: number }[] {
+  try { const a = JSON.parse(readFileSync(PENDING_FILE, "utf8")); return Array.isArray(a) ? a.filter((p) => Date.now() - p.at < 3 * 60_000) : []; } catch { return []; }
+}
+function savePending() { try { writeFileSync(PENDING_FILE, JSON.stringify(pending)); } catch { /* ignore */ } }
+// Held commands persist across a daemon restart (a rebuild) so Tom's "yes" or an
+// edit to a held message is never lost mid-conversation.
+let pending: { cmd: string; at: number }[] = loadPending();
 // Progress sink for the turn currently draining (daemon clients see tool/held
 // events; stdio and the app ignore them). Set by drain(), used by runBash*.
 let currentEmit: ((event: string, text: string) => void) | null = null;
@@ -224,7 +232,7 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
   }
   if (!confirmed && outward(cmd)) {
     if (/\b(slack\.sh\s+(send|reply|dm)|gmail\.sh\s+send|messages\.sh\s+send|agent-messages\.sh\s+(send|reply)|telnyx\.sh\s+(send|send-group)|research\.sh\s+post)\b/.test(cmd)) sendAttemptedThisTurn = true;
-    pending.push({ cmd, at: Date.now() });
+    pending.push({ cmd, at: Date.now() }); savePending();
     logBrain(`BASH HELD (awaiting Tom's yes, ${pending.length} held): ${cmd}`);
     currentEmit?.("held", cmd.slice(0, 120));
     let held =
@@ -1355,7 +1363,7 @@ async function drain() {
     // Confirm-first gate: held outward commands run only on Tom's short "yes".
     const fresh = pending.filter((p) => Date.now() - p.at < PENDING_TTL_MS);
     if (fresh.length && isAffirmative(text)) {
-      pending = [];
+      pending = []; savePending();
       const results: string[] = [];
       for (const held of fresh) {
         const out = await runBash(held.cmd, true);
@@ -1373,7 +1381,7 @@ async function drain() {
     // re-invoked under the guise of cancelling.
     if (pending.length && isNegative(text)) {
       logBrain(`HELD command(s) CANCELLED by Tom: ${pending.map((p) => p.cmd).join(" || ")}`);
-      pending = [];
+      pending = []; savePending();
       const spoken = "Cancelled, dearie — nothing was done.";
       history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
       trimHistory();
@@ -1383,7 +1391,7 @@ async function drain() {
     // Anything else drops the held command (Tom can re-ask or amend).
     if (pending.length) {
       logBrain(`HELD command(s) dropped: ${pending.map((p) => p.cmd).join(" || ")}`);
-      pending = [];
+      pending = []; savePending();
     }
     // Deterministic PR/MR-review dispatch — never let the model self-review.
     const fp = reviewFastPath(text);
