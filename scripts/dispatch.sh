@@ -469,6 +469,12 @@ case "$cmd" in
     need_d "${1:-latest}"
     spec_ready "$D" || { echo "The spec isn't ready yet, dearie." >&2; exit 1; }
     TITLE="$(jq -r .title "$D/spec.json")"
+    case "$(jq -r '.estimate // ""' "$D/spec.json")" in L|XL)
+      if ! has_breakdown "$D"; then
+        [ -f "$D/breakdown-running" ] || "$0" breakdown "$(basename "$D")" >/dev/null 2>&1
+        echo "That spec is $(jq -r .estimate "$D/spec.json") — I'm splitting it into tickets first so the MRs stay small, dearie. Say \"go\" again once the ticket list is up (a few minutes)."; exit 1
+      fi ;;
+    esac
     if has_breakdown "$D"; then desc "would file the umbrella ticket \"$TITLE\" plus $(jq '.tickets|length' "$D/breakdown.json") child tickets in Blocked-By order ($(jq -r '.tickets|map(.key + " " + .title)|join("; ")' "$D/breakdown.json")), $(jq '.test_cases|length' "$D/spec.json") test cases spread across them, a spec page, then start ONE Claude Code session on branch $(cfg branch_prefix | grep . || echo margie)/PT-…-$(jq -r .slug "$D/spec.json") in a worktree that works the tickets in order, one MR each"
     else desc "would file Notion ticket \"$TITLE\" with $(jq '.test_cases|length' "$D/spec.json") test cases and a spec page, then start a Claude Code session on branch $(cfg branch_prefix | grep . || echo margie)/PT-…-$(jq -r .slug "$D/spec.json") in a worktree"; fi
     "$0" file "$(basename "$D")" || exit 1
@@ -566,6 +572,10 @@ case "$cmd" in
             st "$D" spec-ready
             publish_draft "$D"
             announce "The spec for \"$(jq -r .title "$D/spec.json")\" is ready, dearie — $(jq '.acceptance_criteria|length' "$D/spec.json") criteria, $(jq '.test_cases|length' "$D/spec.json") tests, $(jq -r .security.risk_label "$D/spec.json").$( [ -s "$D/draft-page.url" ] && echo " The draft is in Notion." )"
+            # Small MRs by default: a Large/XL spec is split into tickets right away.
+            case "$(jq -r '.estimate // ""' "$D/spec.json")" in L|XL)
+              "$0" breakdown "$(basename "$D")" >/dev/null 2>&1 && announce "It's a big one ($(jq -r .estimate "$D/spec.json")), so I'm splitting it into tickets for smaller MRs — the list follows in a few minutes." ;;
+            esac
           elif [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" = "FAILED" ]; then
             st "$D" spec-failed
             announce "The spec run for $(basename "$D") failed, dearie."

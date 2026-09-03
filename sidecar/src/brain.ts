@@ -530,6 +530,9 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   threads and any reviewer's go into the session to address. If the process
   notes name an agent reviewer, ask for their review via agent-messages.sh
   (held) when the MR touches their area.
+- SMALL MRs: Large/XL specs are always split into S/M tickets before filing
+  (automatic on spec-ready; "go" refuses to file a big spec whole). S/M specs
+  stay one ticket, one MR.
 - ONE TICKET AT A TIME: with a breakdown, "go" files every ticket and starts a
   session for the FIRST non-spike ticket only, on its own branch; when its MR
   merges the next ticket starts by itself. dispatch.sh status shows "tickets
