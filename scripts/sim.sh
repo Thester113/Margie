@@ -14,6 +14,11 @@
 #
 # Nothing here is OUTWARD (no sends, no merges); it only drives a local sim.
 set -uo pipefail
+# Ensure the iOS/Flutter toolchain is findable no matter who invokes us (the
+# daemon poller and the brain run with a thin PATH). Flutter shells out to
+# `pod` (CocoaPods) during an iOS build; without asdf shims / Homebrew on PATH
+# it dies with "CocoaPods not installed or not in valid state".
+export PATH="$HOME/.asdf/shims:/opt/homebrew/bin:/usr/local/bin:$HOME/development/flutter/bin:$PATH"
 CFG="$HOME/.margie/config.json"
 cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
 FLUTTER="$(command -v flutter || echo "$HOME/development/flutter/bin/flutter")"
