@@ -94,9 +94,9 @@ case "$cmd" in
           printf '%s' "$ACT" > "$ST/$S.act"
           # Claude Code sets the PANE title to a task summary; prefer it, then a PT from
           # a worktree session name, then the window name.
-          WLABEL="$("$TMUX_BIN" display -t "$S" -p '#{pane_title}' 2>/dev/null | sed 's/^[✳✻* ]*//' | cut -c1-40)"
+          WLABEL="$("$TMUX_BIN" display -t "$S" -p '#{pane_title}' 2>/dev/null | sed 's/^[^A-Za-z0-9#/]*//; s/^ *//' | cut -c1-40)"
           case "$WLABEL" in ""|bash|zsh|node|*/*|*"$S"*) WLABEL="$(printf '%s' "$S" | grep -oE 'PT-[0-9]+' | head -1)";; esac
-          [ -z "$WLABEL" ] && WLABEL="$("$TMUX_BIN" display -t "$S" -p '#{window_name}' 2>/dev/null | sed 's/^[✳✻* ]*//' | cut -c1-40)"
+          [ -z "$WLABEL" ] && WLABEL="$("$TMUX_BIN" display -t "$S" -p '#{window_name}' 2>/dev/null | sed 's/^[^A-Za-z0-9#/]*//; s/^ *//' | cut -c1-40)"
           case "$WLABEL" in ""|bash|zsh|node) WLABEL="$S";; esac
           echo "[$WLABEL] $ACT"
         fi
