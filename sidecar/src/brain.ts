@@ -159,7 +159,7 @@ const BASH_TOOL = {
   function: {
     name: "bash",
     description:
-      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, mr.sh, standup.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh, research.sh, usage.sh, telnyx.sh, notes.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
+      `Run a shell command on Tom's Mac to carry out a request — typically a helper script in ${SCRIPTS} (slack.sh, jira.sh, gmail.sh, calendar.sh, media.sh, browser.sh, screenshot.sh, camera.sh, kickoff-claude.sh, claude-task.sh, dispatch.sh, mr.sh, standup.sh, worktree.sh, forge.sh, notion.sh, agent-messages.sh, appsignal.sh, research.sh, usage.sh, telnyx.sh, notes.sh, sim.sh), or read-only git/${FORGE_CLI}/ls/rg. Returns combined stdout/stderr. Destructive or outward commands (${GL ? 'glab mr approve/merge' : 'gh pr review/merge'}, git push/commit, rm, sudo) are refused — dispatch those to a Warp session via a helper script instead.`,
     parameters: {
       type: "object",
       properties: { command: { type: "string", description: "The shell command to run." } },
@@ -692,6 +692,16 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   do you ask for his "merge". Session permission prompts are answered yes for
   Tom by the watcher; only dangerous ones (force push, reset, secrets, deploys)
   are escalated — those you relay as "on you".
+- UI MRs GET EYES BEFORE MERGE (Tom's rule): an MR that touches the UI (mobile
+  app / anything under a repo's ui_review_paths) is NEVER auto-merged. When it is
+  green, tick boots the branch in the iOS simulator, has a session make the
+  change visible (demo data + feature flag) and screenshot the screen, opens that
+  shot on Tom's Mac, pings him on Slack and leaves the sim running — then WAITS
+  for his explicit "merge". So for a UI MR, never say it merged on its own: relay
+  "booted it in the sim, screenshot's on your Mac — say merge when it looks
+  right", and only merge on his word. Backend-only MRs still auto-merge as above.
+  ${SCRIPTS}/sim.sh boots/runs/screenshots the simulator (sim.sh run <wt> --subdir
+  mobile / sim.sh shot); you don't drive it inline — tick and the verify session do.
 - SLACK THREADS: to answer in a specific thread, pass the permalink as the target:
   slack.sh reply "<https://…/archives/C…/p…?thread_ts=…>: <message>" — the reply
   lands in that thread. Never read the helper's source or guess flags.

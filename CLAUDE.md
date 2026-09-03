@@ -113,6 +113,14 @@
   commit. Merging is Tom's word: `dispatch.sh merge` → `mr.sh merge` (OUTWARD;
   a solicited "merge" confirms). `session.sh needs` (poller) reports sessions
   stuck on prompts, idle questions, and endings.
+- **UI MRs get a visual review before merge** (`ui_review`, Tom's rule): an MR
+  whose diff touches `ui_review_paths[<repo>]` (e.g. `mobile/`) is never
+  auto-merged. When it goes green, `tick` boots the branch in the iOS simulator
+  (`sim.sh`), kicks a session to make the change visible (demo data + feature
+  flag, per `~/.margie/process/<repo>.md`) and screenshot it, then opens the shot
+  on Tom's Mac, Slack-pings him and leaves the sim running — merge waits for his
+  explicit "merge". Backend-only MRs auto-merge as before. `mr.sh resolve`
+  resolves review threads once a session has addressed them.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on a ≤6-word affirmative within 3 minutes; anything else

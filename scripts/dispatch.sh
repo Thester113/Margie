@@ -35,6 +35,23 @@ st() { # st <dir> [new-state]
   if [ $# -gt 1 ]; then printf '%s' "$2" > "$1/state"; else cat "$1/state" 2>/dev/null || echo "unknown"; fi
 }
 dmeta() { jq -r ".$2 // empty" "$1/d.json" 2>/dev/null; }
+# is_ui_change <worktree> <repo-name> — 0 if this branch's diff touches a UI path
+# (config ui_review_paths[<repo>], e.g. ["mobile/"]); 1 otherwise. Backend-only
+# MRs return 1 so they never trigger the simulator visual-review gate.
+is_ui_change() {
+  local wt="$1" repo="$2" pats f
+  [ "$(cfgd ui_review true)" = true ] || return 1
+  pats="$(jq -r --arg r "$repo" '.ui_review_paths[$r][]? // empty' "$CFG" 2>/dev/null)"
+  [ -z "$pats" ] && return 1   # no UI paths configured for this repo -> not a UI MR
+  local files; files="$(git -C "$wt" diff --name-only origin/main...HEAD 2>/dev/null)"
+  [ -z "$files" ] && return 1
+  while IFS= read -r p; do [ -z "$p" ] && continue
+    printf '%s\n' "$files" | grep -q "^$p" && return 0
+  done <<EOF
+$pats
+EOF
+  return 1
+}
 resolve_d() { # id | PT-### | latest | fuzzy word -> dispatch dir (follows the PT symlink)
   local x="${1:-latest}" p m
   [ "$x" = "latest" ] && { ls -td "$MDIR"/d-* 2>/dev/null | grep -v -- '--' | head -1; return; }
@@ -800,7 +817,30 @@ case "$cmd" in
                 if [ "$(jq -r '.reviews_seen // false' "$D/mr-check.json")" = true ]; then
                   { [ "$(jq -r '.reviews_done // false' "$D/mr-check.json")" = true ] && [ "$(jq -r '.bot_notes // 0' "$D/mr-check.json")" -gt 0 ]; } || BOTS_OK=0
                 fi
-                if [ "$PSTAT" = success ] && [ "$UNRES" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ "$REVIEW_OK" = 1 ] && [ "$BOTS_OK" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
+                GATE_GREEN=0
+                { [ "$PSTAT" = success ] && [ "$UNRES" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ "$REVIEW_OK" = 1 ] && [ "$BOTS_OK" = 1 ]; } && GATE_GREEN=1
+                REPO_NAME="$(basename "$(dmeta "$D" repo)")"
+                if [ "$GATE_GREEN" = 1 ] && is_ui_change "$WT" "$REPO_NAME"; then
+                  # Tom's rule (2026-09-03): a UI-touching MR is NEVER auto-merged. Margie boots
+                  # it in the simulator, verifies it visually, shows Tom (screenshot opened on his
+                  # Mac + Slack ping, sim left running) and waits for his explicit "merge". Backend
+                  # MRs skip all of this (is_ui_change returns false).
+                  if [ "$(cat "$D/ui-verified-sha" 2>/dev/null)" = "$SHA" ]; then
+                    :   # already shown for this commit — holding for Tom's word
+                  elif [ -s "$D/ui-shot.png" ]; then
+                    open "$D/ui-shot.png" >/dev/null 2>&1 || true
+                    "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): UI MR !$IID ($PT) is green and ready — I booted it in the simulator; the screenshot is open on your Mac and the sim is still up. Review it and say \"merge\" when it looks right. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)" >/dev/null 2>&1 || true
+                    echo "$SHA" > "$D/ui-verified-sha"
+                    announce "MR !$IID for $PT touches the UI, dearie — I booted it in the simulator and captured a screenshot (open on your Mac, sim still running, and I pinged you on Slack). I won't merge a UI change without your eyes: say \"merge\" when it looks right."
+                  elif [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ]; then
+                    echo "$SHA" > "$D/ui-verify-kicked"; rm -f "$D/ui-shot.png"
+                    SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"
+                    VP="You are on branch $BR (ticket $PT) for a UI change now under visual review. Do NOT merge, open, or modify the MR. Steps: (1) boot and run this branch in the iOS simulator: sim.sh run \"$WT\"${SUBDIR:+ --subdir $SUBDIR} ; (2) make THIS ticket's UI change visible - seed demo data and turn on any feature flag it sits behind (the app's demo mode + Firebase Remote Config; the change is described in the ticket/spec), editing only locally for viewing, never committing; (3) navigate to the exact screen this MR changes; (4) capture it: sim.sh shot --out \"$D/ui-shot.png\" ; (5) print MARGIE_UI_SHOT $D/ui-shot.png on its own line and STOP, leaving the sim running. If you cannot reach the exact screen, screenshot the closest relevant one and say which."
+                    if tmux has-session -t "$SESS" 2>/dev/null; then "$DIR/session.sh" send "$VP" --branch "$BR" >/dev/null 2>&1
+                    else "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$VP" >/dev/null 2>&1; fi
+                    announce "MR !$IID for $PT touches the UI - booting it in the simulator to verify visually before any merge, dearie."
+                  fi
+                elif [ "$GATE_GREEN" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
                   echo "$SHA" > "$D/merge-ready"
                   # Tom's explicit instruction (2026-09-03): a green MR with every thread resolved is
                   # merged by Margie herself (config auto_merge, default true); no "say merge" step.
