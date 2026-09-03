@@ -34,6 +34,7 @@
   "slack_owner_id": "U0AAAAAAAAA",
   "owner_first_name": "Tom",
   "pronouns": { "Cody Poll": "they/them" },
+  "conversation_notes": { "C0XXXXXXXXX": "Group DM with X. X asked: track work in Notion, don't post status here; reply only when addressed." },
   "_slack_watch": "Watcher for @Margie and @<owner> mentions in channels the bot is in: off | preview (drafts DM'd to the owner, nothing posted) | live (replies in-thread as the owner's assistant). slack_owner_id: the owner's Slack user id (falls back to the agent roster).",
   "slack_user_token": "xoxp-...",
   "slack_token": "xoxb-...",

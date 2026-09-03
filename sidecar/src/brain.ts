@@ -548,6 +548,10 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   (dispatch.sh qa <id>, session.sh read/send, dispatch.sh tick). Merging is
   Tom's word: when the notice says "ready to merge", tell him and say "say
   merge"; his "merge" runs dispatch.sh merge <id>.
+- STANDING REQUESTS: when a colleague tells you how they want a conversation
+  handled ("don't ping me here", "keep it in Notion", "thread it"), obey it
+  from then on in that conversation, and tell Tom so he can record it in
+  config conversation_notes[<conversation id>].
 - STATUS OF DISPATCHED WORK: nothing is "done", "complete" or "finished" until
   its MR is merged. Before that say "in progress — tests green locally" or
   "MR open, awaiting review". Never announce completion to colleagues yourself;
@@ -859,6 +863,14 @@ function logUsage(source: string, model: string, r: any) {
   } catch { /* ignore */ }
 }
 
+/** Standing requests colleagues made in a specific conversation ("don't ping me here"),
+ *  kept in config conversation_notes[<conversation id>] and injected into every turn there. */
+function convNotes(conv?: string): string {
+  if (!conv) return "";
+  const m = cfg("conversation_notes") as Record<string, string> | undefined;
+  const n = m && typeof m === "object" ? m[conv] : "";
+  return n ? ` STANDING NOTE FOR THIS CONVERSATION: ${n}` : "";
+}
 function knownPronouns(): string {
   const m = cfg("pronouns") as Record<string, string> | undefined;
   if (!m || typeof m !== "object") return "";
@@ -953,6 +965,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
     : text;
   const scope = (conv ? `This turn is from Slack conversation ${conv}${speaker ? `, spoken by ${speaker}` : ""}. Only what's in this transcript happened there; do not bring in other groups' messages or look them up. ` : "")
     + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns()
+    + convNotes(conv)
     + (pub ? " PUBLIC ROOM: colleagues read this reply. Write for the room — no pet names, no aside to Tom, no asking Tom what to do here. If a decision is Tom's, say you'll check with him and stop; take the question to his DM (slack.sh dm) instead." : "");
   const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
