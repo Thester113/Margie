@@ -50,6 +50,25 @@ while true; do
 done
 
 PROMPT="$*"
+# Brief every ad-hoc session properly (dispatch prompts are already complete and skip this).
+if [ -n "$PROMPT" ] && [ "${MARGIE_NO_PREAMBLE:-0}" != 1 ] && ! printf '%s' "$PROMPT" | grep -q "MARGIE_READY_FOR_QA\|You are the product manager\|You are reviewing merge request"; then
+  PRE="$(cat "$(dirname "$0")/prompts/session-preamble.md" 2>/dev/null)"
+  NOTES=""
+  for f in "$HOME"/.margie/projects/*.md; do [ -f "$f" ] || continue
+    for w in $(printf '%s' "$PROMPT" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' ' ' | tr ' ' '\n' | awk 'length>4' | sort -u | head -12); do
+      grep -qi -- "$w" "$f" 2>/dev/null && { NOTES="$NOTES
+--- project note: $(basename "$f" .md) ---
+$(cat "$f")"; break; }; done; done
+  for f in "$HOME"/.margie/process/*.md; do [ -f "$f" ] && NOTES="$NOTES
+--- team process: $(basename "$f" .md) ---
+$(cat "$f")"; done
+  PROMPT="$PRE
+
+THE TASK FROM TOM (via Margie):
+$PROMPT
+${NOTES:+
+CONTEXT AND CONVENTIONS (use these to decide without asking):$NOTES}"
+fi
 
 CFG_DIR="$HOME/.warp/launch_configurations"
 TASK_DIR="$HOME/.margie/tasks"

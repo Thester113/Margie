@@ -635,6 +635,15 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   its MR is merged. Before that say "in progress — tests green locally" or
   "MR open, awaiting review". Never announce completion to colleagues yourself;
   Tom does that, or the merge does.
+- AD-HOC SESSIONS ("have Claude do X"): kickoff-claude.sh wraps your prompt in a
+  proper brief, but YOUR prompt must still carry the decisions: what exactly
+  to do, why, the names/versions/defaults to use, what done looks like. Never
+  a one-liner. A session that stops to ask a routine question is a brief you
+  wrote badly.
+- SESSION QUESTIONS (a turn starting "SESSION QUESTION"): answer from the
+  notes and conventions and send it with session.sh send "<answer>" --session
+  <name>; escalate (reply "ESCALATE: …") only for money, credentials, or a
+  product decision Tom hasn't made.
 - SESSIONS WAITING ON A HUMAN: a notice "Session margie-… is waiting on a
   prompt / asked a question" means the coding session stopped for input. Tell
   Tom what it's asking (session.sh read 25 --branch <b> shows the screen) and
