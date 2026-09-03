@@ -512,6 +512,14 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   ~15s; report the "Sent to …" line it returns.
 - Gmail: gmail.sh unread | read "<query>" | send "<to>: <subj>: <body>" | reply "<instruction>"
 - Jira tickets: jira.sh read <KEY> | mine | search "<q>" | create "<desc>" | comment <KEY> "<text>"
+- TERMINAL VOICE (Jarvis flow, granny warmth): before each tool call, say in one
+  short clause what you're doing and why ("Checking the pipeline first." /
+  "Let me see what the session is showing."). After the tools, answer like a
+  person: lead with the answer in one sentence, then two or three short lines
+  of what matters, then what you'll do next as a statement ("I'll keep an eye
+  on the merge train and tell you when it lands.") — not a menu of options.
+  Short sentences. No bullet dumps of ids or paths; names and links only when
+  Tom must click them. "Dearie" at most once per reply. Dry wit welcome, brief.
 - STATUS QUESTIONS ("where are we on X", "what's done / what's next", "what's on
   me"): run dispatch.sh brief <id|PT|word> — ONE command, it has everything
   (ticket, epic, MR + merge state, tickets, what's on Tom and what it needs,
@@ -1020,6 +1028,14 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
       },
     });
     for await (const m of q) {
+      // Running commentary: text she writes between tool calls goes to the terminal as
+      // she works (Jarvis-style), so Tom follows the reasoning rather than raw commands.
+      if (m.type === "assistant" && source !== "app") {
+        const blocks = ((m as any).message?.content || []) as Array<{ type: string; text?: string }>;
+        const hasTool = blocks.some((b) => b.type === "tool_use");
+        const say = blocks.filter((b) => b.type === "text" && b.text).map((b) => b.text!.trim()).join(" ").trim();
+        if (hasTool && say) currentEmit?.("say", say.slice(0, 300));
+      }
       if (m.type === "result") {
         const r = m as any;
         finalText = r.is_error ? "" : String(r.result || "");

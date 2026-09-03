@@ -26,7 +26,7 @@ export interface WireIn {
 export interface WireOut {
   id?: number;
   text?: string;
-  event?: "tool" | "result" | "thinking" | "held" | "notice";
+  event?: "tool" | "result" | "thinking" | "held" | "notice" | "say";   // say = her running commentary between tool calls
   op?: "status" | "pong" | "stopping";
   [k: string]: unknown;
 }

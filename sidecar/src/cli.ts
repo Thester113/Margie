@@ -91,12 +91,38 @@ class Spinner {
 }
 
 // ── Event rendering (shared by REPL and one-shot) ─────────────────────────────
+/** What a helper command means, in words — the terminal shows this instead of the raw
+ *  command (the raw line is one /verbose away). Keeps her actions followable. */
+let VERBOSE = false;
+function describeCmd(cmd: string): string {
+  const c = cmd.trim();
+  const rules: Array<[RegExp, string]> = [
+    [/^dispatch\.sh\s+brief/, "pulling the project brief"], [/^dispatch\.sh\s+status/, "checking the dispatch board"],
+    [/^dispatch\.sh\s+show/, "reading the spec"], [/^dispatch\.sh\s+spec/, "sending the request to the planner"],
+    [/^dispatch\.sh\s+amend/, "folding that into the spec"], [/^dispatch\.sh\s+breakdown/, "splitting it into tickets"],
+    [/^dispatch\.sh\s+(go|file)/, "filing the tickets and starting the session"], [/^dispatch\.sh\s+qa/, "running QA"],
+    [/^dispatch\.sh\s+merge/, "merging the MR"], [/^dispatch\.sh\s+tick/, "advancing the pipeline"],
+    [/^session\.sh\s+read/, "reading the session screen"], [/^session\.sh\s+send/, "steering the session"],
+    [/^session\.sh\s+needs/, "checking whether a session is stuck"], [/^session\.sh\s+list/, "listing sessions"],
+    [/^slack\.sh\s+channels/, "listing Slack rooms"], [/^slack\.sh\s+read/, "reading Slack"], [/^slack\.sh\s+(send|reply|dm)/, "posting to Slack"],
+    [/^notion\.sh\s+ticket\s+read/, "reading the ticket"], [/^notion\.sh\s+(read|rows|query|find|search)/, "looking in Notion"], [/^notion\.sh/, "writing to Notion"],
+    [/^mr\.sh\s+check/, "checking the MR"], [/^mr\.sh\s+(create|update)/, "writing the MR"], [/^mr\.sh\s+merge/, "merging the MR"],
+    [/^forge\.sh/, "asking GitLab"], [/^research\.sh\s+start/, "starting background research"], [/^research\.sh\s+show/, "reading the research"],
+    [/^research\.sh\s+post/, "posting the research"], [/^usage\.sh/, "totting up spend"], [/^claude-task\.sh/, "checking background tasks"],
+    [/^appsignal\.sh/, "checking AppSignal"], [/^standup\.sh/, "working on the standup"], [/^agent-messages\.sh/, "checking agent messages"],
+    [/^telnyx\.sh/, "talking to Telnyx"], [/^kickoff-claude\.sh/, "starting a Claude session"], [/^git\b/, "looking at git"],
+  ];
+  for (const [re, words] of rules) if (re.test(c)) return words;
+  return short(c, 70);
+}
+
 function renderEvent(m: WireOut, spin: Spinner, out: NodeJS.WriteStream) {
   const text = tidyCmd(m.text || "");
   spin.clear();
   switch (m.event) {
     case "thinking": spin.set(text || "thinking"); return;
-    case "tool":     out.write(`${GREY}   ▸ ${LAV}${short(text)}${RESET}\n`); spin.set("running"); return;
+    case "say":      out.write(`${PINK}   ·${RESET} ${text}\n`); spin.set("working"); return;
+    case "tool":     out.write(`${GREY}   ▸ ${describeCmd(text)}${VERBOSE ? `  ${DIM}${short(text, 90)}${RESET}` : ""}${RESET}\n`); spin.set("running"); return;
     case "result":   out.write(`${GREY}   ⎿ ${short(text, 130)}${RESET}\n`); spin.set("thinking"); return;
     case "held":     out.write(`${PEACH}   ⏸ waiting for your yes: ${short(text)}${RESET}\n`); spin.set("reading back"); return;
     default: return;
@@ -181,6 +207,7 @@ const HELP = `${PINK}✿${RESET} ${NAME} ${GREY}— your assistant, dearie. One 
   ${CYAN}/usage${RESET}    Claude spend today (${CYAN}/usage week${RESET})
   ${CYAN}/held${RESET}     what's waiting for your yes      ${CYAN}/yes${RESET}  ${CYAN}/no${RESET}   answer it
   ${CYAN}/spec${RESET}     latest spec in full             ${CYAN}/qa${RESET}   ${CYAN}/mr${RESET}    latest QA report / MR text
+  ${CYAN}/verbose${RESET}  show the raw commands behind her steps
   ${CYAN}/log${RESET}      her recent brain log            ${CYAN}/clear${RESET}     ${CYAN}/quit${RESET}
   ${GREY}▸ what she ran   ⎿ what it said   ⏸ waiting for your yes   ✿ something she noticed in the background${RESET}`;
 
@@ -224,6 +251,7 @@ async function repl() {
     if (text === "/status") { await cmdStatus(); held = await heldSummary(c); return; }
     if (text === "/held") { console.log(held ? `${YEL}⏸ ${held}${RESET}` : `${DIM}nothing held${RESET}`); return; }
     if (text === "/usage" || text === "/usage week") { spawnSync(`${SCRIPTS}/usage.sh`, [text.endsWith("week") ? "week" : "today"], { stdio: "inherit" }); return; }
+    if (text === "/verbose") { VERBOSE = !VERBOSE; console.log(`${DIM}raw commands ${VERBOSE ? "shown" : "hidden"}${RESET}`); return; }
     if (text === "/log") { spawnSync("tail", ["-25", `${HOME}/.margie/brain.log`], { stdio: "inherit" }); return; }
     if (text === "/spec" || text === "/qa" || text === "/mr") {
       const f = latestDispatchFile(text.slice(1) as "spec" | "qa" | "mr");
