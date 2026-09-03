@@ -119,17 +119,26 @@ case "$cmd" in
       fi
       [ "$(cat "$ST/$S.told" 2>/dev/null || true)" = "$H" ] && continue   # already announced this screen
       echo "$H" > "$ST/$S.told"
+      SNIP="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | tail -3 | tr '\n' ' ' | cut -c1-220)"
       # A session that asked a question gets its answer from Margie's brain — she knows the
       # project notes and conventions. She escalates only money, credentials or product calls.
       if printf '%s' "$WHY" | grep -q "asked a question" && [ -x "$MARGIE_CLI" ] && [ "$(jq -r '.session_autoanswer // true' "$HOME/.margie/config.json" 2>/dev/null)" = true ]; then
         Q="$(printf '%s' "$CONTENT" | tail -25)"
-        ANS="$(MARGIE_SOURCE=session "$MARGIE_CLI" -q "SESSION QUESTION. Coding session '$S' stopped and asked something; its last lines follow. If the answer is within your knowledge/conventions (names, versions, defaults, order of work, what Tom already decided), ANSWER IT by running: session.sh send "<your answer>" --session $S — then reply with one line saying what you told it. If it needs money, credentials, or a product decision Tom has not made, do NOT send anything; reply exactly: ESCALATE: <one-line question for Tom>.
+        ASK="$(cat <<'EOT'
+SESSION QUESTION. A coding session stopped and asked something; its last lines follow. If the answer is within your knowledge and conventions (names, versions, defaults, order of work, what Tom already decided), ANSWER IT by running session.sh send "<your answer>" --session SESSION_NAME, then reply with one line saying what you told it. If it needs money, credentials, or a product decision Tom has not made, do NOT send anything and reply exactly: ESCALATE: <one-line question for Tom>.
+EOT
+)"
+        ASK="${ASK//SESSION_NAME/$S}"
+        ANS="$(MARGIE_SOURCE=session "$MARGIE_CLI" -q "$ASK
 ---
 $Q" 2>/dev/null)"
-        case "$ANS" in ESCALATE:*) echo "Session $S needs Tom: ${ANS#ESCALATE:}" ;; "") echo "Session $S $WHY: $SNIP" ;; *) echo "Session $S asked a question — I answered it: $(printf '%s' "$ANS" | head -1 | cut -c1-200)" ;; esac
+        case "$ANS" in
+          ESCALATE:*) echo "Session $S needs Tom: ${ANS#ESCALATE:}" ;;
+          "") echo "Session $S $WHY: $SNIP" ;;
+          *) echo "Session $S asked a question — I answered it: $(printf '%s' "$ANS" | head -1 | cut -c1-200)" ;;
+        esac
         continue
       fi
-      SNIP="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | tail -3 | tr '\n' ' ' | cut -c1-220)"
       echo "Session $S is $WHY: $SNIP"
     done
     ;;
