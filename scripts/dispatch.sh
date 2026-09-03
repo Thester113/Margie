@@ -685,7 +685,7 @@ case "$cmd" in
                   else
                     rm -f "$D/review-approved"
                     FND="$(jq -r '[.findings[] | select(.severity=="blocker" or .severity=="major") | .severity + " " + .file + (if .line then ":" + (.line|tostring) else "" end) + " — " + .issue + " → " + .fix] | join(" | ")' "$D/review.json" | cut -c1-1800)"
-                    "$DIR/session.sh" send "Review of MR !$IID requested changes: $FND. Address each one, keep tests green, commit and push to the MR, then print MARGIE_MR_UPDATED." --branch "$BR" >/dev/null 2>&1
+                    "$DIR/session.sh" send "Review of MR !$IID requested changes: $FND. Address each one, keep tests green, commit and push to the MR, then print MARGIE_MR_UPDATED and STOP — do not poll the pipeline, Margie watches it." --branch "$BR" >/dev/null 2>&1
                     announce "Review of MR !$IID for $PT asked for changes — I've sent them into the session to fix, dearie: $(jq -r .summary_spoken "$D/review.json")"
                   fi
                   cp "$D/review.json" "$D/review-$(date +%H%M).json"
@@ -705,7 +705,7 @@ case "$cmd" in
                 # pipeline failed -> once per pipeline, send it back
                 if [ "$PSTAT" = failed ] && [ -n "$PID" ] && [ "$(cat "$D/pipeline-failed" 2>/dev/null)" != "$PID" ]; then
                   echo "$PID" > "$D/pipeline-failed"
-                  "$DIR/session.sh" send "The MR pipeline failed: $(jq -r .pipeline_url "$D/mr-check.json"). Read the failing job logs (glab ci view / glab api), fix the cause, commit and push, then print MARGIE_MR_UPDATED." --branch "$BR" >/dev/null 2>&1
+                  "$DIR/session.sh" send "The MR pipeline failed: $(jq -r .pipeline_url "$D/mr-check.json"). Read the failing job logs (glab ci view / glab api), fix the cause, commit and push, then print MARGIE_MR_UPDATED and STOP — Margie watches the pipeline." --branch "$BR" >/dev/null 2>&1
                   announce "Pipeline failed on MR !$IID for $PT — I've sent it back to the session to fix, dearie."
                 fi
                 # ready to merge -> tell Tom once per commit; merging is his word (dispatch.sh merge)
@@ -713,10 +713,11 @@ case "$cmd" in
                 if [ "$PSTAT" = success ] && [ "$UNRES" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ "$REVIEW_OK" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
                   echo "$SHA" > "$D/merge-ready"
                   announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, every review thread resolved$( [ -f "$D/review-approved" ] && echo ", my review clean" || echo " (review rounds used up; the findings were addressed in the threads)"). Say \"merge\" and I'll merge it."
-                elif [ "$(jq -r .unresolved "$D/mr-check.json")" != 0 ] && [ "$(cat "$D/threads-told" 2>/dev/null)" != "$SHA:$(jq -r .unresolved "$D/mr-check.json")" ]; then
-                  echo "$SHA:$(jq -r .unresolved "$D/mr-check.json")" > "$D/threads-told"
-                  "$DIR/session.sh" send "MR !$IID has $(jq -r .unresolved "$D/mr-check.json") unresolved review thread(s). Use the repo's /address-mr-reviews skill to address them, push, and resolve the threads you fixed; then print MARGIE_MR_UPDATED." --branch "$BR" >/dev/null 2>&1
-                  announce "MR !$IID for $PT has review comments — I've asked the session to address them, dearie."
+                elif [ "$UNRES" != 0 ] && [ $(( $(date +%s) - $(cat "$D/threads-told-at" 2>/dev/null || echo 0) )) -gt 900 ]; then
+                  # once per fix cycle (15 min), not once per thread-count change
+                  date +%s > "$D/threads-told-at"
+                  "$DIR/session.sh" send "MR !$IID has $UNRES unresolved review thread(s). Use the repo's /address-mr-reviews skill to address them, push, and resolve the threads you fixed; then print MARGIE_MR_UPDATED and STOP — do not poll the pipeline, Margie watches it and will tell you if anything fails." --branch "$BR" >/dev/null 2>&1
+                  announce "MR !$IID for $PT has $UNRES review thread(s) — the session is addressing them, dearie."
                 fi
                 fi  # mr-check.json
               fi

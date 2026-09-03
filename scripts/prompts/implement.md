@@ -27,7 +27,9 @@ CONVENTIONS
   finished (watch it with glab ci status / glab mr view). Anything that must
   cite the MR number (e.g. sabotage records) is pushed after that. Review
   threads then arrive; address every one, push, and resolve the threads you
-  fixed — the MR is mergeable only when all threads are resolved.
+  fixed — the MR is mergeable only when all threads are resolved. After any
+  push, print MARGIE_MR_UPDATED and STOP; never sit polling the pipeline —
+  Margie watches it and comes back to you only if something fails.
   If it fails you will be given the findings; fix them, then print
   MARGIE_READY_FOR_QA again.
 - If the spec turns out to be wrong or an open question blocks you, say so
