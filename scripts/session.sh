@@ -92,11 +92,11 @@ case "$cmd" in
       WHY=""
       # Claude Code's chrome (status bar, separators, the input box, update banner) is not content.
       CONTENT="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|^ *⏵⏵|^ *───|Update installed|esc to interrupt|^ *❯' )"
-      LAST="$(printf '%s' "$CONTENT" | tail -1)"
+      LAST="$(printf '%s' "$CONTENT" | tail -3 | tr '\n' ' ')"   # a question often wraps over 2-3 terminal lines
       WORKING=0; printf '%s' "$TAIL" | grep -q "esc to interrupt" && WORKING=1
       if printf '%s' "$TAIL" | grep -qE 'Enter to confirm|Esc to cancel|Do you want to|Yes, I trust|Yes, and don.t ask|\(y/n\)|\[Y/n\]|\[y/N\]|No, and tell Claude|Allow (once|always)|Press Enter|❯ *1\.|^ *1\. Yes'; then WHY="waiting on a prompt"
       elif printf '%s' "$PANE" | grep -q "MARGIE_READY_FOR_QA" && [ "$WORKING" = 0 ]; then WHY="finished coding and is ready for QA"
-      elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 120 ] && printf '%s' "$LAST" | grep -qiE '\?$|\b(shall i|should i|want me to|would you like|let me know|say the word|ready to|waiting for)\b'; then WHY="asked a question and has been idle $((IDLE/60)) min"
+      elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 120 ] && printf '%s' "$LAST" | grep -qiE '\?|\b(shall i|should i|want me to|would you like|let me know|say the word|ready to|waiting for|tell me)\b'; then WHY="asked a question and has been idle $((IDLE/60)) min"
       fi
       [ -z "$WHY" ] && continue
       # Tom's explicit instruction (2026-09-03): Margie answers the session's permission
