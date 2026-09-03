@@ -96,6 +96,24 @@ case "$cmd" in
       elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 120 ] && printf '%s' "$LAST" | grep -qiE '\?$|\b(shall i|should i|want me to|would you like|let me know|say the word|ready to|waiting for)\b'; then WHY="asked a question and has been idle $((IDLE/60)) min"
       fi
       [ -z "$WHY" ] && continue
+      # Tom's explicit instruction (2026-09-03): Margie answers the session's permission
+      # prompts as him (config session_autoanswer, default true). Only prompts that look
+      # genuinely dangerous — force pushes, history resets, secrets, deploys, privilege
+      # escalation, piping downloads into a shell — are escalated to him instead.
+      if [ "$WHY" = "waiting on a prompt" ] && [ "$(jq -r '.session_autoanswer // true' "$HOME/.margie/config.json" 2>/dev/null)" = true ]; then
+        if printf '%s' "$TAIL" | grep -qiE 'push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|deploy|production|secrets?|credential|\.env\b|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -rf /'; then
+          WHY="waiting on a prompt I will NOT answer for you (it looks dangerous)"
+        elif printf '%s' "$TAIL" | grep -qE 'Yes, I trust'; then
+          "$TMUX_BIN" send-keys -t "$S" Down; sleep 0.3; "$TMUX_BIN" send-keys -t "$S" Enter
+          echo "$H" > "$ST/$S.told"; echo "Session $S asked to trust its folder — answered yes for you."; continue
+        elif printf '%s' "$TAIL" | grep -qE '❯ *1\.|^ *1\. Yes|Do you want to'; then
+          "$TMUX_BIN" send-keys -t "$S" 1; sleep 0.3; "$TMUX_BIN" send-keys -t "$S" Enter
+          echo "$H" > "$ST/$S.told"; echo "Session $S asked permission ($(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | grep -iE 'want to|proceed|allow|run' | head -1 | cut -c1-120)) — answered yes for you."; continue
+        elif printf '%s' "$TAIL" | grep -qE '\(y/n\)|\[Y/n\]|\[y/N\]'; then
+          "$TMUX_BIN" send-keys -t "$S" y Enter
+          echo "$H" > "$ST/$S.told"; echo "Session $S asked y/n — answered yes for you."; continue
+        fi
+      fi
       [ "$(cat "$ST/$S.told" 2>/dev/null || true)" = "$H" ] && continue   # already announced this screen
       echo "$H" > "$ST/$S.told"
       SNIP="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | tail -3 | tr '\n' ' ' | cut -c1-220)"

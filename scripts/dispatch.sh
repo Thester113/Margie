@@ -717,7 +717,17 @@ case "$cmd" in
                 REVIEW_OK=0; { [ -f "$D/review-approved" ] || [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -ge "$(cfgd review_rounds 2)" ]; } && REVIEW_OK=1
                 if [ "$PSTAT" = success ] && [ "$UNRES" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ "$REVIEW_OK" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
                   echo "$SHA" > "$D/merge-ready"
-                  announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, every review thread resolved$( [ -f "$D/review-approved" ] && echo ", my review clean" || echo " (review rounds used up; the findings were addressed in the threads)"). Say \"merge\" and I'll merge it."
+                  # Tom's explicit instruction (2026-09-03): a green MR with every thread resolved is
+                  # merged by Margie herself (config auto_merge, default true); no "say merge" step.
+                  if [ "$(cfgd auto_merge true)" = true ]; then
+                    MOUT="$("$0" merge "$(basename "$D")" 2>&1 | tail -1)"
+                    case "$MOUT" in
+                      Merged*) announce "MR !$IID for $PT was green with every thread resolved, so I merged it, dearie.$(printf '%s' "$MOUT" | grep -q 'Auto-merge enabled' && echo ' The merge train will land it.')" ;;
+                      *) announce "MR !$IID for $PT is ready but the merge didn't go through, dearie: $MOUT" ;;
+                    esac
+                  else
+                    announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, every review thread resolved$( [ -f "$D/review-approved" ] && echo ", my review clean" || echo " (review rounds used up; the findings were addressed in the threads)"). Say \"merge\" and I'll merge it."
+                  fi
                 elif [ "$UNRES" != 0 ] && [ $(( $(date +%s) - $(cat "$D/threads-told-at" 2>/dev/null || echo 0) )) -gt 900 ]; then
                   # once per fix cycle (15 min), not once per thread-count change
                   date +%s > "$D/threads-told-at"
