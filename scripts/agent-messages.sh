@@ -79,7 +79,9 @@ resolve_msg() {
   local x="$1" tmp; tmp="$(mktemp)"
   if fetch_unacked "$tmp"; then
     if printf '%s' "$x" | grep -qE '^[0-9]{1,2}$'; then
-      jq -re --argjson n "$x" '.results[$n - 1] | [.id, (.properties.Message.title[0].plain_text // "(no subject)"), (.properties.From.select.name // "?"), .url] | @tsv' "$tmp" && { rm -f "$tmp"; return 0; }
+      # indices shift as rows get acked — a missing row must fail loudly, never resolve to junk
+      jq -re --argjson n "$x" '.results[$n - 1] | select(. != null) | [.id, (.properties.Message.title[0].plain_text // "(no subject)"), (.properties.From.select.name // "?"), .url] | @tsv' "$tmp" && { rm -f "$tmp"; return 0; }
+      echo "There's no message #$x in the unacked list any more, dearie (the numbers shift after an ack) — run list again or use the row id." >&2
     else
       local id; id="$(nid "$x")"
       jq -re --arg id "$id" '.results[] | select((.id | gsub("-";"")) == $id) | [.id, (.properties.Message.title[0].plain_text // "(no subject)"), (.properties.From.select.name // "?"), .url] | @tsv' "$tmp" && { rm -f "$tmp"; return 0; }
