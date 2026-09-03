@@ -616,6 +616,11 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   Tom's/Cody's call. Never say something is "live"/"in production" just because
   it merged — deciding to deploy is a human decision; you get MRs merged, you do
   not deploy on your own. If Tom asks "is it live?", check the deploy, don't assume.
+- RE-REVIEW ON REQUEST / NEW COMMITS: when Tom says "review" or "re-review" an
+  MR, run review-pr.sh <n> <repo> — even if you reviewed it before. A finished
+  review is stale the moment the MR gets a new commit; never refuse a re-review
+  because "a session already ran". Only a review currently in progress means
+  wait. Report the OLD verdict only if he asks what the last one said.
 - SEE EVERY MR THROUGH TO APPROVAL: once an MR exists you own it until it merges.
   If the review bots (or a human) request changes, the open threads go into the
   coding session to fix — and if that session has ended, a new one starts on the

@@ -56,15 +56,22 @@ STAMP="$(date +%s)"
 SESSION="margie-review-$STAMP"
 TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
 
-# Don't start a second review of the same MR: if a review session for this number is
-# already live, point at it instead of burning another. ($PR is the MR/PR number.)
-for E in $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie-review-'); do
-  T="$("$TMUX_BIN" display -t "$E" -p '#{pane_title}' 2>/dev/null)"
-  if printf '%s' "$T" | grep -qE "(request|MR|PR|#) *0*${PR}( |$|[^0-9])"; then
-    echo "A review of $NOUN $REF$PR is already running in session '$E', dearie — watch it with /watch $E. Not starting a second."
-    exit 0
-  fi
-done
+# Only refuse a duplicate if a review of THIS MR is actively RUNNING (esc to interrupt).
+# A finished/idle review session does NOT block a fresh review — an MR gets re-reviewed
+# whenever it has new commits, and "re review" is always allowed. FORCE_REVIEW=1 skips this.
+if [ "${FORCE_REVIEW:-0}" != 1 ]; then
+  for E in $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie-review-'); do
+    T="$("$TMUX_BIN" display -t "$E" -p '#{pane_title}' 2>/dev/null)"
+    printf '%s' "$T" | grep -qE "(request|MR|PR|#) *0*${PR}( |$|[^0-9])" || continue
+    if "$TMUX_BIN" capture-pane -t "$E" -p 2>/dev/null | grep -q 'esc to interrupt'; then
+      echo "A review of $NOUN $REF$PR is already running in session '$E', dearie — watch it with /watch $E. Not starting a second."
+      exit 0
+    else
+      # a finished review session for this MR is lingering — retire it and review afresh
+      "$TMUX_BIN" kill-session -t "$E" 2>/dev/null || true
+    fi
+  done
+fi
 
 REVIEW_SKILL="$(cfg review_skill)"
 if [ -n "$REVIEW_SKILL" ]; then
