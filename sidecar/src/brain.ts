@@ -223,6 +223,7 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
     return "ALREADY HELD — that exact command is waiting for Tom's yes. Do not call it again; tell Tom it's waiting and ask for his yes.";
   }
   if (!confirmed && outward(cmd)) {
+    if (/\b(slack\.sh\s+(send|reply|dm)|gmail\.sh\s+send|messages\.sh\s+send|agent-messages\.sh\s+(send|reply)|telnyx\.sh\s+(send|send-group)|research\.sh\s+post)\b/.test(cmd)) sendAttemptedThisTurn = true;
     pending.push({ cmd, at: Date.now() });
     logBrain(`BASH HELD (awaiting Tom's yes, ${pending.length} held): ${cmd}`);
     currentEmit?.("held", cmd.slice(0, 120));
@@ -239,14 +240,16 @@ async function runBash(cmd: string, confirmed = false): Promise<string> {
   return runBashRaw(cmd);
 }
 
-let sentThisTurn = false;   // a slack send actually succeeded in this turn
-/** Deterministic honesty check: a reply that claims to have posted/sent when no send
- *  succeeded this turn gets corrected before Tom sees it. */
+let sentThisTurn = false;      // an outward send actually SUCCEEDED this turn
+let sendAttemptedThisTurn = false;  // an outward send was run or HELD this turn
+/** Honesty check, scoped: only rewrite a "posted/sent" claim when a send was actually
+ *  ATTEMPTED this turn and did NOT succeed (held or failed). If no send was attempted,
+ *  she may be accurately RECALLING a past send — leave her words alone. */
 function honest(text: string): string {
-  if (sentThisTurn) return text;
+  if (sentThisTurn || !sendAttemptedThisTurn) return text;
   if (/\b(I(?:'ve| have)? (?:just )?(?:posted|sent|replied)|reply I (?:just )?posted|posted (?:it|this|that|the reply)|message (?:is )?sent)\b/i.test(text)) {
-    logBrain("HONESTY: reply claimed a post/send that did not happen — corrected");
-    return "Nothing has actually been posted — the send is still waiting for your yes (or failed). " + text.replace(/\b(I(?:'ve| have)? (?:just )?)(posted|sent|replied)\b/gi, "$1drafted");
+    logBrain("HONESTY: reply claimed a post/send that did not happen this turn — corrected");
+    return "That isn't sent yet — it's waiting for your yes (or it failed). " + text.replace(/\b(I(?:'ve| have)? (?:just )?)(posted|sent|replied)\b/gi, "$1drafted");
   }
   return text;
 }
@@ -279,7 +282,10 @@ function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise
       clearTimeout(timer);
       let r = out.trim();
       if (r.length > 4000) r = r.slice(0, 4000) + "\n…[truncated]";
-      if (/\bslack\.sh\s+(send|reply|dm)\b/.test(cmd) && /^Sent to /m.test(r)) sentThisTurn = true;
+      if (/\b(slack\.sh\s+(send|reply|dm)|gmail\.sh\s+send|messages\.sh\s+send|agent-messages\.sh\s+(send|reply)|telnyx\.sh\s+(send|send-group)|research\.sh\s+post)\b/.test(cmd)) {
+        sendAttemptedThisTurn = true;
+        if (/^(Sent to |Posted |Sent )/m.test(r)) sentThisTurn = true;
+      }
       if (!extraEnv.MARGIE_DESCRIBE && !extraEnv.MARGIE_POLLER) {
         const first = (r.split("\n").find((l) => l.trim()) || "[no output]").slice(0, 160);
         const more = r.split("\n").filter((l) => l.trim()).length - 1;
@@ -692,6 +698,10 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   notes and conventions and send it with session.sh send "<answer>" --session
   <name>; escalate (reply "ESCALATE: …") only for money, credentials, or a
   product decision Tom hasn't made.
+- "WHAT DID WE SEND?": to recall a message you SENT, use the sent view, not your
+  inbox — agent-messages.sh sent [To] for agent messages, slack.sh read for
+  Slack. agent-messages.sh check/list show only messages TO you, so a thing you
+  SENT will not appear there; never conclude "nothing was sent" from your inbox.
 - SESSION PLAY-BY-PLAY: notices shaped "[label] <action>" are a live step from a
   coding session Margie is running (the watcher relays each new action). They are
   already shown to Tom as progress lines — do NOT re-announce or summarise them
@@ -1233,7 +1243,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
  */
 async function handleTurn(text: string, history: ChatMsg[], source = "app", conv?: string, speaker?: string, pub = false): Promise<string> {
   currentTurn = { conv, speaker, text, public: pub };
-  sentThisTurn = false;
+  sentThisTurn = false; sendAttemptedThisTurn = false;
   const backend = source === "app" ? BRAIN_VOICE : BRAIN_TEXT;
   if (backend === "claude") return claudeTurn(text, history, source, conv, speaker, pub);
   return xaiTurn(text, history, source, conv, speaker, pub);

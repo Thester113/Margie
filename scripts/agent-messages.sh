@@ -120,6 +120,15 @@ case "$cmd" in
     [ "$STALE" -gt 0 ] && LINE="$LINE — $STALE older than a day"
     echo "$LINE."
     ;;
+  sent)
+    # What Margie has SENT (From = her identity), optionally filtered To a name.
+    WHO="${1:-}"
+    R="$(api POST "/data_sources/$DS/query" "$(jq -nc --arg me "$ME" '{page_size:15, sorts:[{property:"Sent At", direction:"descending"}]}')")"
+    printf '%s' "$R" | jq -e '.results' >/dev/null 2>&1 || { echo "Couldn't reach the Agent Messages database, dearie."; exit 1; }
+    OUT="$(printf '%s' "$R" | jq -r --arg me "$ME" --arg who "$WHO" '.results[]? | select(.properties.From.select.name==$me) | ((.properties["Sent At"].date.start // "")[:16]) + " → " + ([.properties.To.multi_select[].name] | join(",")) + ": " + (.properties.Message.title[0].plain_text // "(no subject)") | select($who=="" or (ascii_downcase | contains($who|ascii_downcase)))')"
+    [ -z "$OUT" ] && { echo "I haven't sent any agent messages${WHO:+ to $WHO}, dearie."; exit 0; }
+    printf '%s\n' "$OUT" | head -12
+    ;;
   list)
     TMP="$(mktemp)"
     if ! fetch_unacked "$TMP"; then rm -f "$TMP"; echo "Couldn't reach the Agent Messages database, dearie — see $LOG."; exit 1; fi
@@ -213,7 +222,7 @@ EOF2
     done
     ;;
   *)
-    echo "usage: agent-messages.sh whoami | check | list | read <n|id> | ack <n|id> | send <To> \"<subj>\" \"<body>\" [--re url] | reply <n|id> \"<body>\"" >&2
+    echo "usage: agent-messages.sh whoami | check | list | sent [To] | read <n|id> | ack <n|id> | send <To> \"<subj>\" \"<body>\" [--re url] | reply <n|id> \"<body>\"" >&2
     exit 1
     ;;
 esac
