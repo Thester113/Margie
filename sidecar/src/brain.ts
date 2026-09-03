@@ -1096,7 +1096,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
     + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns()
     + convNotes(conv)
     + (pub ? " PUBLIC ROOM: colleagues read this reply. Write for the room — no pet names, no aside to Tom, no asking Tom what to do here. If a decision is Tom's, say you'll check with him and stop; take the question to his DM (slack.sh dm) instead." : "");
-  const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}${briefNote}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally):\n${transcript(history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
+  const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}${briefNote}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally${briefNote ? "; your OWN earlier status answers are omitted because they may be stale — every fact comes from the CURRENT BRIEF above" : ""}):\n${transcript(briefNote ? history.filter((m) => m.role !== "assistant") : history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
   try {
     const q = query({
