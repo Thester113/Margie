@@ -69,9 +69,9 @@ evidence() {
   fi
   echo; echo "## Margie dispatches (specs / tickets in flight)"
   "$DIR/dispatch.sh" status 2>/dev/null
-  if ls "$HOME/.margie/process"/*.md >/dev/null 2>&1; then
+  if ls "$HOME/.margie/projects"/*.md >/dev/null 2>&1; then
     echo; echo "## Project notes (blockers marked 'on Tom' / 'needs Tom' are real blockers)"
-    for f in "$HOME/.margie/process"/*.md; do echo "--- $(basename "$f" .md)"; grep -iE "on Tom|needs Tom|blocker|MISSING|DECISION" "$f" | head -12; done
+    for f in "$HOME/.margie/projects"/*.md; do echo "--- $(basename "$f" .md)"; grep -iE "on Tom|needs Tom|blocker|MISSING|DECISION" "$f" | head -12; done
   fi
   echo; echo "## Agent messages handled since $SINCE"
   grep -h "CANCELLED\|Acknowledged\|FASTPATH" ~/.margie/brain.log 2>/dev/null | awk -v s="$SINCE" '$1 >= s' | grep -c . | sed 's/^/- acked\/handled: /'
