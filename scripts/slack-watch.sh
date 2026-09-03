@@ -77,7 +77,7 @@ OWNER_NAME="$(cfg owner_first_name)"; OWNER_NAME="${OWNER_NAME:-Tom}"
 
 # Prune handled ts older than 6h.
 if [ -f "$HANDLED" ]; then
-  awk -F'|' -v n="$NOW" '($1 + 21600) > n' "$HANDLED" > "$HANDLED.tmp" 2>/dev/null && mv "$HANDLED.tmp" "$HANDLED"
+  awk -F'|' -v n="$NOW" '($1 + 604800) > n' "$HANDLED" > "$HANDLED.tmp" 2>/dev/null && mv "$HANDLED.tmp" "$HANDLED"   # a week: never re-answer an old mention
 fi
 already() { grep -qF "|$1" "$HANDLED" 2>/dev/null; }
 logl "cycle mode=$MODE bot=$BOTID owner=${OWNER:-none}"
@@ -107,6 +107,7 @@ while IFS=$'\t' read -r kind cid label; do
     | (.text // "") as $t
     | ($all[$i+1] // {}) as $prev
     | (($prev.user // "") == $bot and (($prev.text // "") | test("\\?\\s*$")) and ((.ts|tonumber) - ($prev.ts|tonumber) < 600)) as $answering_her
+    | select(($now - (.ts|tonumber)) < 1800)   # nothing older than 30 min is ever answered, whatever kind
     | (if $kind=="im" then "im"
        elif (($t | contains("<@"+$bot+">")) and ((.user // "") == $owner)) then "ownerask"
        elif ($answering_her and ((.user // "") == $owner) and (($now - (.ts|tonumber)) < 1800)) then "ownerask"
