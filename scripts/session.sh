@@ -80,10 +80,23 @@ case "$cmd" in
       echo "Session $S has ended. Last seen: $(cat "$ST/$S.tail" 2>/dev/null | cut -c1-220)"
       rm -f "$ST/$S".*
     done
+    NARRATE="$(jq -r '.session_narrate // "on"' "$HOME/.margie/config.json" 2>/dev/null)"
     for S in $LIVE; do
-      PANE="$("$TMUX_BIN" capture-pane -t "$S" -p -S -40 2>/dev/null | sed 's/[[:space:]]*$//' | grep -v '^$')"
+      PANE="$("$TMUX_BIN" capture-pane -t "$S" -p -S -60 2>/dev/null | sed 's/[[:space:]]*$//' | grep -v '^$')"
       [ -z "$PANE" ] && continue
       TAIL="$(printf '%s\n' "$PANE" | tail -12)"
+      # PLAY-BY-PLAY: announce each new action the session takes (Claude Code narrates its
+      # own steps with ⏺ bullets). Emit the newest bullet when it changes, so Tom follows
+      # along without watching the tab. Label the session by its Claude-set window title.
+      if [ "$NARRATE" != "off" ] && printf '%s' "$TAIL" | grep -q 'esc to interrupt'; then
+        ACT="$(printf '%s' "$PANE" | grep -E '^⏺' | tail -1 | sed 's/^⏺ *//' | cut -c1-160)"
+        if [ -n "$ACT" ] && [ "$(cat "$ST/$S.act" 2>/dev/null || true)" != "$ACT" ]; then
+          printf '%s' "$ACT" > "$ST/$S.act"
+          WLABEL="$("$TMUX_BIN" display -t "$S" -p '#{window_name}' 2>/dev/null | sed 's/^[✳✻* ]*//' | cut -c1-38)"
+          [ -z "$WLABEL" ] && WLABEL="$S"
+          echo "[$WLABEL] $ACT"
+        fi
+      fi
       printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|^ *───|Update installed' | grep -vE 'auto mode on|shift\+tab' | tail -3 | tr '\n' ' ' > "$ST/$S.tail"
       H="$(printf '%s' "$PANE" | shasum | cut -c1-12)"
       # idle tracking: when did this exact screen first appear?

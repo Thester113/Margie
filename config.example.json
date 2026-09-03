@@ -3,6 +3,8 @@
 
   "engine": "claude",
   "warp_mode": "quiet",
+  "session_narrate": "on",
+  "_session_narrate": "on = Margie gives a running play-by-play of each Claude coding session (announces every new ⏺ action it takes); off = only stuck/question/ended notices.",
   "_warp_mode": "window = every session opens its own Warp window; quiet = sessions run in tmux with no window and are watched from the margie CLI (/watch <name>) or `session.sh attach <name>`.",
   "claude_model": "claude-fable-5-1[1m]",
   "_claude_model": "Default --model for EVERY Claude Code run Margie dispatches (interactive sessions, reviews, headless tasks, planner, QA). Omit to use the CLI's own default. planner_model / qa_model override it per stage.",

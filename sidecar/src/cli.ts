@@ -284,7 +284,11 @@ async function repl() {
     client.onEvent = (m) => renderEvent(m, spin, process.stdout);
     client.onNotice = (t) => {
       spin.clear();
-      process.stdout.write(`\r\x1b[2K${PINK}✿${RESET} ${CYAN}${t}${RESET}\n`);
+      // A session play-by-play line ("[label] <action>") renders as a quiet progress
+      // line so it's distinct from her own ✿ notices.
+      const m = t.match(/^\[([^\]]+)\]\s+(.*)$/s);
+      if (m) process.stdout.write(`\r\x1b[2K${GREY}   ▹ ${MINT}${m[1]}${RESET}${GREY} · ${m[2]}${RESET}\n`);
+      else process.stdout.write(`\r\x1b[2K${PINK}✿${RESET} ${CYAN}${t}${RESET}\n`);
       prompt();
     };
     client.onClose = () => {

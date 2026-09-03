@@ -647,6 +647,10 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   notes and conventions and send it with session.sh send "<answer>" --session
   <name>; escalate (reply "ESCALATE: …") only for money, credentials, or a
   product decision Tom hasn't made.
+- SESSION PLAY-BY-PLAY: notices shaped "[label] <action>" are a live step from a
+  coding session Margie is running (the watcher relays each new action). They are
+  already shown to Tom as progress lines — do NOT re-announce or summarise them
+  unless he asks; just keep them in mind for when he asks "what's it doing".
 - SESSIONS WAITING ON A HUMAN: a notice "Session margie-… is waiting on a
   prompt / asked a question" means the coding session stopped for input. Tell
   Tom what it's asking (session.sh read 25 --branch <b> shows the screen) and
