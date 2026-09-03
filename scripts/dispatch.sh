@@ -535,6 +535,10 @@ case "$cmd" in
         for c in "$MDIR/$(basename "$D")--"*; do [ -d "$c" ] && [ "$(st "$c")" = closed ] && DONE=$((DONE+1)); done
         LINE="$LINE, tickets $DONE/$TOT merged"
       fi
+      if has_breakdown "$D" && [ -s "$D/tickets.json" ] && [ "$S" != closed ]; then
+        SPK="$(jq -r --slurpfile t "$D/tickets.json" '[.tickets[] | select(.spike // false) | .key as $k | (($t[0][] | select(.key==$k) | .pt) // $k) + " " + .title] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
+        [ -n "$SPK" ] && LINE="$LINE, on Tom: $SPK"
+      fi
       [ -s "$D/mr.json" ] && LINE="$LINE, MR !$(jq -r .iid "$D/mr.json")$( [ -s "$D/mr-check.json" ] && echo " (pipeline $(jq -r .pipeline "$D/mr-check.json"), $(jq -r .unresolved "$D/mr-check.json") open threads$( [ -f "$D/review-approved" ] && echo ", review clean"))")"
       spec_ready "$D" && LINE="$LINE — $(jq -r .title "$D/spec.json" | cut -c1-60)"
       echo "$LINE"

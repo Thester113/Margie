@@ -96,7 +96,7 @@ compose() {
   fi
   local P="You are Margie, ${OWNER}'s assistant, drafting HIS daily standup for the team's standup channel, first person as ${OWNER}. Below is the evidence of what he did (git commits, merge requests, tickets, Margie's dispatch pipeline). $FORMAT
 
-Rules: ≤ 14 words per line, plain Slack formatting (no markdown headings), group related commits into one bullet, cite MR numbers (!123) and Notion ticket ids (PT-###) when present. NEVER mention Margie-internal identifiers (dispatch ids like d-1788…, task ids, file paths); for unfiled work say 'in planning, not yet ticketed'. 'Today' is inferred from in-flight dispatches/tickets/open MRs; if unknown say 'continue on <the in-flight item>'. Blockers: only real ones, else 'None'. Do not invent work that isn't in the evidence. Output ONLY the standup text.
+Rules: ≤ 14 words per line, plain Slack formatting (no markdown headings), group related commits into one bullet, cite MR numbers (!123) and Notion ticket ids (PT-###) when present. NEVER mention Margie-internal identifiers (dispatch ids like d-1788…, task ids, file paths); for unfiled work say 'in planning, not yet ticketed'. 'Today' is inferred from in-flight dispatches/tickets/open MRs; if unknown say 'continue on <the in-flight item>'. Blockers: only real ones, else 'None' — include anything the dispatch status marks as waiting on Tom (spike work, decisions). Work is 'merged' only when its MR shows merged; an open MR is 'in review', a live session is 'in progress' — never say done/complete otherwise. Do not invent work that isn't in the evidence. Output ONLY the standup text.
 
 EVIDENCE:
 $EV"
