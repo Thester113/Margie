@@ -665,7 +665,11 @@ case "$cmd" in
                 if [ -s "$D/mr-check.json" ]; then
                 SHA="$(jq -r '.sha // ""' "$D/mr-check.json" 2>/dev/null)"; PSTAT="$(jq -r '.pipeline // "none"' "$D/mr-check.json" 2>/dev/null)"; PID="$(jq -r '.pipeline_id // ""' "$D/mr-check.json" 2>/dev/null)"
                 # self-review once per commit, at most 3 rounds
-                if [ -n "$SHA" ] && [ "$(cat "$D/review-sha" 2>/dev/null)" != "$SHA" ] && [ ! -f "$D/review-running" ] && [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -lt 3 ]; then
+                UNRES="$(jq -r '.unresolved // 0' "$D/mr-check.json")"
+                # Review cadence: a round runs when the MR first settles, then again only after the
+                # session has cleared every open thread — never per commit (that looped the bots).
+                if [ -n "$SHA" ] && [ "$(cat "$D/review-sha" 2>/dev/null)" != "$SHA" ] && [ ! -f "$D/review-running" ] && [ "$UNRES" = 0 ] \
+                   && [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -lt "$(cfgd review_rounds 2)" ]; then
                   P="$(cat "$DIR/prompts/mr-review.md")"; P="${P//'{{MR}}'/$IID}"; P="${P//'{{PT}}'/$PT}"; P="${P//'{{TARGET}}'/$(cfgd mr_target_branch main)}"; P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"
                   SUBDIR="$(dmeta "$D" subdir)"; MODEL_OPT=(); M="$(cfg qa_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
                   rm -f "$D/review.json"
@@ -689,8 +693,9 @@ case "$cmd" in
                   rm -f "$D/review-running"; announce "My review run on MR !$IID failed to complete, dearie — I'll retry on the next commit."
                 fi
                 # the repo's review bots only auto-run on an MR's FIRST pipeline; ask them once per commit
-                if [ -n "$SHA" ] && [ "$PSTAT" != running ] && [ "$PSTAT" != pending ] && [ "$(cat "$D/bots-requested" 2>/dev/null)" != "$SHA" ]; then
-                  echo "$SHA" > "$D/bots-requested"
+                if [ -n "$SHA" ] && [ "$PSTAT" != running ] && [ "$PSTAT" != pending ] && [ "$(cat "$D/bots-requested" 2>/dev/null)" != "$SHA" ] \
+                   && [ "$UNRES" = 0 ] && [ "$(cat "$D/bot-rounds" 2>/dev/null || echo 0)" -lt "$(cfgd review_rounds 2)" ]; then
+                  echo "$SHA" > "$D/bots-requested"; echo $(( $(cat "$D/bot-rounds" 2>/dev/null || echo 0) + 1 )) > "$D/bot-rounds"
                   RR="$("$DIR/mr.sh" request-review "!$IID" --repo "$WT" 2>/dev/null || true)"
                   case "$RR" in Requested*) announce "Asked the repo's review bots to look at MR !$IID for $PT, dearie." ;; esac
                 fi
@@ -701,9 +706,10 @@ case "$cmd" in
                   announce "Pipeline failed on MR !$IID for $PT — I've sent it back to the session to fix, dearie."
                 fi
                 # ready to merge -> tell Tom once per commit; merging is his word (dispatch.sh merge)
-                if [ "$PSTAT" = success ] && [ "$(jq -r .unresolved "$D/mr-check.json")" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ -f "$D/review-approved" ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
+                REVIEW_OK=0; { [ -f "$D/review-approved" ] || [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -ge "$(cfgd review_rounds 2)" ]; } && REVIEW_OK=1
+                if [ "$PSTAT" = success ] && [ "$UNRES" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ "$REVIEW_OK" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
                   echo "$SHA" > "$D/merge-ready"
-                  announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, no open threads, review clean. Say \"merge\" and I'll merge it."
+                  announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, every review thread resolved$( [ -f "$D/review-approved" ] && echo ", my review clean" || echo " (review rounds used up; the findings were addressed in the threads)"). Say \"merge\" and I'll merge it."
                 elif [ "$(jq -r .unresolved "$D/mr-check.json")" != 0 ] && [ "$(cat "$D/threads-told" 2>/dev/null)" != "$SHA:$(jq -r .unresolved "$D/mr-check.json")" ]; then
                   echo "$SHA:$(jq -r .unresolved "$D/mr-check.json")" > "$D/threads-told"
                   "$DIR/session.sh" send "MR !$IID has $(jq -r .unresolved "$D/mr-check.json") unresolved review thread(s). Use the repo's /address-mr-reviews skill to address them, push, and resolve the threads you fixed; then print MARGIE_MR_UPDATED." --branch "$BR" >/dev/null 2>&1
