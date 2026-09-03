@@ -118,7 +118,7 @@ case "$cmd" in
       LAST="$(printf '%s' "$CONTENT" | tail -3 | tr '\n' ' ')"   # a question often wraps over 2-3 terminal lines
       WORKING=0; printf '%s' "$TAIL" | grep -q "esc to interrupt" && WORKING=1
       if printf '%s' "$TAIL" | grep -qE 'Enter to confirm|Esc to cancel|Do you want to|Yes, I trust|Yes, and don.t ask|\(y/n\)|\[Y/n\]|\[y/N\]|No, and tell Claude|Allow (once|always)|Press Enter|❯ *1\.|^ *1\. Yes'; then WHY="waiting on a prompt"
-      elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 90 ] && printf '%s' "$PANE" | tail -12 | grep -qE '· done [0-9]' && printf '%s' "$CONTENT" | grep -qiE 'still needed|next steps?|remaining|what is left|to finish|blocked on|needs? (you|tom)|could not|did not|unable'; then WHY="finished its task and reported what is still needed"
+      elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 45 ] && printf '%s' "$PANE" | tail -12 | grep -qE '· done [0-9]' && printf '%s' "$CONTENT" | grep -qiE 'still needed|next steps?|remaining|what is left|to finish|blocked on|needs? (you|tom)|could not|did not|unable|flag for tom|ready (for|to) (tom|review|submit)|filled and ready|review and submit|for tom to'; then WHY="finished its task and reported what is still needed"
       elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 120 ] && printf '%s' "$LAST" | grep -qiE '\?|\b(shall i|should i|want me to|would you like|let me know|say the word|ready to|waiting for|tell me)\b'; then WHY="asked a question and has been idle $((IDLE/60)) min"
       fi
       [ -z "$WHY" ] && continue
