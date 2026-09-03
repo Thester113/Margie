@@ -108,12 +108,13 @@ while IFS=$'\t' read -r kind cid label; do
     | ($all[$i+1] // {}) as $prev
     | (($prev.user // "") == $bot and (($prev.text // "") | test("\\?\\s*$")) and ((.ts|tonumber) - ($prev.ts|tonumber) < 600)) as $answering_her
     | select(($now - (.ts|tonumber)) < 1800)   # nothing older than 30 min is ever answered, whatever kind
+    # Rule from Tom, 2026-09-03: in any group setting Margie speaks ONLY when tagged or named.
+    | (($t | contains("<@"+$bot+">")) or ($t | test("\\bmargie\\b"; "i"))) as $named
     | (if $kind=="im" then "im"
-       elif (($t | contains("<@"+$bot+">")) and ((.user // "") == $owner)) then "ownerask"
-       elif ($answering_her and ((.user // "") == $owner) and (($now - (.ts|tonumber)) < 1800)) then "ownerask"
-       elif ($t | contains("<@"+$bot+">")) then "bot"
+       elif ($named and ((.user // "") == $owner)) then "ownerask"
+       elif ($named and $kind=="mpim") then "colleague"
+       elif $named then "bot"
        elif ($owner != "__none__" and ($t | contains("<@"+$owner+">")) and ((.user // "") != $owner)) then "owner"
-       elif ($kind=="mpim" and ((.user // "") != $owner) and (($now - (.ts|tonumber)) < 1800)) then "colleague"
        else "" end) as $k
     | select($k != "")
     | [$k, $cid, $label, .ts, (.thread_ts // .ts), (.user // "?"), ($t | gsub("\t";" ") | gsub("\n";" "))]
@@ -130,6 +131,7 @@ while IFS=$'\t' read -r kind cid label; do
       sapi conversations.replies --get --data-urlencode "channel=$cid" --data-urlencode "ts=$pts" -d "limit=30" \
       | jq -r --arg bot "$BOTID" --arg owner "${OWNER:-__none__}" --arg cid "$cid" --arg label "$label" --arg pts "$pts" '
           .messages[]? | select(.ts != $pts) | select(.subtype==null) | select((.user // "") != $bot)
+          | select(((.text // "") | contains("<@"+$bot+">")) or ((.text // "") | test("\\bmargie\\b"; "i")))   # thread replies too: only when tagged or named
           | [(if (.user // "")==$owner then "ownerask" else "bot" end), $cid, $label, .ts, $pts, (.user // "?"), ((.text // "") | gsub("\t";" ") | gsub("\n";" "))]
           | @tsv' >> "$NEW"
     done
