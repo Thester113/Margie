@@ -61,7 +61,14 @@ case "$cmd" in
     echo "Sent $(printf '%s' "$R" | jq -r .data.id) to $TO." ;;
   message)
     R="$(api GET "/messages/${1:?id}")"; err "$R" && exit 1
-    printf '%s' "$R" | jq -r '.data | .id + "  type=" + .type + "  " + (.to | map(.phone_number + "=" + .status) | join("  "))' ;;
+    printf '%s' "$R" | jq -r '.data | .id + "  type=" + .type + "  " + (.to | map(.phone_number + "=" + .status) | join("  ")) + ((.errors // []) | if length>0 then "\n  FAILED: " + (map("[" + .code + "] " + .detail + (if .meta.url then " (" + .meta.url + ")" else "" end)) | join("; ")) else "" end)' ;;
+  ready)
+    R="$(api GET "/phone_numbers?page[size]=50")"; N="$(printf '%s' "$R" | jq -r '.data | length')"
+    B="$(api GET "/10dlc/brand?page=1&recordsPerPage=1" | jq -r '(.records // .data // []) | length')"
+    C="$(api GET "/10dlc/campaign?page=1&recordsPerPage=1" | jq -r '(.records // .data // []) | length')"
+    echo "Numbers: $N. 10DLC brand: $([ "${B:-0}" -gt 0 ] && echo yes || echo NO). 10DLC campaign: $([ "${C:-0}" -gt 0 ] && echo yes || echo NO)."
+    if [ "${B:-0}" -gt 0 ] && [ "${C:-0}" -gt 0 ]; then echo "A2P to US: registered — sends should deliver."
+    else echo "A2P to US: NOT deliverable yet — US carriers reject unregistered A2P long-code traffic (error 40010). Register a 10DLC brand + campaign (company legal name/EIN/address + a small per-campaign fee) before any real send. This is on Tom."; fi ;;
   spike)
     TO="${1:?<agent +1>,<client +1>}"
     [ -z "$FROM" ] && { echo "Buy and assign a number first, dearie (telnyx.sh search/buy/assign)." >&2; exit 1; }
@@ -71,5 +78,5 @@ case "$cmd" in
     echo "2. Then I reply from $FROM to both as a group MMS (below)."
     echo "3. On BOTH phones: did my reply land inside the thread from step 1 (pass) or as a new conversation from $FROM (fail)?"
     "$0" send-group "$TO" "Hi both — this is Amby's test reply. If you can read this inside the thread you started, the group MMS check passes." ;;
-  *) echo "usage: telnyx.sh numbers | search <area> [n] | buy <+1> | profile [name] | assign <+1> [profile] | send-group \"<+1,+1>\" \"<text>\" [--from +1] | send <+1> \"<text>\" | message <id> | spike \"<agent>,<client>\"" >&2; exit 1 ;;
+  *) echo "usage: telnyx.sh numbers | search <area> [n] | buy <+1> | profile [name] | assign <+1> [profile] | send-group \"<+1,+1>\" \"<text>\" [--from +1] | send <+1> \"<text>\" | message <id> | ready | spike \"<agent>,<client>\"" >&2; exit 1 ;;
 esac
