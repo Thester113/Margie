@@ -667,12 +667,22 @@ case "$cmd" in
             announce "The QA run on $(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null) failed to complete, dearie."
           fi ;;
         qa-fail)
-          # Hand the findings back to the coding session once; it fixes and re-signals.
-          if [ -s "$D/impl.json" ] && [ ! -f "$D/qa-fail-sent" ]; then
-            BR="$(jq -r .branch "$D/impl.json")"; PT="$(jq -r .pt "$D/ticket.json")"
-            touch "$D/qa-fail-sent"; rm -f "$D/qa-auto"
-            MSG="QA verification FAILED for $PT. Findings: $(jq -r '[.acceptance[] | select(.status!="pass") | .criterion + " — " + .status + ": " + .evidence] | join(" | ")' "$D/qa.json" | cut -c1-1500). Fix these, keep the tests green, commit, then print MARGIE_READY_FOR_QA on its own line again."
-            "$DIR/session.sh" send "$MSG" --branch "$BR" >/dev/null 2>&1 && { st "$D" implementing; mv "$D/qa.json" "$D/qa-failed-$(date +%H%M).json"; announce "QA failed on $PT — I've sent the findings back into the session to fix, dearie."; }
+          # Hand the findings back to the coding session; it fixes and re-signals. Archive
+          # the failed report FIRST so the next MARGIE_READY_FOR_QA can trigger a fresh run
+          # (a leftover qa.json used to deadlock the loop). Restart the session if it exited.
+          if [ -s "$D/impl.json" ] && [ -s "$D/qa.json" ]; then
+            BR="$(jq -r .branch "$D/impl.json")"; PT="$(jq -r .pt "$D/ticket.json")"; WT="$(jq -r .worktree "$D/impl.json")"
+            FND="$(jq -r '[.acceptance[] | select(.status!="pass") | .criterion + " — " + .status + ": " + .evidence] | join(" | ")' "$D/qa.json" | cut -c1-1500)"
+            mv "$D/qa.json" "$D/qa-failed-$(date +%H%M%S).json"; rm -f "$D/qa-auto"; st "$D" implementing
+            SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"
+            if tmux has-session -t "$SESS" 2>/dev/null; then
+              "$DIR/session.sh" send "QA FAILED for $PT. Findings: $FND. Fix these, keep the tests green, commit, then print MARGIE_READY_FOR_QA on its own line again and stop." --branch "$BR" >/dev/null 2>&1
+              announce "QA failed on $PT — I've sent the findings back into the session to fix, dearie."
+            else
+              P="You are back on branch $BR (ticket $PT). QA verification FAILED with these findings: $FND. Fix them, keep the tests green, commit to the branch, then print MARGIE_READY_FOR_QA on its own line and stop — Margie re-runs QA."
+              "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$P" >/dev/null 2>&1
+              announce "QA failed on $PT and its session had ended — I restarted a session to fix the findings, dearie."
+            fi
           fi ;;
         implementing|qa-pass)
           if [ -s "$D/impl.json" ]; then
@@ -696,8 +706,14 @@ case "$cmd" in
               if printf '%s' "$SCREEN" | grep -qE "^MARGIE_MR_OPEN|/-/merge_requests/[0-9]+|![0-9]{2,} (opened|created)"; then
                 announce "QA passed on $PT and the session already has an MR open — MR text at $D/mr.md if it needs updating (mr.sh update), dearie."
               else
-                "$DIR/session.sh" send "QA passed — open the MR now with the repo's /merge-request skill, using the prepared description at $D/mr.md (title on the first line). When it's open print MARGIE_MR_OPEN <url>." --branch "$BR" >/dev/null 2>&1 \
-                  && announce "QA passed on $PT — I've told the session to open the MR, dearie."
+                SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"; WT="$(jq -r .worktree "$D/impl.json")"
+                if tmux has-session -t "$SESS" 2>/dev/null; then
+                  "$DIR/session.sh" send "QA passed — open the MR now with the repo's /merge-request skill, using the prepared description at $D/mr.md (title on the first line). When it's open print MARGIE_MR_OPEN <url>." --branch "$BR" >/dev/null 2>&1
+                else
+                  P="You are on branch $BR (ticket $PT); the work is committed and QA passed. Open the merge request with the repo's /merge-request skill, using the prepared description at $D/mr.md (title on the first line). Push the branch, open the MR, then print MARGIE_MR_OPEN <url> and stop."
+                  "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$P" >/dev/null 2>&1
+                fi
+                announce "QA passed on $PT — opening the MR, dearie."
               fi
             fi
             # ── MR lifecycle (after QA passed): detect the MR, self-review it, watch the
