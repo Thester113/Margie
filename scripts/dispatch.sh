@@ -538,9 +538,13 @@ case "$cmd" in
     echo "== $T"; echo "Ticket: ${PT:-not filed}$( [ -s "$D/ticket.json" ] && echo " — $(jq -r .url "$D/ticket.json")")   Stage: $S"
     [ -s "$D/epic.json" ] && echo "Epic: $(jq -r .url "$D/epic.json")"
     if [ -s "$D/mr.json" ]; then
-      MST="$( [ -s "$D/mr-check.json" ] && jq -r '"state \(.state), pipeline \(.pipeline), \(.unresolved) open threads"' "$D/mr-check.json")"
+      IID="$(jq -r .iid "$D/mr.json")"; WT="$(jq -r '.worktree // empty' "$D/impl.json" 2>/dev/null)"
+      # Refresh the MR state LIVE so the brief is never stale between ticks.
+      CHK="$("$DIR/mr.sh" check "!$IID" --repo "${WT:-$(dmeta "$D" repo)}" 2>/dev/null || true)"; [ -n "$CHK" ] && printf '%s' "$CHK" > "$D/mr-check.json"
+      MST="$( [ -s "$D/mr-check.json" ] && jq -r '"state \(.state), pipeline \(.pipeline), \(.unresolved) open review thread(s)" + (if (.bot_notes // 0) > 0 then ", bots reviewed" else "" end)' "$D/mr-check.json")"
       [ "$S" = closed ] && MST="MERGED"
-      echo "MR: !$(jq -r .iid "$D/mr.json") — $MST — $(jq -r .url "$D/mr.json")"
+      echo "MR (THIS ticket's MR): !$IID — $MST — $(jq -r .url "$D/mr.json")"
+      [ "$(jq -r '.unresolved // 0' "$D/mr-check.json" 2>/dev/null)" != 0 ] && echo "  → open review threads are being addressed by the coding session (mr.sh threads !$IID to see them)."
     fi
     if has_breakdown "$D"; then
       echo "Tickets:"

@@ -626,6 +626,11 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   Tom's/Cody's call. Never say something is "live"/"in production" just because
   it merged — deciding to deploy is a human decision; you get MRs merged, you do
   not deploy on your own. If Tom asks "is it live?", check the deploy, don't assume.
+- "REVIEWS ON OUR MR" = the review THREADS on that MR (mr.sh threads !n, or the
+  brief's thread count) — NOT your review sessions of other people's MRs. When
+  Tom asks about reviews on OUR MR (e.g. !696/PT-831), report its threads and
+  pipeline from the brief, never say "no reviews" because your review sessions
+  of !680/!689 finished.
 - NEVER TIE AN MR TO THE WRONG TICKET: a dispatch owns ONLY the MR listed as
   "its MR" in the context above. A review session may be reviewing someone
   else's MR (e.g. !680 is David's mobile PT-591, NOT PT-831). Never say a ticket
