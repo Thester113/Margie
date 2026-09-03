@@ -96,6 +96,7 @@ case "$cmd" in
       WORKING=0; printf '%s' "$TAIL" | grep -q "esc to interrupt" && WORKING=1
       if printf '%s' "$TAIL" | grep -qE 'Enter to confirm|Esc to cancel|Do you want to|Yes, I trust|Yes, and don.t ask|\(y/n\)|\[Y/n\]|\[y/N\]|No, and tell Claude|Allow (once|always)|Press Enter|❯ *1\.|^ *1\. Yes'; then WHY="waiting on a prompt"
       elif printf '%s' "$PANE" | grep -q "MARGIE_READY_FOR_QA" && [ "$WORKING" = 0 ]; then WHY="finished coding and is ready for QA"
+      elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 90 ] && printf '%s' "$PANE" | tail -12 | grep -qE '· done [0-9]' && printf '%s' "$CONTENT" | grep -qiE 'still needed|next steps?|remaining|what is left|to finish|blocked on|needs? (you|tom)|could not|did not|unable'; then WHY="finished its task and reported what is still needed"
       elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 120 ] && printf '%s' "$LAST" | grep -qiE '\?|\b(shall i|should i|want me to|would you like|let me know|say the word|ready to|waiting for|tell me)\b'; then WHY="asked a question and has been idle $((IDLE/60)) min"
       fi
       [ -z "$WHY" ] && continue
@@ -122,10 +123,10 @@ case "$cmd" in
       SNIP="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | tail -3 | tr '\n' ' ' | cut -c1-220)"
       # A session that asked a question gets its answer from Margie's brain — she knows the
       # project notes and conventions. She escalates only money, credentials or product calls.
-      if printf '%s' "$WHY" | grep -q "asked a question" && [ -x "$MARGIE_CLI" ] && [ "$(jq -r '.session_autoanswer // true' "$HOME/.margie/config.json" 2>/dev/null)" = true ]; then
+      if printf '%s' "$WHY" | grep -qE "asked a question|finished its task" && [ -x "$MARGIE_CLI" ] && [ "$(jq -r '.session_autoanswer // true' "$HOME/.margie/config.json" 2>/dev/null)" = true ]; then
         Q="$(printf '%s' "$CONTENT" | tail -25)"
         ASK="$(cat <<'EOT'
-SESSION QUESTION. A coding session stopped and asked something; its last lines follow. If the answer is within your knowledge and conventions (names, versions, defaults, order of work, what Tom already decided), ANSWER IT by running session.sh send "<your answer>" --session SESSION_NAME, then reply with one line saying what you told it. If it needs money, credentials, or a product decision Tom has not made, do NOT send anything and reply exactly: ESCALATE: <one-line question for Tom>.
+SESSION QUESTION/REPORT. A coding session stopped; its last lines follow. Decide the next step yourself: (a) if it asked something you can answer from the notes and conventions (names, versions, defaults, order, what Tom decided), answer it with session.sh send "<answer>" --session SESSION_NAME; (b) if it finished and listed what is still needed, do the next item yourself when a helper covers it (telnyx.sh, notion.sh, dispatch.sh…) or send the next instruction into the session; then reply with one line saying what you did. If the next step needs money you have no standing to spend, credentials, or a product decision Tom has not made, do nothing and reply exactly: ESCALATE: <one-line ask for Tom>. Never leave a session idle with work left.
 EOT
 )"
         ASK="${ASK//SESSION_NAME/$S}"

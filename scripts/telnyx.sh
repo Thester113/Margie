@@ -17,7 +17,7 @@ cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
 desc() { if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then echo "$*"; exit 0; fi; }
 KEY="$(cfg telnyx_api_key)"
 [ -z "$KEY" ] && { echo "No Telnyx key yet, dearie — add telnyx_api_key to ~/.margie/config.json (Telnyx portal → API Keys)." >&2; exit 1; }
-api() { local m="$1" p="$2"; shift 2; curl -sS -X "$m" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" "https://api.telnyx.com/v2$p" "$@"; }
+api() { local m="$1" p="$2"; shift 2; curl -sSg -X "$m" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" "https://api.telnyx.com/v2$p" "$@"; }
 err() { printf '%s' "$1" | jq -e '.errors' >/dev/null 2>&1 && { echo "Telnyx said: $(printf '%s' "$1" | jq -r '.errors[0].detail // .errors[0].title')" >&2; return 0; }; return 1; }
 FROM="$(cfg telnyx_number)"
 cmd="${1:-numbers}"; shift || true
