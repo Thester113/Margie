@@ -616,6 +616,11 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   Tom's/Cody's call. Never say something is "live"/"in production" just because
   it merged — deciding to deploy is a human decision; you get MRs merged, you do
   not deploy on your own. If Tom asks "is it live?", check the deploy, don't assume.
+- NEVER TIE AN MR TO THE WRONG TICKET: a dispatch owns ONLY the MR listed as
+  "its MR" in the context above. A review session may be reviewing someone
+  else's MR (e.g. !680 is David's mobile PT-591, NOT PT-831). Never say a ticket
+  "opened" or "owns" an MR unless that dispatch's own MR is that number; when
+  unsure, say "PT-831 has no MR yet" rather than guessing.
 - RE-REVIEW ON REQUEST / NEW COMMITS: when Tom says "review" or "re-review" an
   MR, run review-pr.sh <n> <repo> — even if you reviewed it before. A finished
   review is stale the moment the MR gets a new commit; never refuse a re-review
@@ -957,7 +962,8 @@ function liveContext(source: string): string {
       if (!title) { try { title = readFileSync(`${d}/request.txt`, "utf8").split("\n")[0].slice(0, 80); } catch { /* ignore */ } }
       let pt = ""; try { pt = JSON.parse(readFileSync(`${d}/ticket.json`, "utf8")).pt || ""; } catch { /* unfiled */ }
       let draft = ""; try { draft = readFileSync(`${d}/draft-page.url`, "utf8").trim(); } catch { /* none */ }
-      lines.push(`- ${pt ? pt + " " : ""}"${title}" — ${state}${draft ? ` — draft spec in Notion: ${draft}` : ""} (dispatch id ${n})`);
+      let mr = ""; try { mr = "!" + JSON.parse(readFileSync(`${d}/mr.json`, "utf8")).iid; } catch { /* no MR opened for this dispatch */ }
+      lines.push(`- ${pt ? pt + " " : ""}"${title}" — ${state}, its MR: ${mr || "none opened yet"}${draft ? ` — draft in Notion: ${draft}` : ""} (dispatch ${n})`);
     }
   } catch { /* no dispatch dir */ }
   try {
@@ -968,7 +974,9 @@ function liveContext(source: string): string {
         let title = "", working = false;
         try { title = execSync(`${TMUX} display -t ${nm} -p '#{pane_title}' 2>/dev/null`, { encoding: "utf8" }).replace(/^[✳✻*\s]+/, "").trim(); } catch { /* */ }
         try { working = /esc to interrupt/.test(execSync(`${TMUX} capture-pane -t ${nm} -p 2>/dev/null`, { encoding: "utf8" })); } catch { /* */ }
-        return `- ${title || nm} — ${working ? "working" : "idle/done"} (session ${nm})`;
+        const rmr = (nm.match(/review/) ? (title.match(/\b(\d{2,})\b/) || [])[1] : "");
+        const kind = rmr ? `reviewing MR !${rmr} (this MR may belong to someone else — do NOT tie it to a dispatch unless that dispatch's MR above is !${rmr})` : (title || nm);
+        return `- ${kind} — ${working ? "working" : "idle/done"} (session ${nm})`;
       });
       lines.push(`LIVE CODING SESSIONS (you started these; NEVER start a duplicate for the same MR/ticket — check here first; "/watch <session>" shows one):\n${rows.join("\n")}`);
     }
