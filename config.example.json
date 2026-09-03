@@ -59,6 +59,8 @@
   "notion_token": "ntn_...",
   "notion_parent_page": "https://www.notion.so/...",
   "notion_drafts_parent": "<page id>",
+  "notion_status_parent": "",
+  "_notion_status": "Auto-created by status-sync.sh: the \"Margie — Status\" page her per-project state is mirrored to (backup + team-visible). Leave empty; it fills in on first sync.",
   "_notion_drafts": "Page under which dispatch.sh publishes every finished spec as a read-only draft page (so the owner can read the plan in Notion before saying go). Replaced on amend; the real ticket + spec page are created on go.",
   "_notion": "Internal integration token (notion.so/my-integrations; name it 'Margie'). It only sees pages connected to it: page → ··· → Connections → Margie. notion_parent_page: where `notion.sh create` puts new pages when no --parent is given.",
 
