@@ -1022,7 +1022,7 @@ async function preBrief(text: string): Promise<string> {
     if (!best) return "";
     const out = await runBashRaw(`${SCRIPTS}/dispatch.sh brief ${best}`);
     if (!out || out.startsWith("[")) return "";
-    return `\n\nCURRENT BRIEF (fetched for you — answer from THIS, not memory: lead with the answer in one sentence, name what's blocked and on whom, end with the next step as a statement):\n${out.slice(0, 6000)}`;
+    return `\n\nCURRENT BRIEF (fetched for you — answer from THIS, not memory: lead with the answer in one sentence, name what's blocked and on whom, then what is NOT blocked and can start now, and close with the brief's Next line in plain words — if it says 'say go', your last sentence tells Tom exactly what 'go' will do):\n${out.slice(0, 6000)}`;
   } catch { return ""; }
 }
 
