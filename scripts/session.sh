@@ -108,6 +108,11 @@ case "$cmd" in
       if [ "$PREV" != "$H" ]; then echo "$H" > "$ST/$S.hash"; echo "$NOW" > "$ST/$S.since"; SINCE="$NOW"; fi
       IDLE=$(( NOW - SINCE ))
       WHY=""
+      # A deploy-watcher session's verdict is announced cleanly, once.
+      VERDICT="$(printf '%s' "$PANE" | grep -iE 'DEPLOY VERDICT:' | tail -1 | sed 's/.*DEPLOY VERDICT:/DEPLOY VERDICT:/' | cut -c1-200)"
+      if [ -n "$VERDICT" ] && [ "$(cat "$ST/$S.verdict" 2>/dev/null || true)" != "$VERDICT" ]; then
+        printf '%s' "$VERDICT" > "$ST/$S.verdict"; echo "$VERDICT"; continue
+      fi
       # Claude Code's chrome (status bar, separators, the input box, update banner) is not content.
       CONTENT="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|^ *⏵⏵|^ *───|Update installed|esc to interrupt|^ *❯' )"
       LAST="$(printf '%s' "$CONTENT" | tail -3 | tr '\n' ' ')"   # a question often wraps over 2-3 terminal lines

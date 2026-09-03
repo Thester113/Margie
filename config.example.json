@@ -3,6 +3,12 @@
 
   "engine": "claude",
   "warp_mode": "quiet",
+  "deploy_watch": "on",
+  "_deploy_watch": "on = Margie watches a production deploy Tom/Cody triggers (she never starts one) via the repo deploy-watcher agent and reports the verdict. deploy_environment (production), deploy_app (AppSignal app, WaltUI/prod), deploy_autorollback (false = watch-only, escalate; true = let the agent roll back a migration-additive deploy), deploy_watch_minutes (30).",
+  "deploy_environment": "production",
+  "deploy_app": "WaltUI/prod",
+  "deploy_autorollback": false,
+  "deploy_watch_minutes": 30,
   "session_narrate": "on",
   "_session_narrate": "on = Margie gives a running play-by-play of each Claude coding session (announces every new ⏺ action it takes); off = only stuck/question/ended notices.",
   "_warp_mode": "window = every session opens its own Warp window; quiet = sessions run in tmux with no window and are watched from the margie CLI (/watch <name>) or `session.sh attach <name>`.",

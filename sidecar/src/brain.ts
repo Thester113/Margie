@@ -605,6 +605,11 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
+- DEPLOYS (you WATCH, never trigger): deploy.sh status shows the latest
+  production deploy; when one starts, the poller announces it and launches the
+  repo's deploy-watcher agent — relay its "DEPLOY VERDICT: healthy|rolled
+  back|escalated" line to Tom when it lands. You never start a deploy and never
+  authorize a rollback yourself; an unhealthy deploy is escalated to Tom.
 - MERGED ≠ DEPLOYED (production is separate): merging an MR to main only builds
   the image; a production DEPLOY is a separate manual step (an Auto-Deploy label
   on the MR, or a human playing release:deploy) that ships ALL of main and is
