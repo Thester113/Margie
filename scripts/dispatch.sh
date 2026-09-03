@@ -231,6 +231,7 @@ spec_text() { # spec_text <dir>  — spec.md plus the ticket breakdown when ther
 status_all() { # status_all <dispatch dir> "<Status>"
   local d="$1" stt="$2" pt
   pt="$(jq -r '.pt // empty' "$d/ticket.json" 2>/dev/null)"; [ -n "$pt" ] && "$DIR/notion.sh" ticket status "$pt" "$stt" >/dev/null 2>&1
+  if [ -s "$d/epic.json" ]; then case "$stt" in "In Progress") "$DIR/notion.sh" epic status "$(jq -r .id "$d/epic.json")" Executing >/dev/null 2>&1 ;; Done) "$DIR/notion.sh" epic status "$(jq -r .id "$d/epic.json")" Done >/dev/null 2>&1 ;; Canceled) "$DIR/notion.sh" epic status "$(jq -r .id "$d/epic.json")" Backlog >/dev/null 2>&1 ;; esac; fi
   [ -s "$d/tickets.json" ] || return 0
   for pt in $(jq -r --slurpfile b "$d/breakdown.json" '.[] | select(.key as $k | ($b[0].tickets[] | select(.key==$k) | .spike // false) | not) | .pt' "$d/tickets.json" 2>/dev/null); do
     "$DIR/notion.sh" ticket status "$pt" "$stt" >/dev/null 2>&1
@@ -430,6 +431,10 @@ case "$cmd" in
       done
       # the umbrella's test-case map is the union of the children's (QA updates statuses through it)
       jq -s 'add // {}' "$D"/child-*-tcmap.json > "$D/tcmap.json" 2>/dev/null || echo '{}' > "$D/tcmap.json"
+      if [ -n "$(cfg notion_epics_ds)" ]; then
+        ALLPT="$PT,$(jq -r 'map(.pt) | join(",")' "$D/tickets.json")"
+        EOUT="$("$DIR/notion.sh" epic create "$TITLE" --md "$D/body.md" --status Planning --tickets "$ALLPT" 2>/dev/null)" && { echo "$EOUT" | head -1; printf '%s\n' "$EOUT" | tail -1 > "$D/epic.json"; }
+      fi
       { echo "## Tickets"; cat "$D/tickets.md"; } > "$D/umbrella-tickets.md"
       "$DIR/notion.sh" ticket append "$PT" --md "$D/umbrella-tickets.md" >/dev/null 2>&1 || true
       cat "$D/breakdown.md" >> "$D/spec.md"

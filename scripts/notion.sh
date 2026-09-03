@@ -68,6 +68,7 @@ ds_of() {
   local a="$1" v=""
   case "$a" in
     tickets) v="$(cfg notion_tickets_ds)" ;;
+    epics) v="$(cfg notion_epics_ds)" ;;
     testcases) v="$(cfg notion_testcases_ds)" ;;
     usecases) v="$(cfg notion_usecases_ds)" ;;
     requirements) v="$(cfg notion_requirements_ds)" ;;
@@ -203,6 +204,33 @@ $(pt_page "$1")
 EOF2
     [ -z "$pid" ] && exit 1
     echo "$ppt  $purl  [$(printf '%s' "$pid" | tr -d '-')]" ;;
+  epic)
+    # epic create "<title>" [--md f] [--status S] [--tickets PT,PT] | status <id> <S> | relate <id> --tickets PT,PT
+    sub="${1:-}"; shift || true
+    ds="$(ds_of epics)" || exit 1
+    ticket_ids() { local out="[]" b bid; for b in $(printf '%s' "$1" | tr ',' ' '); do bid="$(pt_page "$b" | cut -f1)"; [ -n "$bid" ] && out="$(printf '%s' "$out" | jq -c --arg i "$bid" '. + [{id:$i}]')"; done; printf '%s' "$out"; }
+    case "$sub" in
+      create)
+        TITLE=""; MD=""; STATUS=""; TICKETS=""
+        while [ $# -gt 0 ]; do case "$1" in --md) MD="${2:-}"; shift 2 ;; --status) STATUS="${2:-}"; shift 2 ;; --tickets) TICKETS="${2:-}"; shift 2 ;; *) [ -z "$TITLE" ] && TITLE="$1" || TITLE="$TITLE $1"; shift ;; esac; done
+        [ -z "$TITLE" ] && { echo "usage: notion.sh epic create \"<title>\" [--md f] [--status S] [--tickets PT,PT]" >&2; exit 1; }
+        desc "would create Epic \"$TITLE\" (status ${STATUS:-default}) linking tickets ${TICKETS:-none}"
+        PROPS="$(jq -n --arg t "$TITLE" --arg st "$STATUS" --argjson tk "$(ticket_ids "$TICKETS")" '{Name:{title:[{type:"text",text:{content:$t}}]}} + (if $st != "" then {Status:{select:{name:$st}}} else {} end) + (if ($tk|length) > 0 then {Tickets:{relation:$tk}} else {} end)')"
+        CH="$(md_blocks "$MD")"
+        R="$(api2 POST /pages "$(jq -n --arg ds "$ds" --argjson p "$PROPS" --argjson c "$CH" '{parent:{type:"data_source_id", data_source_id:$ds}, properties:$p, children: $c[0:100]}')")"; fail_if_error "$R"
+        echo "Created Epic \"$TITLE\": $(printf '%s' "$R" | jq -r .url)"
+        jq -cn --arg id "$(printf '%s' "$R" | jq -r .id)" --arg url "$(printf '%s' "$R" | jq -r .url)" '{id:$id, url:$url}' ;;
+      status)
+        [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: notion.sh epic status <id> <Status>" >&2; exit 1; }
+        desc "would set Epic $(printf '%.24s' "$1")… to \"$2\""
+        R="$(api2 PATCH "/pages/$(nid "$1")" "$(jq -nc --arg s "$2" '{properties:{Status:{select:{name:$s}}}}')")"; fail_if_error "$R"; echo "Epic is now $2, dearie." ;;
+      relate)
+        E="${1:-}"; shift || true; TICKETS=""; while [ $# -gt 0 ]; do case "$1" in --tickets) TICKETS="${2:-}"; shift 2 ;; *) shift ;; esac; done
+        { [ -z "$E" ] || [ -z "$TICKETS" ]; } && { echo "usage: notion.sh epic relate <id> --tickets PT,PT" >&2; exit 1; }
+        desc "would link tickets $TICKETS to Epic $(printf '%.24s' "$E")…"
+        R="$(api2 PATCH "/pages/$(nid "$E")" "$(jq -nc --argjson tk "$(ticket_ids "$TICKETS")" '{properties:{Tickets:{relation:$tk}}}')")"; fail_if_error "$R"; echo "Linked $TICKETS to the Epic, dearie." ;;
+      *) echo "usage: notion.sh epic create \"<title>\" [--md f] [--status S] [--tickets PT,PT] | status <id> <S> | relate <id> --tickets PT,PT" >&2; exit 1 ;;
+    esac ;;
   ticket)
     sub="${1:-read}"; shift || true
     case "$sub" in
@@ -226,6 +254,7 @@ EOF2
             --labels) LABELS="${2:-}"; shift 2 ;;
             --usecase) USECASE="${2:-}"; shift 2 ;;
             --assignee) ASSIGNEE="${2:-}"; shift 2 ;;
+            --epic) EPIC="${2:-}"; shift 2 ;;
             *) [ -z "$TITLE" ] && TITLE="$1" || TITLE="$TITLE $1"; shift ;;
           esac
         done
@@ -235,7 +264,7 @@ EOF2
         DEFS="$(jq -c '.notion_ticket_defaults // {}' "$CFG" 2>/dev/null || echo '{}')"
         [ -z "$ASSIGNEE" ] && ASSIGNEE="$(cfg notion_assignee)"
         PROPS="$(jq -n --arg t "$TITLE" --argjson defs "$DEFS" --arg descr "$DESCR" --arg status "$STATUS" \
-                       --arg prio "$PRIO" --arg labels "$LABELS" --arg usecase "$(nid "${USECASE:-}" || true)" --arg assignee "$ASSIGNEE" '
+                       --arg prio "$PRIO" --arg labels "$LABELS" --arg usecase "$(nid "${USECASE:-}" || true)" --arg assignee "$ASSIGNEE" --arg epic "$(nid "${EPIC:-}" || true)" '
           def opt(f): if . == "" then empty else f end;
           {Title: {title: [{type:"text", text:{content:$t}}]}}
           + (($status  | opt({name:.}) ) // ($defs.Status  // "" | opt({name:.})) | if . then {Status:{status:.}} else {} end)
@@ -245,7 +274,8 @@ EOF2
              | if length > 0 then {Labels:{multi_select: map({name:.})}} else {} end)
           + ($descr | opt({Description:{rich_text:[{type:"text",text:{content:.}}]}}) // {})
           + ($usecase | opt({"Use Cases":{relation:[{id:.}]}}) // {})
-          + ($assignee | opt({Assignee:{people:[{id:.}]}}) // {})')"
+          + ($assignee | opt({Assignee:{people:[{id:.}]}}) // {})
+          + ($epic | opt({Epic:{relation:[{id:.}]}}) // {})')"
         CH="$(md_blocks "$MD")"
         R="$(api2 POST /pages "$(jq -n --arg ds "$ds" --argjson p "$PROPS" --argjson c "$CH" \
               '{parent:{type:"data_source_id", data_source_id:$ds}, properties:$p, children: $c[0:100]}')")"
