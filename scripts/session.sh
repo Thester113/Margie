@@ -127,6 +127,27 @@ case "$cmd" in
       CONTENT="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|^ *⏵⏵|^ *───|Update installed|esc to interrupt|^ *❯' )"
       LAST="$(printf '%s' "$CONTENT" | tail -3 | tr '\n' ' ')"   # a question often wraps over 2-3 terminal lines
       WORKING=0; printf '%s' "$TAIL" | grep -q "esc to interrupt" && WORKING=1
+      # Rescue a stuck send: Claude Code sometimes leaves an injected instruction sitting
+      # in the input box without submitting it (paste-detection state). If the composer
+      # holds freeform text while the session is idle, re-submit it once via clear-and-retype.
+      COMPOSER="$(printf '%s' "$PANE" | grep -E '^❯ ' | tail -1 | sed 's/^❯[[:space:]]*//; s/[[:space:]]*$//')"
+      if [ "$WORKING" = 0 ] && [ -n "$COMPOSER" ] && [ "$IDLE" -ge 20 ] \
+         && ! printf '%s' "$COMPOSER" | grep -qE '^[0-9]+\.|^(Yes|No)\b' \
+         && ! printf '%s' "$TAIL" | grep -qE 'Enter to confirm|Esc to cancel|Do you want to|Yes, I trust|Allow (once|always)|\(y/n\)|\[Y/n\]|\[y/N\]|❯ *1\.'; then
+        RH="resub:$(printf '%s' "$COMPOSER" | shasum | cut -c1-12)"
+        if [ "$(cat "$ST/$S.told" 2>/dev/null || true)" != "$RH" ]; then
+          echo "$RH" > "$ST/$S.told"
+          "$TMUX_BIN" send-keys -t "$S" C-u 2>/dev/null; sleep 0.3
+          "$TMUX_BIN" send-keys -t "$S" -l -- "$COMPOSER"; sleep 0.5
+          "$TMUX_BIN" send-keys -t "$S" Enter; sleep 1
+          if "$TMUX_BIN" capture-pane -t "$S" -p 2>/dev/null | grep -E '^❯ ' | tail -1 | grep -qF "$(printf '%s' "$COMPOSER" | cut -c1-24)"; then
+            echo "[$S] has an instruction stuck in its input I couldn't submit — needs a look: $(printf '%s' "$COMPOSER" | cut -c1-80)"
+          else
+            echo "[$S] had an instruction stuck unsent — I submitted it: $(printf '%s' "$COMPOSER" | cut -c1-80)"
+          fi
+          continue
+        fi
+      fi
       if printf '%s' "$TAIL" | grep -qE 'Enter to confirm|Esc to cancel|Do you want to|Yes, I trust|Yes, and don.t ask|\(y/n\)|\[Y/n\]|\[y/N\]|No, and tell Claude|Allow (once|always)|Press Enter|❯ *1\.|^ *1\. Yes'; then WHY="waiting on a prompt"
       elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 45 ] && printf '%s' "$PANE" | tail -12 | grep -qE '· done [0-9]' && printf '%s' "$CONTENT" | grep -qiE 'still needed|next steps?|remaining|what is left|to finish|blocked on|needs? (you|tom)|could not|did not|unable|flag for tom|ready (for|to) (tom|review|submit)|filled and ready|review and submit|for tom to'; then WHY="finished its task and reported what is still needed"
       elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 120 ] && printf '%s' "$LAST" | grep -qiE '\?|\b(shall i|should i|want me to|would you like|let me know|say the word|ready to|waiting for|tell me)\b'; then WHY="asked a question and has been idle $((IDLE/60)) min"
@@ -197,16 +218,32 @@ $Q" 2>/dev/null)"
     fi
     # Collapse to a single line: a multi-line block is treated as a paste attachment
     # by Claude Code and a lone Enter won't submit it (it gets stuck in the input box).
-    ONE="$(printf '%s' "$TEXT" | tr '\n' ' ' | sed 's/  */ /g')"
-    "$TMUX_BIN" send-keys -t "$SESSION" C-u 2>/dev/null   # clear anything half-typed first
-    "$TMUX_BIN" send-keys -t "$SESSION" -l -- "$ONE"
-    sleep 0.4; "$TMUX_BIN" send-keys -t "$SESSION" Enter
-    # Verify it submitted (input box empties); one retry if it didn't.
-    sleep 0.8
-    if "$TMUX_BIN" capture-pane -t "$SESSION" -p 2>/dev/null | grep -E '^❯' | tail -1 | grep -q "$(printf '%s' "$ONE" | cut -c1-20)"; then
-      "$TMUX_BIN" send-keys -t "$SESSION" Enter
+    # Also fold non-ASCII punctuation (em/en dashes, smart quotes) down to ASCII: sending
+    # multibyte characters through `tmux send-keys -l` is what wedges the composer so that
+    # neither Enter nor C-u can recover it.
+    ONE="$(printf '%s' "$TEXT" | perl -CSD -0777 -pe 's/[\x{2012}-\x{2015}]/-/g; s/[\x{2018}\x{2019}]/'"'"'/g; s/[\x{201C}\x{201D}]/"/g; s/\s+/ /g; s/^\s+|\s+$//g' 2>/dev/null)"
+    [ -z "$ONE" ] && ONE="$(printf '%s' "$TEXT" | tr '\n' ' ' | sed 's/  */ /g')"
+    # Fixed-string probe (no regex — the text may contain em-dashes, slashes, etc.).
+    PROBE="$(printf '%s' "$ONE" | cut -c1-24)"
+    # True when our text is NO LONGER sitting in the composer (i.e. it submitted).
+    submitted() { ! "$TMUX_BIN" capture-pane -t "$SESSION" -p 2>/dev/null | grep -E '^❯' | tail -1 | grep -qF "$PROBE"; }
+    # One full clear-and-retype cycle. A bare Enter cannot rescue text once Claude
+    # Code has it in paste/attachment state — only clearing (C-u) and retyping does.
+    submit_once() {
+      "$TMUX_BIN" send-keys -t "$SESSION" C-u 2>/dev/null   # clear anything half-typed/stuck
+      sleep 0.3
+      "$TMUX_BIN" send-keys -t "$SESSION" -l -- "$ONE"
+      sleep 0.5; "$TMUX_BIN" send-keys -t "$SESSION" Enter
+      sleep 1.0; submitted
+    }
+    OK=0
+    for _try in 1 2 3; do if submit_once; then OK=1; break; fi; sleep 0.5; done
+    if [ "$OK" = 1 ]; then
+      echo "Sent into session $SESSION, dearie."
+    else
+      echo "Couldn't submit into $SESSION — the text stayed stuck in the composer, dearie." >&2
+      exit 1
     fi
-    echo "Sent into session $SESSION, dearie."
     ;;
   *)
     echo "usage: session.sh read [lines] | send \"<text>\" | key <keys> | needs | list [--branch <b>]" >&2

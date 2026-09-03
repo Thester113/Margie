@@ -10,6 +10,7 @@
 #   mr.sh merge  <PT|!n> [--repo r]            merge it (held; the session's branch is removed)
 #   mr.sh request-review <PT|!n> [--repo r]    play the manual review-bot jobs on the MR's latest pipeline
 #   mr.sh threads <PT|!n>                      the unresolved review threads (bot or human), one per line
+#   mr.sh resolve <PT|!n> [thread-id]          resolve one (or every) open review thread once addressed
 #
 # The description is the repo's own MR template, fully filled, ending with the
 # one `/label ~"… Risk"` quick action the release job requires. For a dispatch
@@ -164,6 +165,21 @@ case "$cmd" in
       | "• " + ($n.author.username // "?") + ($n.position.new_path // "" | if .=="" then "" else " (" + . + (($n.position.new_line // "" | tostring)|if .=="" or .=="null" then "" else ":" + . end) + ")" end) + ": "
         + ($n.body | gsub("\n";" ") | .[0:400])' 2>/dev/null
     [ -z "$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq -r '[.[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false))] | length')" ] && echo "(none)" ;;
+  resolve)
+    NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"; [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // empty' "$D/mr.json" 2>/dev/null)"
+    [ -z "$NUM" ] && { echo "usage: mr.sh resolve <PT|!n> [thread-id]" >&2; exit 1; }
+    cd "${WT:-${REPO_ARG:-$PWD}}" || exit 1
+    TID="${1:-}"
+    if [ -n "$TID" ]; then IDS="$TID"; else
+      IDS="$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq -r '.[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false)) | .id')"
+    fi
+    [ -z "$IDS" ] && { echo "No open review threads on !$NUM, dearie."; exit 0; }
+    CNT="$(printf '%s\n' "$IDS" | grep -c .)"
+    desc "would resolve $CNT open review thread(s) on MR !$NUM"
+    N=0; for id in $IDS; do
+      glab api "projects/:id/merge_requests/$NUM/discussions/$id" -X PUT -f resolved=true >/dev/null 2>&1 && N=$((N+1))
+    done
+    echo "Resolved $N of $CNT review thread(s) on !$NUM, dearie." ;;
   request-review)
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"
     [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // empty' "$D/mr.json" 2>/dev/null)"
@@ -218,6 +234,6 @@ case "$cmd" in
   view)
     "$DIR/forge.sh" mr "$(printf '%s' "$REF" | grep -oE '[0-9]+$')" "${1:-}" ;;
   *)
-    echo "usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f] | view <!n> [repo] | check <PT|!n> | merge <PT|!n> | request-review <PT|!n>" >&2
+    echo "usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f] | view <!n> [repo] | check <PT|!n> | merge <PT|!n> | request-review <PT|!n> | threads <PT|!n> | resolve <PT|!n> [thread-id]" >&2
     exit 1 ;;
 esac
