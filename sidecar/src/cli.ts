@@ -67,27 +67,83 @@ const short = (s: string, n = 110) => (s.length > n ? s.slice(0, n - 1) + "…" 
 const tidyCmd = (s: string) => s.replace(new RegExp(SCRIPTS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/", "g"), "");
 
 // ── Spinner ────────────────────────────────────────────────────────────────────
+/** Margie at work: a little animated granny (glasses, bun, knitting) with a thought
+ *  bubble carrying the current step. Multi-line, redrawn in place; /flair toggles
+ *  back to a plain one-line spinner. Non-TTY output never sees either. */
+let FLAIR = process.env.MARGIE_FLAIR !== "0";
+const GRANNY: string[][] = [
+  [
+    "      .-\"\"\"-.       ",
+    "     / _   _ \\  o   ",
+    "    | (o) (o) |  O   ",
+    "    |    ..   |      ",
+    "     \\  \\__/  /  ~~  ",
+    "      '-.,,.-'  |\\   ",
+  ],
+  [
+    "      .-\"\"\"-.       ",
+    "     / _   _ \\   o  ",
+    "    | (o) (o) |   O  ",
+    "    |    ..   |      ",
+    "     \\  \\__/  /  ~~  ",
+    "      '-.,,.-'  /|   ",
+  ],
+  [
+    "      .-\"\"\"-.       ",
+    "     / _   _ \\  o   ",
+    "    | (-) (-) |  O   ",
+    "    |    ..   |      ",
+    "     \\  \\__/  /  ~~  ",
+    "      '-.,,.-'  |\\   ",
+  ],
+];
 class Spinner {
   private t: NodeJS.Timeout | null = null;
   private i = 0;
   private started = 0;
   private label = "thinking";
   private frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  private drawn = 0;   // lines currently on screen (multi-line mode)
   start(label = "thinking") {
     if (!TTY) return;
     this.label = label; this.started = Date.now();
     this.stop();
-    this.t = setInterval(() => this.draw(), 90);
+    this.t = setInterval(() => this.draw(), FLAIR ? 320 : 90);
     this.draw();
   }
   set(label: string) { this.label = label; if (this.t) this.draw(); }
-  private draw() {
-    const f = this.frames[this.i++ % this.frames.length];
-    process.stdout.write(`\r\x1b[2K${MAG}${f}${RESET} ${DIM}${this.label}… ${fmtMs(Date.now() - this.started)}${RESET}`);
+  private erase() {
+    if (this.drawn > 0) { process.stdout.write(`\r\x1b[2K` + `\x1b[1A\x1b[2K`.repeat(this.drawn - 1) + "\r"); this.drawn = 0; }
+    else process.stdout.write("\r\x1b[2K");
   }
-  /** Clear the spinner line so other output can be printed cleanly. */
-  clear() { if (this.t) process.stdout.write("\r\x1b[2K"); }
-  stop() { if (this.t) { clearInterval(this.t); this.t = null; process.stdout.write("\r\x1b[2K"); } }
+  private draw() {
+    this.i++;
+    if (!FLAIR) {
+      this.erase();
+      process.stdout.write(`${MAG}${this.frames[this.i % this.frames.length]}${RESET} ${DIM}${this.label}… ${fmtMs(Date.now() - this.started)}${RESET}`);
+      return;
+    }
+    if ((process.stdout.columns || 80) < 90) {   // too narrow for the art + bubble: plain line
+      this.erase(); process.stdout.write(`${MAG}${this.frames[this.i % this.frames.length]}${RESET} ${DIM}${this.label}… ${fmtMs(Date.now() - this.started)}${RESET}`); return;
+    }
+    const art = GRANNY[this.i % GRANNY.length];
+    const dots = ".".repeat(1 + (this.i % 3)).padEnd(3);
+    const bubble = `( ${this.label}${dots} ${fmtMs(Date.now() - this.started)} )`;
+    const lines = [
+      `${PINK}${art[0]}${RESET}  ${LAV}${bubble}${RESET}`,
+      `${PINK}${art[1]}${RESET}`,
+      `${PINK}${art[2]}${RESET}`,
+      `${PINK}${art[3]}${RESET}`,
+      `${PINK}${art[4]}${RESET}  ${DIM}knit one, purl one…${RESET}`,
+      `${PINK}${art[5]}${RESET}`,
+    ];
+    this.erase();
+    process.stdout.write(lines.join("\n"));
+    this.drawn = lines.length;
+  }
+  /** Clear the spinner block so other output can be printed cleanly. */
+  clear() { if (this.t) this.erase(); }
+  stop() { if (this.t) { clearInterval(this.t); this.t = null; this.erase(); } }
 }
 
 // ── Event rendering (shared by REPL and one-shot) ─────────────────────────────
@@ -208,6 +264,7 @@ const HELP = `${PINK}✿${RESET} ${NAME} ${GREY}— your assistant, dearie. One 
   ${CYAN}/held${RESET}     what's waiting for your yes      ${CYAN}/yes${RESET}  ${CYAN}/no${RESET}   answer it
   ${CYAN}/spec${RESET}     latest spec in full             ${CYAN}/qa${RESET}   ${CYAN}/mr${RESET}    latest QA report / MR text
   ${CYAN}/verbose${RESET}  show the raw commands behind her steps
+  ${CYAN}/flair${RESET}    toggle the knitting granny while she works
   ${CYAN}/log${RESET}      her recent brain log            ${CYAN}/clear${RESET}     ${CYAN}/quit${RESET}
   ${GREY}▸ what she ran   ⎿ what it said   ⏸ waiting for your yes   ✿ something she noticed in the background${RESET}`;
 
@@ -251,6 +308,7 @@ async function repl() {
     if (text === "/status") { await cmdStatus(); held = await heldSummary(c); return; }
     if (text === "/held") { console.log(held ? `${YEL}⏸ ${held}${RESET}` : `${DIM}nothing held${RESET}`); return; }
     if (text === "/usage" || text === "/usage week") { spawnSync(`${SCRIPTS}/usage.sh`, [text.endsWith("week") ? "week" : "today"], { stdio: "inherit" }); return; }
+    if (text === "/flair") { FLAIR = !FLAIR; console.log(`${DIM}granny ${FLAIR ? "on" : "off"}${RESET}`); return; }
     if (text === "/verbose") { VERBOSE = !VERBOSE; console.log(`${DIM}raw commands ${VERBOSE ? "shown" : "hidden"}${RESET}`); return; }
     if (text === "/log") { spawnSync("tail", ["-25", `${HOME}/.margie/brain.log`], { stdio: "inherit" }); return; }
     if (text === "/spec" || text === "/qa" || text === "/mr") {
