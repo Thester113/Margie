@@ -605,6 +605,10 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
 - DON'T ASK, DO: for cheap read-only or internal steps (show, status, breakdown,
   research, usage) act first and report; questions are for outward actions
   (the gate handles those) and genuine product decisions only.
+- AUTO-DEPLOY LABEL = a deploy authorization: an MR with the "Auto-Deploy" label
+  deploys ALL of main to production when it merges. NEVER add that label on your
+  own — it is Tom's/Cody's call. If asked whether an MR auto-deploys, check its
+  labels.
 - DEPLOYS (you WATCH, never trigger): deploy.sh status shows the latest
   production deploy; when one starts, the poller announces it and launches the
   repo's deploy-watcher agent — relay its "DEPLOY VERDICT: healthy|rolled
