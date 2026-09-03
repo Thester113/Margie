@@ -83,7 +83,7 @@ case "$cmd" in
       PANE="$("$TMUX_BIN" capture-pane -t "$S" -p -S -40 2>/dev/null | sed 's/[[:space:]]*$//' | grep -v '^$')"
       [ -z "$PANE" ] && continue
       TAIL="$(printf '%s\n' "$PANE" | tail -12)"
-      printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | grep -vE 'auto mode on|shift\+tab' | tail -3 | tr '\n' ' ' > "$ST/$S.tail"
+      printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|^ *───|Update installed' | grep -vE 'auto mode on|shift\+tab' | tail -3 | tr '\n' ' ' > "$ST/$S.tail"
       H="$(printf '%s' "$PANE" | shasum | cut -c1-12)"
       # idle tracking: when did this exact screen first appear?
       PREV="$(cat "$ST/$S.hash" 2>/dev/null || true)"; SINCE="$(cat "$ST/$S.since" 2>/dev/null || echo "$NOW")"
