@@ -681,9 +681,11 @@ case "$cmd" in
             SCREEN="$("$DIR/session.sh" read 80 --branch "$BR" 2>/dev/null || true)"
             # Coding session signalled completion (or clearly finished and stopped) -> run QA once.
             if [ "$S" = implementing ] && [ ! -s "$D/qa.json" ] && [ ! -f "$D/qa-auto" ] && [ -n "$SCREEN" ]; then
-              if printf '%s' "$SCREEN" | grep -q "MARGIE_READY_FOR_QA" \
+              # MARGIE_READY_FOR_QA must be Claude's OWN output on its own line — NOT the
+              # echoed instruction in the input box ("...print MARGIE_READY_FOR_QA...again").
+              if { printf '%s' "$SCREEN" | grep -qE '^MARGIE_READY_FOR_QA[[:space:]]*$' && ! printf '%s' "$SCREEN" | grep -q "esc to interrupt"; } \
                  || { printf '%s' "$SCREEN" | grep -qE "· done [0-9]" && ! printf '%s' "$SCREEN" | grep -q "esc to interrupt" \
-                      && printf '%s' "$SCREEN" | grep -qiE "ready for QA|tests? (are|is) (complete|green|passing)|(work|implementation) (is|and tests are) complete"; }; then
+                      && printf '%s' "$SCREEN" | grep -qiE "tests? (are|is) (complete|green|passing)|(work|implementation) (is|and tests are) complete"; }; then
                 touch "$D/qa-auto"; rm -f "$D/qa-fail-sent"
                 "$0" qa "$(basename "$D")" >/dev/null 2>&1 && announce "Coding on $PT reports done — running QA now, dearie." && S=qa-running
               fi
@@ -691,7 +693,7 @@ case "$cmd" in
             # QA passed -> tell the session to open the MR (once); the merge closes it.
             if [ "$S" = qa-pass ] && [ ! -f "$D/mr-nudged" ]; then
               touch "$D/mr-nudged"
-              if printf '%s' "$SCREEN" | grep -qE "MR !?[0-9]+|MARGIE_MR_OPEN"; then
+              if printf '%s' "$SCREEN" | grep -qE "^MARGIE_MR_OPEN|/-/merge_requests/[0-9]+|![0-9]{2,} (opened|created)"; then
                 announce "QA passed on $PT and the session already has an MR open — MR text at $D/mr.md if it needs updating (mr.sh update), dearie."
               else
                 "$DIR/session.sh" send "QA passed — open the MR now with the repo's /merge-request skill, using the prepared description at $D/mr.md (title on the first line). When it's open print MARGIE_MR_OPEN <url>." --branch "$BR" >/dev/null 2>&1 \
