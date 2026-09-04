@@ -176,8 +176,11 @@ case "$cmd" in
         fi
       fi
       SNIP="$(printf '%s' "$CONTENT" | grep -vE 'auto mode on|shift\+tab|⏵⏵|/rc|Explore|Listing|^ *[●○]|MARGIE_READY_FOR_QA|MARGIE_MR_|print MARGIE' | sed 's/[─│┌┐└┘┤├┬┴┼▶►◀]//g; s/[^[:print:][:space:]]//g' | grep -vE '^[[:space:]]*$' | tail -2 | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-200)"
-      SIG="$(printf '%s|%s' "$WHY" "$SNIP" | shasum | cut -c1-12)"
-      [ "$(cat "$ST/$S.told" 2>/dev/null || true)" = "$SIG" ] && continue   # already announced this state (not once per screen-clock tick)
+      # Dedup on the CONTENT, not the clock: strip digits (idle-minute counts, "done
+      # 9:17 AM" timestamps) so an unchanged idle session is not re-answered — and re-
+      # invoking the brain — every minute. That per-minute re-ask burned ~$99 in a day.
+      SIG="$(printf '%s|%s' "$WHY" "$SNIP" | tr -d '0-9' | shasum | cut -c1-12)"
+      [ "$(cat "$ST/$S.told" 2>/dev/null || true)" = "$SIG" ] && continue   # already answered this state
       echo "$SIG" > "$ST/$S.told"
       # A session that asked a question gets its answer from Margie's brain — she knows the
       # project notes and conventions. She escalates only money, credentials or product calls.

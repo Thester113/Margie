@@ -221,6 +221,8 @@ make_child() { # make_child <parent dir> <key>  → creates the child dispatch d
            security: (.security + {risk_label: ($t.risk_label // .security.risk_label)}),
            open_questions: [], parent_title: .title, ticket_key: $key, spike: ($t.spike // false)}' "$d/spec.json" > "$c/spec.json"
   jq -c --arg key "$key" '.[] | select(.key==$key) | {pt, id, url}' "$d/tickets.json" > "$c/ticket.json"
+  # Make the child resolvable by its own PT id (e.g. `dispatch.sh qa PT-837`).
+  cpt="$(jq -r '.pt // empty' "$c/ticket.json" 2>/dev/null)"; [ -n "$cpt" ] && ln -sfn "$c" "$MDIR/$cpt"
   jq -c '[.test_cases[] | {title, case_type, setup, exercise, assertions, cleanup, cannot_run_async: (.cannot_run_async // false), test_file: (.test_file // ""), sabotage}]' "$c/spec.json" > "$c/testcases.json"
   [ -s "$d/child-$key-tcmap.json" ] && cp "$d/child-$key-tcmap.json" "$c/tcmap.json"
   [ -s "$d/docs-page.url" ] && cp "$d/docs-page.url" "$c/docs-page.url"
