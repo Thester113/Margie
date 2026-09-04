@@ -895,6 +895,8 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
                 PT="$(jq -r .pt "$D/ticket.json")"
                 status_all "$D" "Done"
                 st "$D" closed
+                # Retire the coding session — its ticket is merged, nothing left to do.
+                tmux kill-session -t "margie-$(printf '%s' "$BR" | tr '/ ' '--')" 2>/dev/null || true
                 announce "$PT merged and closed, dearie."
                 # a child finished → start the next ticket, or close the umbrella after the last
                 if [ -s "$D/parent" ]; then
