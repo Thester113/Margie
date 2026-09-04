@@ -123,6 +123,7 @@ const OUTWARD: RegExp[] = [
   /\bresearch\.sh\s+post\b/,
   /\bdispatch\.sh\s+merge\b/, /\bmr\.sh\s+merge\b/,
   /\btelnyx\.sh\s+(buy|send|send-group|spike)\b/,   // spends money / texts real phones
+  /\btelnyx\.sh\s+campaign\s+(submit|create)\b/,    // 10DLC campaign registration — a fee + regulatory submission (Tom's)
 ];
 const PENDING_TTL_MS = 3 * 60 * 1000;
 // Several commands can be held in one turn (e.g. two DMs); one "yes" releases

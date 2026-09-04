@@ -78,5 +78,21 @@ case "$cmd" in
     echo "2. Then I reply from $FROM to both as a group MMS (below)."
     echo "3. On BOTH phones: did my reply land inside the thread from step 1 (pass) or as a new conversation from $FROM (fail)?"
     "$0" send-group "$TO" "Hi both — this is Amby's test reply. If you can read this inside the thread you started, the group MMS check passes." ;;
-  *) echo "usage: telnyx.sh numbers | search <area> [n] | buy <+1> | profile [name] | assign <+1> [profile] | send-group \"<+1,+1>\" \"<text>\" [--from +1] | send <+1> \"<text>\" | message <id> | ready | spike \"<agent>,<client>\"" >&2; exit 1 ;;
+  campaign)
+    CF="$HOME/.margie/telnyx-campaign.json"
+    [ -s "$CF" ] || { echo "No filled campaign yet, dearie — $CF is missing." >&2; exit 1; }
+    sub="${1:-fill}"
+    case "$sub" in
+      fill|show)
+        echo "Filled 10DLC campaign (NOT submitted — no fee charged):"
+        jq -r 'to_entries[] | "  \(.key): \(.value|tostring|.[0:120])"' "$CF"
+        echo; echo "Review it, then Tom submits (per-campaign fee + TCR review): telnyx.sh campaign submit" ;;
+      submit|create)
+        desc "would SUBMIT the 10DLC campaign to Telnyx/TCR (brand $(jq -r .brandId "$CF"), usecase $(jq -r .usecase "$CF")) — this incurs a per-campaign fee and is Tom's to authorize"
+        R="$(api POST /10dlc/campaignBuilder -d "@$CF")"; err "$R" && exit 1
+        CID="$(printf '%s' "$R" | jq -r '.campaignId // .id // .tcrCampaignId // empty')"
+        echo "Submitted 10DLC campaign${CID:+ $CID} — status $(printf '%s' "$R" | jq -r '.status // "pending"'). Next: assign $FROM to it, then A2P sends deliver." ;;
+      *) echo "usage: telnyx.sh campaign fill | submit" >&2; exit 1 ;;
+    esac ;;
+  *) echo "usage: telnyx.sh numbers | search <area> [n] | buy <+1> | profile [name] | assign <+1> [profile] | send-group \"<+1,+1>\" \"<text>\" [--from +1] | send <+1> \"<text>\" | message <id> | ready | campaign fill|submit | spike \"<agent>,<client>\"" >&2; exit 1 ;;
 esac
