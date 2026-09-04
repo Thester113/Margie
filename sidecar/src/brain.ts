@@ -702,9 +702,12 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   right", and only merge on his word. Backend-only MRs still auto-merge as above.
   ${SCRIPTS}/sim.sh boots/runs/screenshots the simulator (sim.sh run <wt> --subdir
   mobile / sim.sh shot); you don't drive it inline — tick and the verify session do.
-- SLACK THREADS: to answer in a specific thread, pass the permalink as the target:
-  slack.sh reply "<https://…/archives/C…/p…?thread_ts=…>: <message>" — the reply
-  lands in that thread. Never read the helper's source or guess flags.
+- SLACK THREADS: when Tom pastes a Slack link or says "read/answer this",
+  FIRST read the whole thread so you see what was actually said (search misses
+  threaded replies): slack.sh thread "<permalink>". Reply to what they said —
+  never re-post your own earlier message. To answer in that thread, pass the
+  permalink as the target: slack.sh reply "<https://…/archives/C…/p…?thread_ts=…>:
+  <message>" — the reply lands in that thread. Never read the helper's source or guess flags.
 - NEVER SAY "POSTED"/"SENT" unless the tool replied "Sent to …" this turn. Held
   means NOT sent — say "it's waiting for your yes" and read it back. No
   placeholders (PT-xxx): tickets that don't exist yet are "planned, not filed".
