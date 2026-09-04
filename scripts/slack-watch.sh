@@ -121,22 +121,27 @@ while IFS=$'\t' read -r kind cid label; do
     | @tsv' >> "$NEW"
 done < "$SRCS"
 
-# Replies in threads under Margie's messages: the owner's → brain; others' → composer.
+# Replies inside threads. Scan EVERY thread that has replies (not just Margie's own),
+# because an @Margie / @owner mention often lives in a reply under someone else's message
+# and never appears in the channel's top-level history.
 while IFS=$'\t' read -r kind cid label; do
   [ -z "$cid" ] && continue
   H="$(sapi conversations.history --get --data-urlencode "channel=$cid" -d "limit=15")"
-  echo "$H" | jq -r --arg bot "$BOTID" '.messages[]? | select((.user // "")==$bot and ((.reply_count // 0) > 0)) | .ts' 2>/dev/null \
-  | while read -r pts; do
+  echo "$H" | jq -r '.messages[]? | select((.reply_count // 0) > 0) | "\(.ts)\t\(.user // "")"' 2>/dev/null \
+  | while IFS=$'\t' read -r pts puser; do
       [ -z "$pts" ] && continue
+      mine=0; [ "$puser" = "$BOTID" ] && mine=1   # is this a thread Margie started?
       sapi conversations.replies --get --data-urlencode "channel=$cid" --data-urlencode "ts=$pts" -d "limit=30" \
-      | jq -r --arg bot "$BOTID" --arg owner "${OWNER:-__none__}" --arg cid "$cid" --arg label "$label" --arg pts "$pts" '
+      | jq -r --arg bot "$BOTID" --arg owner "${OWNER:-__none__}" --arg cid "$cid" --arg label "$label" --arg pts "$pts" --arg mine "$mine" --argjson now "$NOW" '
           .messages[]? | select(.ts != $pts) | select(.subtype==null) | select((.user // "") != $bot)
+          | select(($now - (.ts|tonumber)) < 1800)   # nothing older than 30 min (avoid answering stale mentions)
           | (((.text // "") | contains("<@"+$bot+">")) or ((.text // "") | test("\\bmargie\\b"; "i"))) as $named
-          # A reply in a thread MARGIE started is directed at her, so answer a colleague
-          # even without a tag. The owner reply still needs a tag (he pulls her in when he
-          # wants her); general group chatter stays tagged-only elsewhere.
-          | select($named or ((.user // "") != $owner))
-          | [(if (.user // "")==$owner then "ownerask" else "bot" end), $cid, $label, .ts, $pts, (.user // "?"), ((.text // "") | gsub("\t";" ") | gsub("\n";" "))]
+          # Respond when Margie is tagged/named anywhere, OR — in a thread SHE started — to a
+          # colleague answering her even without a tag. Owner replies still need a tag; general
+          # thread chatter Margie was not pulled into stays untouched.
+          | select($named or ($mine=="1" and ((.user // "") != $owner)))
+          | (if ($named and ((.user // "")==$owner)) then "ownerask" elif $named then "bot" elif ((.user // "")==$owner) then "ownerask" else "bot" end) as $k
+          | [$k, $cid, $label, .ts, $pts, (.user // "?"), ((.text // "") | gsub("\t";" ") | gsub("\n";" "))]
           | @tsv' >> "$NEW"
     done
 done < "$SRCS"
