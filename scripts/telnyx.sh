@@ -92,7 +92,17 @@ case "$cmd" in
         R="$(api POST /10dlc/campaignBuilder -d "@$CF")"; err "$R" && exit 1
         CID="$(printf '%s' "$R" | jq -r '.campaignId // .id // .tcrCampaignId // empty')"
         echo "Submitted 10DLC campaign${CID:+ $CID} — status $(printf '%s' "$R" | jq -r '.status // "pending"'). Next: assign $FROM to it, then A2P sends deliver." ;;
-      *) echo "usage: telnyx.sh campaign fill | submit" >&2; exit 1 ;;
+      assign)
+        CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"; PID="$(cfg telnyx_profile_id)"
+        { [ -z "$CID" ] || [ -z "$PID" ]; } && { echo "Need a campaign id (~/.margie/telnyx-campaign-id.txt) and telnyx_profile_id, dearie." >&2; exit 1; }
+        desc "would assign messaging profile $PID (number ${FROM:-?}) to 10DLC campaign $CID"
+        R="$(api POST /10dlc/phoneNumberAssignmentByProfile -d "$(jq -nc --arg p "$PID" --arg c "$CID" '{messagingProfileId:$p, campaignId:$c}')")"; err "$R" && exit 1
+        echo "Assigned profile $PID (number ${FROM:-?}) to campaign $CID — $(printf '%s' "$R" | jq -r '.taskId // .status // "queued"'). A2P delivers once the campaign is APPROVED." ;;
+      status)
+        CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"; [ -z "$CID" ] && { echo "No campaign id saved yet, dearie." >&2; exit 1; }
+        R="$(api GET "/10dlc/campaign/$CID")"; err "$R" && exit 1
+        printf '%s' "$R" | jq -r '"campaign \(.campaignId // "?") — status \(.status // .campaignStatus // "?"), usecase \(.usecase // "-")"' ;;
+      *) echo "usage: telnyx.sh campaign fill | submit | assign | status" >&2; exit 1 ;;
     esac ;;
   *) echo "usage: telnyx.sh numbers | search <area> [n] | buy <+1> | profile [name] | assign <+1> [profile] | send-group \"<+1,+1>\" \"<text>\" [--from +1] | send <+1> \"<text>\" | message <id> | ready | campaign fill|submit | spike \"<agent>,<client>\"" >&2; exit 1 ;;
 esac
