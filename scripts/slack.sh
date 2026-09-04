@@ -34,8 +34,12 @@ SEND_AS="$(jq -r '.slack_send_as // empty' "$CFG" 2>/dev/null)"
 # Sends default to the @Margie BOT identity whenever a bot token exists
 # (slack_send_as: "tom" reverts to sending as Tom via the connector/user token).
 BOT_SEND=0
+# `read <permalink>` really means "read that thread" — the search backend can't
+# see threaded replies (Mike's answer to Margie lived in a thread and was missed),
+# so route a permalink read to the bot-token thread reader.
+if [ "${1:-read}" = read ] && printf '%s' "${2:-}" | grep -qE '^https?://[^ ]+/archives/[A-Z0-9]+/p[0-9]+' && [ -n "$BTOK" ]; then set -- thread "$2"; fi
 case "${1:-read}" in
-  send|reply|dm|channels) [ -n "$BTOK" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;   # sends (and the membership listing) are always the bot
+  send|reply|dm|channels|thread) [ -n "$BTOK" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;   # sends, membership and thread-reads are the bot
 esac
 
 # ── Backend 2: Claude Code's Slack connector (the claude.ai Slack app) ──────────
@@ -178,6 +182,22 @@ case "$cmd" in
     else
       read_member_channels "$args"
     fi
+    ;;
+  thread)
+    # Read a whole thread (every reply, in order) from a permalink or "<channel> <ts>".
+    # This is what to use when Tom pastes a Slack link and says "read/answer this".
+    if printf '%s' "$args" | grep -qE '/archives/[A-Z0-9]+/p[0-9]+'; then
+      ch="$(printf '%s' "$args" | grep -oE '/archives/[A-Z0-9]+' | cut -d/ -f3)"
+      pts="$(printf '%s' "$args" | grep -oE '/p[0-9]+' | tr -d '/p')"; ts="${pts:0:10}.${pts:10}"
+      tts="$(printf '%s' "$args" | grep -oE 'thread_ts=[0-9.]+' | cut -d= -f2)"; [ -n "$tts" ] && ts="$tts"
+    else
+      ch="$(printf '%s' "$args" | awk '{print $1}')"; ts="$(printf '%s' "$args" | awk '{print $2}')"
+    fi
+    [ -z "$ch" ] || [ -z "$ts" ] && { echo "usage: slack.sh thread <permalink> | <channel-id> <ts>" >&2; exit 1; }
+    R="$(api conversations.replies --get --data-urlencode "channel=$ch" --data-urlencode "ts=$ts" -d "limit=50")"
+    echo "$R" | ok || { echo "Couldn't read that thread, dearie: $(echo "$R" | jq -r '.error // "unknown"') (is @margie in the conversation?)" >&2; exit 1; }
+    echo "$R" | jq -r '.messages | sort_by(.ts|tonumber) | .[] | "\((.ts|tonumber|strftime("%b %-d %H:%M")))\t\(.user // .bot_id // "?")\t\((.text // "")|gsub("\n";" "))"' | \
+      while IFS=$'\t' read -r when who what; do printf '%s %s: %s\n' "$when" "$(uname_of "$who")" "$what"; done
     ;;
   send|reply|dm)
     # Target may be a Slack permalink (…/archives/<channel>/p<ts>[?thread_ts=…]) → reply IN that thread.
