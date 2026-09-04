@@ -151,13 +151,21 @@ launch_planner() { # launch_planner <dispatch dir> <workdir> "<request text>"
       --tag "spec:$(basename "$D")" --out "$D/spec.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null
 }
 
-# Superseded drafts stay visible under notion_drafts_parent (Tom wants the
-# history in Notion): they are renamed, never archived.
-supersede_draft() { # supersede_draft <dispatch dir> <label>   e.g. "Superseded 12:51" | "Filed as PT-812"
+# A superseded-on-amend draft is kept, renamed (plan-change history Tom wants).
+supersede_draft() { # supersede_draft <dispatch dir> <label>   e.g. "Superseded 12:51"
   local d="$1" label="$2" old title
   old="$(cat "$d/draft-page.id" 2>/dev/null)"; [ -z "$old" ] && return 0
   title="$(cat "$d/draft-page.title" 2>/dev/null)"; [ -z "$title" ] && title="Draft"
   "$DIR/notion.sh" page rename "$old" "$label — ${title#Draft — }" >/dev/null 2>&1 || true
+  rm -f "$d/draft-page.id" "$d/draft-page.url" "$d/draft-page.title"
+}
+# Once the real ticket (with its own spec page) is filed, the "Draft — …" preview
+# is redundant and reads as a duplicate — archive it (Tom, 2026-09-04). The real
+# ticket keeps the plan; amend history above is a separate, kept case.
+archive_draft() { # archive_draft <dispatch dir>
+  local d="$1" old
+  old="$(cat "$d/draft-page.id" 2>/dev/null)"; [ -z "$old" ] && return 0
+  "$DIR/notion.sh" page archive "$old" >/dev/null 2>&1 || true
   rm -f "$d/draft-page.id" "$d/draft-page.url" "$d/draft-page.title"
 }
 
@@ -227,6 +235,7 @@ next_child() { # next_child <parent dir> → key of the first ticket not yet sta
 }
 start_child() { # start_child <parent dir> <key>  → file+implement the child (branch from fresh main)
   local d="$1" key="$2" c; c="$(make_child "$d" "$key")"
+  archive_draft "$c"   # the child ticket is already filed; drop its "Draft —" preview
   git -C "$(dmeta "$d" repo)" fetch -q origin "$(cfgd mr_target_branch main)" 2>/dev/null && git -C "$(dmeta "$d" repo)" checkout -q "$(cfgd mr_target_branch main)" 2>/dev/null && git -C "$(dmeta "$d" repo)" pull -q --ff-only 2>/dev/null || true
   "$0" implement "$(basename "$c")"
 }
@@ -464,8 +473,9 @@ case "$cmd" in
       "$DIR/notion.sh" testcase add "$PT" --json "$D/testcases.json" | { read -r line1; echo "$line1"; cat > "$D/tcmap.json"; }
     fi
     DOCS="$("$DIR/notion.sh" page create "$PT — Spec & QA plan" --md "$D/spec.md" --parent "$TID")" && echo "$DOCS"
-    # The draft page is superseded by the ticket's own spec page; it stays, renamed.
-    supersede_draft "$D" "Filed as $PT"
+    # The ticket now owns the plan (its own spec page). Archive the "Draft —" preview
+    # so it doesn't linger as a duplicate under the Drafts parent.
+    archive_draft "$D"
     printf '%s' "$DOCS" | grep -oE 'https://[^ ]+' | head -1 > "$D/docs-page.url" || true
     ln -sfn "$D" "$MDIR/$PT"
     st "$D" filed

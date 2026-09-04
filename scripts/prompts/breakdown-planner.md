@@ -9,9 +9,17 @@ THE REQUEST HISTORY (latest addenda override earlier ones):
 {{REQUEST}}
 
 RULES
-- 2–8 tickets, each S or M (an L ticket means you didn't split enough). Order
-  them so every ticket is mergeable on its own with its dependencies merged first;
-  `depends_on` lists ticket keys only.
+- SPLIT SMALL AND SURGICAL — this is Cody's standing ask: smaller MRs, easier,
+  more targeted review. Aim for 3–12 tickets, each **S** (one self-contained
+  change). One ticket = ONE reviewable concern: a single endpoint, one widget,
+  one manager/adapter method, one migration, one wiring/config change — touching
+  the fewest files that still merge and pass tests on their own. An **M** ticket
+  is a signal to look for a natural seam and split again; NEVER emit an **L**.
+  Concrete triggers to split further: a ticket whose `scope` lists more than ~3–4
+  files, or whose title needs an "and" ("add X **and** wire Y", "endpoint **and**
+  its UI") — separate the pieces. Prefer more small tickets over fewer large ones.
+  Order them so every ticket is mergeable on its own with its dependencies merged
+  first; `depends_on` lists ticket keys only.
 - If the spec has an UNVERIFIED technical question that changes the design
   (e.g. whether a provider threads group MMS natively), ticket T1 is a short
   spike that answers it with a concrete procedure and a written result; mark

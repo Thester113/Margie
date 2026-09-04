@@ -5,7 +5,7 @@
     "epic_title": { "type": "string" },
     "summary_spoken": { "type": "string", "description": "≤2 spoken sentences: how many tickets, what comes first and why" },
     "tickets": {
-      "type": "array", "minItems": 2, "maxItems": 8,
+      "type": "array", "minItems": 2, "maxItems": 12,
       "items": {
         "type": "object",
         "required": ["key", "title", "goal", "scope", "acceptance_criteria", "test_case_titles", "depends_on", "size", "risk_label"],

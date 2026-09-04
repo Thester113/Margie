@@ -128,6 +128,14 @@ read_member_channels() { # bot (or user) token: recent history from channels we'
 
 resolve_target() { # -> channel id to post to
   local t="$1" name id
+  # A Slack permalink / archives URL — pull the conversation id straight out of it
+  # (e.g. https://acme.slack.com/archives/C0BUFEKK6Q6[/p123…]). This is what Tom
+  # naturally pastes; without it the URL was treated as a channel name and missed.
+  case "$t" in
+    http*://*/archives/*)
+      id="$(printf '%s' "$t" | sed -E 's#.*/archives/([CGD][A-Z0-9]+).*#\1#')"
+      printf '%s' "$id" | grep -qE '^[CGD][A-Z0-9]{6,}$' && { echo "$id"; return; } ;;
+  esac
   # A raw conversation id (channel C…, group/private G…, DM D…) — with or without a leading # — is used as-is.
   case "$t" in
     \#C[A-Z0-9]*|\#G[A-Z0-9]*|\#D[A-Z0-9]*|C[A-Z0-9]*|G[A-Z0-9]*|D[A-Z0-9]*)
@@ -139,17 +147,27 @@ resolve_target() { # -> channel id to post to
          local uid
          case "$name" in
            U[A-Z0-9]*) uid="$name" ;;
-           *) uid="$(api users.list -d "limit=1000" | jq -r --arg n "$name" '.members[]? | select((.name==$n) or (.profile.display_name==$n) or (.real_name==$n)) | .id' | head -1)" ;;
+           # Case-insensitive: exact match on username/display/real name first, then a
+           # prefix match (so "Mike" resolves "mikep" / "Mike P."), exact winning.
+           *) uid="$(api users.list -d "limit=1000" | jq -r --arg n "$name" '
+                def lc: ascii_downcase; ($n|lc) as $q | (.members // [])
+                | ( map(select(((.name//"")|lc)==$q or ((.profile.display_name//"")|lc)==$q or ((.real_name//"")|lc)==$q))
+                    + map(select(((.profile.display_name//"")|lc|startswith($q)) or ((.real_name//"")|lc|startswith($q)) or ((.name//"")|lc|startswith($q)))) )
+                | (map(select(.deleted!=true and .is_bot!=true)) | .[0].id) // empty')" ;;
          esac
          [ -z "$uid" ] && { echo ""; return; }
-         # Prefer an EXISTING DM (only needs im:read); posting there needs just
-         # chat:write. Fall back to conversations.open (needs im:write) if none.
+         # Prefer an EXISTING 1:1 DM (needs only im:read); posting there needs just chat:write.
          local dm; dm="$(api conversations.list --get --data-urlencode "types=im" -d "limit=1000" | jq -r --arg u "$uid" '.channels[]? | select(.user==$u) | .id' | head -1)"
          [ -n "$dm" ] && { echo "$dm"; return; }
+         # Else an existing GROUP DM (mpim) that includes this person.
+         local c; for c in $(api conversations.list --get --data-urlencode "types=mpim" -d "limit=1000" | jq -r '.channels[]?.id'); do
+           if api conversations.members --get --data-urlencode "channel=$c" -d "limit=100" | jq -e --arg u "$uid" '(.members // [])|index($u)' >/dev/null 2>&1; then echo "$c"; return; fi
+         done
          api conversations.open -d "users=$uid" | jq -r '.channel.id // empty'; return ;;
     *)   name="$t" ;;
   esac
-  id="$(api conversations.list --get --data-urlencode "types=public_channel,private_channel" -d "limit=1000" | jq -r --arg n "$name" '.channels[]? | select(.name==$n) | .id' | head -1)"
+  # Channel by name (case-insensitive), across public and private channels.
+  id="$(api conversations.list --get --data-urlencode "types=public_channel,private_channel" -d "limit=1000" | jq -r --arg n "$name" '($n|ascii_downcase) as $q | .channels[]? | select((.name//""|ascii_downcase)==$q) | .id' | head -1)"
   echo "$id"
 }
 
@@ -178,7 +196,7 @@ case "$cmd" in
       exit 1
     fi
     cid="$(resolve_target "$target")"
-    [ -z "$cid" ] && { echo "Couldn't find '$target' on Slack, dearie (bot must be a member of the channel)." >&2; exit 1; }
+    [ -z "$cid" ] && { echo "Couldn't resolve '$target' to a Slack conversation, dearie — give me a #channel, @name, a Slack message link, or the channel id (and make sure @margie is invited to it)." >&2; exit 1; }
     RESP="$(api chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$text" ${THREAD_TS:+--data-urlencode "thread_ts=$THREAD_TS"})"
     if echo "$RESP" | ok; then
       echo "Sent to $target${THREAD_TS:+ (in the thread)}, dearie$([ "$KIND" = bot ] && echo " (as the margie bot)")."
