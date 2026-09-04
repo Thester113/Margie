@@ -24,7 +24,7 @@ set -uo pipefail
 # daemon poller and the brain run with a thin PATH). Flutter shells out to
 # `pod` (CocoaPods) during an iOS build; without asdf shims / Homebrew on PATH
 # it dies with "CocoaPods not installed or not in valid state".
-export PATH="$HOME/.asdf/shims:/opt/homebrew/bin:/usr/local/bin:$HOME/development/flutter/bin:$PATH"
+export PATH="$HOME/.asdf/shims:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/development/flutter/bin:$PATH"
 CFG="$HOME/.margie/config.json"
 cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
 FLUTTER="$(command -v flutter || echo "$HOME/development/flutter/bin/flutter")"
@@ -92,7 +92,21 @@ case "$cmd" in
     echo "Stopped the flutter run (sim stays booted), dearie." ;;
   scroll)
     DIR="${1:-down}"; N="${2:-1}"
-    command -v cliclick >/dev/null 2>&1 || { echo "cliclick not installed, dearie (brew install cliclick)." >&2; exit 1; }
+    # Prefer idb: it drives the sim at the device level (no window focus needed),
+    # which is reliable across multiple displays/Spaces where cliclick is not.
+    if command -v idb >/dev/null 2>&1; then
+      RES="$(idb describe --udid "$DEVICE" 2>/dev/null)"
+      WP="$(printf '%s' "$RES" | grep -oE 'width_points=[0-9]+' | grep -oE '[0-9]+')"; HP="$(printf '%s' "$RES" | grep -oE 'height_points=[0-9]+' | grep -oE '[0-9]+')"
+      [ -z "$WP" ] && WP=402; [ -z "$HP" ] && HP=874
+      CX=$(( WP/2 )); LO=$(( HP*70/100 )); HI=$(( HP*24/100 ))
+      i=0; while [ "$i" -lt "$N" ]; do
+        if [ "$DIR" = up ]; then idb ui swipe --udid "$DEVICE" --duration 0.3 "$CX" "$HI" "$CX" "$LO" >/dev/null 2>&1
+        else idb ui swipe --udid "$DEVICE" --duration 0.3 "$CX" "$LO" "$CX" "$HI" >/dev/null 2>&1; fi
+        sleep 0.5; i=$((i+1))
+      done
+      echo "Scrolled $DIR x$N (idb), dearie."; exit 0
+    fi
+    command -v cliclick >/dev/null 2>&1 || { echo "No scroll tool, dearie — install idb (brew install facebook/fb/idb-companion && pipx install fb-idb) or cliclick." >&2; exit 1; }
     B="$(win_bounds)"; [ -z "$B" ] && { echo "Can't read the Simulator window, dearie — grant Accessibility to the terminal/Margie in System Settings > Privacy." >&2; exit 1; }
     IFS=, read -r WX WY WW WH <<EOF
 $B
@@ -108,8 +122,13 @@ EOF
     [ -n "$SAVE" ] && cliclick m:$SAVE >/dev/null 2>&1
     echo "Scrolled $DIR x$N, dearie." ;;
   tap)
-    X="${1:?x}"; Y="${2:?y}"
-    if command -v idb >/dev/null 2>&1; then idb ui tap --udid "$DEVICE" "$X" "$Y" >/dev/null 2>&1 && { echo "tapped $X,$Y (idb)"; exit 0; }; fi
+    X="${1:?x}"; Y="${2:?y}"   # device PIXELS (as seen in `sim.sh shot`)
+    if command -v idb >/dev/null 2>&1; then
+      # idb takes POINTS: convert from pixels using the device density.
+      DEN="$(idb describe --udid "$DEVICE" 2>/dev/null | grep -oE 'density=[0-9.]+' | grep -oE '[0-9.]+')"; [ -z "$DEN" ] && DEN=3
+      PX="$(awk "BEGIN{printf \"%d\", $X/$DEN}")"; PY="$(awk "BEGIN{printf \"%d\", $Y/$DEN}")"
+      idb ui tap --udid "$DEVICE" "$PX" "$PY" >/dev/null 2>&1 && { echo "tapped device($X,$Y)->points($PX,$PY) (idb)"; exit 0; }
+    fi
     command -v cliclick >/dev/null 2>&1 || { echo "No tap tool, dearie — grant Accessibility for cliclick, or install idb (brew tap facebook/fb && brew install idb-companion && pipx install fb-idb)." >&2; exit 1; }
     B="$(win_bounds)"; [ -z "$B" ] && { echo "Can't read the Simulator window, dearie — grant Accessibility." >&2; exit 1; }
     TMP="$SIMDIR/.dim.png"; xcrun simctl io "$DEVICE" screenshot "$TMP" >/dev/null 2>&1 || xcrun simctl io booted screenshot "$TMP" >/dev/null 2>&1
