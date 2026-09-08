@@ -733,7 +733,7 @@ case "$cmd" in
             if [ "$S" = implementing ] && [ ! -s "$D/qa.json" ] && [ ! -f "$D/qa-auto" ] && [ -n "$SCREEN" ]; then
               # MARGIE_READY_FOR_QA must be Claude's OWN output on its own line — NOT the
               # echoed instruction in the input box ("...print MARGIE_READY_FOR_QA...again").
-              if { printf '%s' "$SCREEN" | grep -qE '^MARGIE_READY_FOR_QA[[:space:]]*$' && ! printf '%s' "$SCREEN" | grep -q "esc to interrupt"; } \
+              if { printf '%s' "$SCREEN" | grep -qE '^[[:space:]]*MARGIE_READY_FOR_QA[[:space:]]*$' && ! printf '%s' "$SCREEN" | grep -q "esc to interrupt"; } \
                  || { printf '%s' "$SCREEN" | grep -qE "· done [0-9]" && ! printf '%s' "$SCREEN" | grep -q "esc to interrupt" \
                       && printf '%s' "$SCREEN" | grep -qiE "tests? (are|is) (complete|green|passing)|(work|implementation) (is|and tests are) complete"; }; then
                 touch "$D/qa-auto"; rm -f "$D/qa-fail-sent"
@@ -743,7 +743,7 @@ case "$cmd" in
             # QA passed -> tell the session to open the MR (once); the merge closes it.
             if [ "$S" = qa-pass ] && [ ! -f "$D/mr-nudged" ]; then
               touch "$D/mr-nudged"
-              if printf '%s' "$SCREEN" | grep -qE "^MARGIE_MR_OPEN|/-/merge_requests/[0-9]+|![0-9]{2,} (opened|created)"; then
+              if printf '%s' "$SCREEN" | grep -qE "^[[:space:]]*MARGIE_MR_OPEN|/-/merge_requests/[0-9]+|![0-9]{2,} (opened|created)"; then
                 announce "QA passed on $PT and the session already has an MR open — MR text at $D/mr.md if it needs updating (mr.sh update), dearie."
               else
                 # Open the MR DETERMINISTICALLY with mr.sh (push + create from the prepared
