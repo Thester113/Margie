@@ -215,6 +215,32 @@ case "$cmd" in
          elif .properties.Status.select then "  (" + .properties.Status.select.name + ")"
          elif .properties.Maturity.select then "  (" + .properties.Maturity.select.name + ")"
          elif .properties.Ref then "  ref " + ((.properties.Ref.rich_text // [{plain_text:"?"}])[0].plain_text) else "" end)' ;;
+  mine)
+    # mine [alias] [n] [text] — rows in <alias> (default tickets) ASSIGNED to the owner
+    # (the Assignee people-property contains their Notion id). This is what "tickets
+    # assigned to me/us" means; rows/query don't filter by person.
+    a="tickets"; n="50"; FILT=""
+    for arg in "$@"; do
+      case "$arg" in
+        tickets|testcases|usecases|requirements|epics) a="$arg" ;;
+        [0-9]*) n="$arg" ;;
+        *) FILT="$arg" ;;
+      esac
+    done
+    who="$(cfg notion_owner_person_id)"; [ -z "$who" ] && who="$(cfg notion_assignee)"
+    [ -z "$who" ] && { echo "No owner Notion id, dearie — add notion_owner_person_id (or notion_assignee) to ~/.margie/config.json." >&2; exit 1; }
+    ds="$(ds_of "$a")" || exit 1
+    R="$(api2 POST "/data_sources/$ds/query" "$(jq -n --arg id "$who" --argjson n "$n" \
+          '{page_size:$n, filter:{property:"Assignee", people:{contains:$id}}, sorts:[{timestamp:"last_edited_time", direction:"descending"}]}')")"
+    fail_if_error "$R"
+    OUT="$(printf '%s' "$R" | jq -r '.results[]? |
+      ((.properties | to_entries | map(select(.value.type=="title")) | .[0].value.title[0].plain_text) // "(untitled)")
+      + (if .properties.ID.unique_id then "  [" + (.properties.ID.unique_id.prefix // "") + "-" + (.properties.ID.unique_id.number|tostring) + "]" else "" end)
+      + (if .properties.Status.status then "  (" + .properties.Status.status.name + ")" elif .properties.Status.select then "  (" + .properties.Status.select.name + ")" else "" end)
+      + (if (.properties.Labels.multi_select // []) | length > 0 then "  {" + ((.properties.Labels.multi_select | map(.name)) | join(",")) + "}" else "" end)')"
+    if [ -n "$FILT" ]; then OUT="$(printf '%s' "$OUT" | grep -i -- "$FILT")"; fi
+    [ -z "$OUT" ] && { echo "No $a assigned to the owner${FILT:+ matching '$FILT'}, dearie."; exit 0; }
+    printf '%s\n' "$OUT" ;;
   schema)
     ds="$(ds_of "${1:-tickets}")" || exit 1
     R="$(api2 GET "/data_sources/$ds")"; fail_if_error "$R"
@@ -469,5 +495,5 @@ EOF2
         echo "Renamed to \"$NEWT\", dearie." ;;
       *) echo "usage: notion.sh page create \"<title>\" --md <file> --parent <id|url> | append <id|url> --md <file> | archive <id|url> | restore <id|url> | replace <id|url> --md <file> | rename <id|url> \"<title>\"" >&2; exit 1 ;;
     esac ;;
-  *) echo "usage: notion.sh whoami | search \"<q>\" | recent [n] | read <id|url> | dbs | query <db> [\"<text>\"] | create \"<title>: <body>\" [--parent <id>] | append <id|url> \"<text>\"" >&2; exit 1 ;;
+  *) echo "usage: notion.sh whoami | search \"<q>\" | recent [n] | read <id|url> | dbs | query <db> [\"<text>\"] | rows [alias] [n] | mine [alias] [n] [text] | create \"<title>: <body>\" [--parent <id>] | append <id|url> \"<text>\"" >&2; exit 1 ;;
 esac

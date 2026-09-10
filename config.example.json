@@ -1,6 +1,5 @@
 {
   "_comment": "Copy to ~/.margie/config.json (chmod 600). Omit any key you don't use — the scripts treat a missing key as 'not configured', but an empty string is NOT treated as missing by jq.",
-
   "engine": "claude",
   "warp_mode": "quiet",
   "deploy_watch": "on",
@@ -15,7 +14,6 @@
   "claude_model": "claude-fable-5-1[1m]",
   "_claude_model": "Default --model for EVERY Claude Code run Margie dispatches (interactive sessions, reviews, headless tasks, planner, QA). Omit to use the CLI's own default. planner_model / qa_model override it per stage.",
   "_engine": "CLI the dispatched sessions run (kickoff-claude.sh / review-pr.sh / simulate.sh): 'claude' (default, Claude Code) or 'grok'. Overridden by MARGIE_ENGINE. Omit unless you want grok.",
-
   "forge": "gitlab",
   "gitlab_host": "gitlab.com",
   "org": "your-group-or-org",
@@ -24,16 +22,13 @@
   "review_skill": "",
   "_forge": "forge: gitlab | github — which CLI (glab / gh), vocabulary (MR / PR) and write-guards Margie uses. Log in once with `glab auth login` or `gh auth login`. gitlab_host: only for self-hosted GitLab. org: GitLab group (subgroups included) or GitHub org bare repo names resolve against — omit to search the projects you're a member of.",
   "_repos": "repos_dir: where your clones live (bare repo names resolve here; new clones land here). default_repo: assumed when Tom says 'review MR 12' without naming one — omit to make her ask. review_skill: a repo-local skill name review-pr.sh should invoke — omit for a generic thorough-review prompt.",
-
   "brain_voice_backend": "xai",
   "brain_backend": "claude",
   "brain_claude_model": "sonnet",
   "_brain": "Which model IS Margie, per channel: voice (the overlay) uses brain_voice_backend — xai for sub-second turns; terminal/Slack use brain_backend — 'claude' runs on your Claude plan via the Agent SDK (no API key), model brain_claude_model (sonnet is snappy; fable for depth). Both share one history and the same guarded bash tool.",
-
   "xai_api_key": "xai-...",
   "xai_model": "grok-4.20-0309-non-reasoning",
   "_xai": "Margie's conversational brain (sidecar/src/index.ts) runs on the xAI chat API. Required for her to answer at all.",
-
   "slack_via": "claude",
   "slack_cc_owner": true,
   "slack_watch": "preview",
@@ -45,17 +40,19 @@
   "owner_first_name": "Tom",
   "telnyx_api_key": "",
   "_telnyx": "Optional. A Telnyx v2 API key lets telnyx.sh buy/assign numbers and send test (group) MMS for spikes; telnyx_number and telnyx_profile_id are filled in by the script.",
-  "pronouns": { "Cody Poll": "they/them" },
-  "conversation_notes": { "C0XXXXXXXXX": "Group DM with X. X asked: track work in Notion, don't post status here; reply only when addressed." },
+  "pronouns": {
+    "Cody Poll": "they/them"
+  },
+  "conversation_notes": {
+    "C0XXXXXXXXX": "Group DM with X. X asked: track work in Notion, don't post status here; reply only when addressed."
+  },
   "_slack_watch": "Watcher for @Margie and @<owner> mentions in channels the bot is in: off | preview (drafts DM'd to the owner, nothing posted) | live (replies in-thread as the owner's assistant). slack_owner_id: the owner's Slack user id (falls back to the agent roster).",
   "slack_user_token": "xoxp-...",
   "slack_token": "xoxb-...",
   "_slack2": "Sends ALWAYS go out as the Margie bot (slack_token) — never through the Claude connector, whose posts carry a 'Sent using @Claude' footer as the owner. Reads/search use the connector (as the owner) for reach.",
   "_slack": "slack.sh read/send default to Claude Code's Slack connector (the claude.ai Slack app — run `claude mcp list` to confirm it's connected) when no token is set; slack_via: 'claude' forces it even with tokens. Tokens: user token = direct Web API as Tom; bot token = posts as @margie and is REQUIRED for the slack-watch.sh @mention watcher (that one doesn't use the connector).",
-
   "gmail_address": "you@example.com",
   "gmail_app_password": "16-char app password (myaccount.google.com/apppasswords)",
-
   "notion_token": "ntn_...",
   "notion_parent_page": "https://www.notion.so/...",
   "notion_drafts_parent": "<page id>",
@@ -63,12 +60,10 @@
   "_notion_status": "Auto-created by status-sync.sh: the \"Margie — Status\" page her per-project state is mirrored to (backup + team-visible). Leave empty; it fills in on first sync.",
   "_notion_drafts": "Page under which dispatch.sh publishes every finished spec as a read-only draft page (so the owner can read the plan in Notion before saying go). Replaced on amend; the real ticket + spec page are created on go.",
   "_notion": "Internal integration token (notion.so/my-integrations; name it 'Margie'). It only sees pages connected to it: page → ··· → Connections → Margie. notion_parent_page: where `notion.sh create` puts new pages when no --parent is given.",
-
   "atlassian_email": "you@example.com",
   "atlassian_api_token": "...",
   "jira_base_url": "https://yourorg.atlassian.net",
   "jira_default_project": "KEY",
-
   "notion_tickets_ds": "…32-hex data source id…",
   "notion_tickets_db": "…database id…",
   "notion_testcases_ds": "…",
@@ -77,11 +72,20 @@
   "notion_decisions_db": "…",
   "notion_open_questions_db": "…",
   "notion_docs_parent": "",
-  "notion_ticket_defaults": { "Status": "Planning", "Team": "Product", "Labels": ["Claude"], "Priority": "Medium" },
+  "notion_ticket_defaults": {
+    "Status": "Planning",
+    "Team": "Product",
+    "Labels": [
+      "Claude"
+    ],
+    "Priority": "Medium"
+  },
   "notion_assignee": "…notion person id…",
   "ticket_prefix": "PT",
   "branch_prefix": "margie",
-  "repo_subdirs": { "walt_ui": "backend" },
+  "repo_subdirs": {
+    "walt_ui": "backend"
+  },
   "planner_model": "sonnet",
   "qa_model": "sonnet",
   "planner_effort": "medium",
@@ -92,7 +96,11 @@
   "auto_merge": true,
   "_auto_merge": "tick merges an MR itself once its pipeline is green and every review thread is resolved (and the self-review approved or its rounds are used up). false = announce 'ready to merge' and wait for the owner's word.",
   "ui_review": true,
-  "ui_review_paths": { "walt_ui": ["mobile/"] },
+  "ui_review_paths": {
+    "walt_ui": [
+      "mobile/"
+    ]
+  },
   "_ui_review": "true = an MR whose diff touches any path in ui_review_paths[<repo>] is NEVER auto-merged. When it goes green, tick boots the branch in the iOS simulator, has a Claude Code session make the change visible (demo data + feature flag) and screenshot it (sim.sh), opens the shot on the owner's Mac + Slack-pings him + leaves the sim running, and waits for his explicit 'merge'. Backend-only MRs (no ui_review_paths match) auto-merge normally. Paths are prefix-matched against `git diff --name-only origin/main...HEAD`. sim_device (optional) pins a simulator udid; else sim.sh uses the booted one, else the first available iPhone.",
   "session_autoanswer": true,
   "_session_autoanswer": "the sessions poller answers Claude Code permission prompts in Margie's coding sessions with yes on the owner's behalf; prompts that look dangerous (force push, reset --hard, secrets, deploys, sudo, curl|sh) are escalated instead.",
@@ -102,12 +110,14 @@
   "task_budget_usd": 5,
   "daily_budget_usd": 25,
   "_dispatch": "dispatch.sh: the ticket/test-case/use-case/requirements data sources and defaults for filing; repo_subdirs maps a repo to the sub-project sessions run in; planner_model/qa_model override the claude CLI default (empty = default). Connect every DB above to the Notion integration or the pipeline can't see them.",
-
   "agent_identity": "Margie",
   "agent_roster": "~/path/to/repo/.claude/agent-messages/roster.json",
   "agent_messages_ds": "…data source id (defaults to the roster's db entry)…",
   "_agent_messages": "agent-messages.sh: this harness's name in the shared Agent Messages Notion DB, the committed roster (owners, Slack/Notion ids), and the DB. Identity file ~/.claude/agent-messages-identity wins over agent_identity.",
-
-  "contacts": { "wife": "+15551234567", "mom": "jane@icloud.com" },
-  "_contacts": "Spoken alias → iMessage handle (phone/email is most reliable) for messages.sh."
+  "contacts": {
+    "wife": "+15551234567",
+    "mom": "jane@icloud.com"
+  },
+  "_contacts": "Spoken alias → iMessage handle (phone/email is most reliable) for messages.sh.",
+  "notion_owner_person_id": "<owner Notion person id — see notion.sh whoami / the users API>"
 }

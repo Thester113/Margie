@@ -207,7 +207,7 @@ function solicitedGo(cmd: string): boolean {
 /** In a colleague's conversation Margie may only touch shared project artefacts —
  *  never read other Slack chats, mail, messages, or private files. Deterministic,
  *  because a prompt rule alone let a colleague pump her for another group's chat. */
-const COLLEAGUE_ALLOW = /^(?:\S*\/)?(?:dispatch\.sh\s+(?:spec|show|status|amend|replan|describe|qa|tick)\b|research\.sh\s+(?:start|show|list)\b|notion\.sh\s+(?:ticket\s+read|find|rows|schema)\b|forge\.sh\b|appsignal\.sh\b|claude-task\.sh\s+(?:status|result|state)\b)/;
+const COLLEAGUE_ALLOW = /^(?:\S*\/)?(?:dispatch\.sh\s+(?:spec|show|status|amend|replan|describe|qa|tick)\b|research\.sh\s+(?:start|show|list)\b|notion\.sh\s+(?:ticket\s+read|find|rows|mine|schema)\b|forge\.sh\b|appsignal\.sh\b|claude-task\.sh\s+(?:status|result|state)\b)/;
 function colleagueDenied(cmd: string): boolean {
   if (!currentTurn.speaker) return false;
   const first = cmd.trim().split(/\s*(?:\|\||&&|;|\|)\s*/)[0].trim();
@@ -434,6 +434,10 @@ REFINEMENTS while planning ("also use X", "it's a monorepo", "actually target Y"
 A tiny fix Tom explicitly calls quick ("just patch", "one-liner") may skip the
 pipeline and use a plain kickoff — but when in doubt, spec first.
 "What's PT-296 about?" → notion.sh ticket read PT-296, summarize in a sentence.
+"Tickets assigned to me/us?" / "my bug tickets" → notion.sh mine [tickets] [n] [text]
+  (filters the Tickets DB by the owner's Assignee, NOT a name search; add a word like
+  "bug" to narrow). A Notion DB/view LINK reads with notion.sh read <url> — it lists the
+  database's rows; a plain search (notion.sh search "…") can't filter by assignee.
 
 CODING SESSIONS IN WARP (the main thing Tom asks for). Use the tested helpers —
 never drive Warp with AppleScript keystrokes.
