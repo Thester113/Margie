@@ -292,6 +292,11 @@ case "$cmd" in
     D="$MDIR/$ID"; mkdir -p "$D"
     printf '%s' "$REQ" > "$D/request.txt"
     jq -n --arg repo "$REPO" --arg subdir "$SUBDIR" --arg id "$ID" '{id:$id, repo:$repo, subdir:$subdir}' > "$D/d.json"
+    # If the request names an EXISTING ticket to work ("Fix PT-1004: …"), remember it so we
+    # move that ticket through the lifecycle instead of filing a duplicate. Only trust a PT
+    # near the very start of the request (the "fix PT-###" subject), not one cited as context.
+    EXPT="$(printf '%s' "$REQ" | head -c 64 | grep -oiE '\bPT-[0-9]+\b' | head -1 | tr 'a-z' 'A-Z')"
+    [ -n "$EXPT" ] && echo "$EXPT" > "$D/existing-pt.txt"
 
     # Context for the planner: recent tickets/use cases/decision refs + repo shape.
     {
@@ -418,9 +423,21 @@ case "$cmd" in
         "$DIR/notion.sh" query "$(cfg notion_usecases_ds)" "$UCNAME" 2>/dev/null | head -1 | grep -oE '\[[0-9a-f]{32}\]' | tr -d '[]')" || true
       [ -n "${UCID:-}" ] && UCOPT=(--usecase "$UCID")
     fi
-    OUT="$("$DIR/notion.sh" ticket create "$TITLE" --md "$D/body.md" --priority "$PRIO" --labels "$LBLS" ${UCOPT[@]+"${UCOPT[@]}"})" || exit 1
-    echo "$OUT" | head -1
-    printf '%s\n' "$OUT" | tail -1 > "$D/ticket.json"
+    # If the request named an existing ticket ("Fix PT-1004: …"), MOVE that ticket through the
+    # lifecycle rather than filing a duplicate (the bug that stranded PT-1004 in Todo while its
+    # duplicate PT-1009 went to Done). Only reuse when the named PT actually resolves.
+    EXPT="$(cat "$D/existing-pt.txt" 2>/dev/null)"; EXROW=""
+    [ -n "$EXPT" ] && EXROW="$("$DIR/notion.sh" find "$EXPT" 2>/dev/null)"
+    if [ -n "$EXROW" ]; then
+      EXID="$(printf '%s' "$EXROW" | grep -oiE '\[[0-9a-f]{32}\]' | tr -d '[]')"
+      EXURL="$(printf '%s' "$EXROW" | grep -oiE 'https://[^ ]+' | head -1)"
+      jq -cn --arg pt "$EXPT" --arg id "$EXID" --arg url "$EXURL" '{pt:$pt, id:$id, url:$url}' > "$D/ticket.json"
+      echo "Reusing existing ticket $EXPT (no duplicate created), dearie: $EXURL"
+    else
+      OUT="$("$DIR/notion.sh" ticket create "$TITLE" --md "$D/body.md" --priority "$PRIO" --labels "$LBLS" ${UCOPT[@]+"${UCOPT[@]}"})" || exit 1
+      echo "$OUT" | head -1
+      printf '%s\n' "$OUT" | tail -1 > "$D/ticket.json"
+    fi
     PT="$(jq -r .pt "$D/ticket.json")"; TURL="$(jq -r .url "$D/ticket.json")"; TID="$(jq -r .id "$D/ticket.json")"
     if has_breakdown "$D"; then
       # Child tickets in dependency order; test cases go to the child that owns them.
