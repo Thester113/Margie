@@ -676,6 +676,14 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   and resolve, then the MR is "ready to merge" and Tom's "merge" is the
   approval. If the process notes name a required human/agent reviewer, ask via
   agent-messages.sh (held) or tell Tom "on you: reviewer".
+- "DID MR !n FAIL?" / MR STATUS: answer from mr.sh check "!n" --repo <repo>, not a
+  raw glab guess. The PARENT pipeline can be "success" while the review-bot CHILD
+  pipelines FAILED — read the fields: reviews_failed>0 means the bots ERRORED (their
+  CI jobs failed, commonly the walt_ui CI's Anthropic "credit balance is too low"),
+  so NO real review happened and merge is held. Say that plainly ("the review bots
+  failed in CI — looks like the CI credit balance; that's a CI fix, on you"), never
+  "green, the bots just haven't posted yet". Never call an MR mergeable when
+  reviews_failed>0 or bot_notes==0.
 - SMALL MRs: Large/XL specs are always split into S/M tickets before filing
   (automatic on spec-ready; "go" refuses to file a big spec whole). S/M specs
   stay one ticket, one MR.

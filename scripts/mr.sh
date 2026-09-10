@@ -201,7 +201,11 @@ case "$cmd" in
     [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // (.url // "" | capture("(?<n>[0-9]+)$").n) // empty' "$D/mr.json" 2>/dev/null)"
     if [ -z "$NUM" ] && [ -n "${BRANCH_OF_D:-}" ]; then NUM="$(cd "${WT:-$PWD}" && glab mr list --source-branch "$BRANCH_OF_D" -F json 2>/dev/null | jq -r '.[0].iid // empty')"; fi
     [ -z "$NUM" ] && { echo "Which MR, dearie? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
-    cd "${WT:-${REPO_ARG:-$PWD}}" || exit 1
+    # For a bare MR number the dispatch/worktree isn't resolved, so --repo is just a
+    # NAME — turn it into the checkout path (glab infers the project from that git remote).
+    # Without this, `cd walt_ui` failed and every glab call returned null.
+    [ -z "$WT" ] && [ -n "$REPO_ARG" ] && WT="$("$DIR/resolve-repo.sh" "$REPO_ARG" 2>/dev/null)"
+    cd "${WT:-$PWD}" || { echo "Couldn't resolve a checkout for !$NUM, dearie — pass --repo <name>." >&2; exit 1; }
     if [ "$cmd" = check ]; then
       V="$(glab mr view "$NUM" -F json 2>/dev/null)"; [ -z "$V" ] && { echo "Couldn't read MR !$NUM, dearie." >&2; exit 1; }
       UNRES="$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq '[.[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false))] | length' 2>/dev/null || echo 0)"
@@ -211,19 +215,21 @@ case "$cmd" in
       BOTN="$(glab api "projects/:id/merge_requests/$NUM/notes?per_page=100" 2>/dev/null | jq '[.[] | select(.system==false and (.author.username|test("^service_account_|bot|review";"i")))] | length' 2>/dev/null || echo 0)"
       # Have the review-bot bridges finished on the latest pipeline? (they are allow_failure
       # children, so the parent pipeline can be "success" while a review is still running.)
-      LPID="$(printf '%s' "$PIPE" | jq -r '.id // empty')"; REVIEWS_DONE=1; REVIEWS_SEEN=0
+      LPID="$(printf '%s' "$PIPE" | jq -r '.id // empty')"; REVIEWS_DONE=1; REVIEWS_SEEN=0; REVIEWS_FAILED=0
       if [ -n "$LPID" ]; then
         for DS in $(glab api "projects/:id/pipelines/$LPID/bridges" 2>/dev/null | jq -r '.[] | select(.name|test("review")) | .downstream_pipeline.id // empty'); do
           REVIEWS_SEEN=1
           st="$(glab api "projects/:id/pipelines/$DS" 2>/dev/null | jq -r '.status // "unknown"')"
-          case "$st" in success|failed|canceled|skipped|manual) ;; *) REVIEWS_DONE=0 ;; esac
+          # A FAILED review child (e.g. the bot errored — "credit balance too low") must not
+          # read as green: track it so the gate doesn't merge and Margie reports it truthfully.
+          case "$st" in success|skipped|manual) ;; failed|canceled) REVIEWS_FAILED=$((REVIEWS_FAILED+1)) ;; *) REVIEWS_DONE=0 ;; esac
         done
       fi
-      printf '%s' "$V" | jq -c --argjson unres "${UNRES:-0}" --argjson appr "$APPR" --argjson pipe "$PIPE" --argjson npipes "${NPIPES:-0}" --argjson botn "${BOTN:-0}" --argjson rdone "${REVIEWS_DONE:-1}" --argjson rseen "${REVIEWS_SEEN:-0}" \
+      printf '%s' "$V" | jq -c --argjson unres "${UNRES:-0}" --argjson appr "$APPR" --argjson pipe "$PIPE" --argjson npipes "${NPIPES:-0}" --argjson botn "${BOTN:-0}" --argjson rdone "${REVIEWS_DONE:-1}" --argjson rseen "${REVIEWS_SEEN:-0}" --argjson rfailed "${REVIEWS_FAILED:-0}" \
         '{iid, title, state, merge_status: (.detailed_merge_status // .merge_status), conflicts: (.has_conflicts // false), sha, url: .web_url,
           pipeline: ($pipe.status // .head_pipeline.status // "none"), pipeline_id: ($pipe.id // null), pipeline_url: ($pipe.web_url // null),
           unresolved: $unres, approved: ($appr.approved // true), approvals_left: ($appr.approvals_left // 0), pipelines: $npipes, bot_notes: $botn,
-          reviews_done: ($rdone==1), reviews_seen: ($rseen==1)}'
+          reviews_done: ($rdone==1), reviews_seen: ($rseen==1), reviews_failed: $rfailed}'
     else
       T="$(glab mr view "$NUM" -F json 2>/dev/null | jq -r '.title // "?"')"
       desc "would merge MR !$NUM (\"$T\") into $TARGET and delete its source branch"

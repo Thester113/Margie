@@ -810,10 +810,18 @@ case "$cmd" in
                 # completed without posting (seen on mobile-only MRs) — so play the manual request once.
                 if [ ! -f "$D/bots-fallback" ] && [ "$PSTAT" != running ] && [ "$PSTAT" != pending ] \
                    && [ "$(jq -r '.bot_notes // 0' "$D/mr-check.json")" = 0 ] && [ "$(jq -r '.reviews_seen // false' "$D/mr-check.json")" = true ] \
+                   && [ "$(jq -r '.reviews_failed // 0' "$D/mr-check.json")" = 0 ] \
                    && [ $(( $(date +%s) - $(stat -f %m "$D/mr.json") )) -gt 900 ]; then
                   touch "$D/bots-fallback"
                   RR="$("$DIR/mr.sh" request-review "!$IID" --repo "$WT" 2>/dev/null || true)"
                   case "$RR" in Requested*) announce "The repo's review bots hadn't posted on MR !$IID for $PT, so I asked them once, dearie." ;; esac
+                fi
+                # The review bots ERRORED (their CI jobs failed, not just slow) — re-running won't
+                # help (e.g. the walt_ui CI's Anthropic "credit balance is too low"). Tell Tom once
+                # per pipeline; merge stays held (BOTS_OK stays 0) because they never really reviewed.
+                if [ "$(jq -r '.reviews_failed // 0' "$D/mr-check.json")" -gt 0 ] && [ "$(cat "$D/reviews-failed-pid" 2>/dev/null)" != "${PID:-x}" ]; then
+                  echo "${PID:-x}" > "$D/reviews-failed-pid"
+                  announce "Heads up, dearie: the review bots FAILED on MR !$IID for $PT — their CI jobs errored (not just slow), so no real review happened. This usually means the walt_ui CI's Anthropic credit balance ran out; it needs a CI fix, not a re-run. Merge is held until they pass. $(jq -r '.pipeline_url // empty' "$D/mr-check.json")"
                 fi
                 # pipeline failed -> once per pipeline, send it back
                 if [ "$PSTAT" = failed ] && [ -n "$PID" ] && [ "$(cat "$D/pipeline-failed" 2>/dev/null)" != "$PID" ]; then
