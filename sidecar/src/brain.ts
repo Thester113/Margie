@@ -1,5 +1,5 @@
-import { mkdirSync, appendFileSync, readFileSync, writeFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { spawn, execSync } from "node:child_process";
+import { mkdirSync, appendFileSync, readFileSync, writeFileSync, readdirSync, existsSync, statSync, unlinkSync } from "node:fs";
+import { spawn, execSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
@@ -1161,9 +1161,29 @@ function extractImages(text: string): { text: string; images: Array<{ path: stri
         p = `${dir}/${hit}`;
       }
       const st = statSync(p);
-      if (!st.isFile() || st.size > 5 * 1024 * 1024) return m;
+      if (!st.isFile()) return m;
       const ext = p.split(".").pop()!.toLowerCase();
-      images.push({ path: p, media_type: IMAGE_EXT[ext], data: readFileSync(p).toString("base64") });
+      let media = IMAGE_EXT[ext];
+      let buf: Buffer;
+      // Claude's vision API caps images at ~5MB. macOS Retina screenshots run well
+      // over that (this one was ~8MB), and the old code silently DROPPED them. Downscale
+      // a large image to a ≤1568px JPEG via `sips` — the API downscales past 1568px
+      // anyway, so there's no vision-quality loss, and the payload shrinks to well under
+      // the cap. Fall back to the raw bytes only when it's small enough to send as-is.
+      if (st.size > 3.5 * 1024 * 1024) {
+        try {
+          const tmp = `/tmp/margie-img-${Date.now()}-${images.length}.jpg`;
+          execFileSync("sips", ["-Z", "1568", "-s", "format", "jpeg", "-s", "formatOptions", "80", p, "--out", tmp], { stdio: "ignore" });
+          buf = readFileSync(tmp); media = "image/jpeg";
+          try { unlinkSync(tmp); } catch { /* ignore */ }
+        } catch {
+          if (st.size > 5 * 1024 * 1024) return m;   // couldn't shrink and too big to inline
+          buf = readFileSync(p);
+        }
+      } else {
+        buf = readFileSync(p);
+      }
+      images.push({ path: p, media_type: media, data: buf.toString("base64") });
       return `[attached image ${images.length}: ${p.split("/").pop()}]`;
     } catch { return m; }
   });
