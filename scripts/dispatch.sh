@@ -817,7 +817,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     RSUM="$(jq -r '.summary_spoken // ""' "$D/review.json")"
                     RFND="$(jq -r 'if (.findings|length)>0 then ([.findings[] | "- " + (.severity//"nit") + " " + (.file//"") + (if .line then ":"+(.line|tostring) else "" end) + " — " + (.issue//"") + (if .fix then " → " + .fix else "" end)] | join("\n")) else "No findings." end' "$D/review.json")"
                     RNOTE="$(printf '🤖 Local review (code-reviewer + adr-reviewer charters, on Margie'\''s plan; CI review bots retired) — verdict: **%s**\n\n%s\n\n%s' "$RV" "$RSUM" "$RFND")"
-                    ( cd "$WT" && glab mr note "$IID" -m "$RNOTE" ) >/dev/null 2>&1 && echo "$SHA" > "$D/review-note-sha"
+                    ( cd "$WT" && glab mr note create "$IID" --resolvable=false --message "$RNOTE" ) >/dev/null 2>&1 && echo "$SHA" > "$D/review-note-sha"
                   fi
                   if [ "$RV" = approve ]; then
                     touch "$D/review-approved"; announce "Reviewed MR !$IID for $PT: $(jq -r .summary_spoken "$D/review.json")"
