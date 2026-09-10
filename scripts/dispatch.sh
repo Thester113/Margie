@@ -810,6 +810,15 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                 fi
                 if [ -f "$D/review-running" ] && [ -s "$D/review.json" ] && jq -e .verdict "$D/review.json" >/dev/null 2>&1; then
                   rm -f "$D/review-running"; RV="$(jq -r .verdict "$D/review.json")"
+                  # Post the local review to the MR so it is VISIBLE on GitLab (the charter agents
+                  # don't post themselves; this record replaces the CI review bots' comments, so an
+                  # MR never looks "unreviewed" while a real review happened). Once per commit.
+                  if [ -n "$IID" ] && [ "$(cat "$D/review-note-sha" 2>/dev/null)" != "$SHA" ]; then
+                    RSUM="$(jq -r '.summary_spoken // ""' "$D/review.json")"
+                    RFND="$(jq -r 'if (.findings|length)>0 then ([.findings[] | "- " + (.severity//"nit") + " " + (.file//"") + (if .line then ":"+(.line|tostring) else "" end) + " — " + (.issue//"") + (if .fix then " → " + .fix else "" end)] | join("\n")) else "No findings." end' "$D/review.json")"
+                    RNOTE="$(printf '🤖 Local review (code-reviewer + adr-reviewer charters, on Margie'\''s plan; CI review bots retired) — verdict: **%s**\n\n%s\n\n%s' "$RV" "$RSUM" "$RFND")"
+                    ( cd "$WT" && glab mr note "$IID" -m "$RNOTE" ) >/dev/null 2>&1 && echo "$SHA" > "$D/review-note-sha"
+                  fi
                   if [ "$RV" = approve ]; then
                     touch "$D/review-approved"; announce "Reviewed MR !$IID for $PT: $(jq -r .summary_spoken "$D/review.json")"
                   else
@@ -858,12 +867,13 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                 # trivially true before they post. Require the review bridges finished and the
                 # bots posted (or none exist in this repo). This stops merging unreviewed.
                 BOTS_OK=1
-                # When the repo has local review agents (config review_agents), Margie's own review
-                # round APPLIES their charters — that IS the review, so don't ALSO wait on CI
-                # review-bot GitLab comments (those bots are retired / out of credits). A repo with
-                # no local agents still gates on the CI bots having actually posted.
-                if [ -z "$(jq -r '.review_agents[]? // empty' "$CFG" 2>/dev/null | head -1)" ] \
-                   && [ "$(jq -r '.reviews_seen // false' "$D/mr-check.json")" = true ]; then
+                if [ -n "$(jq -r '.review_agents[]? // empty' "$CFG" 2>/dev/null | head -1)" ]; then
+                  # Local review mode: the charter review must have POSTED its result to the MR for
+                  # THIS commit before merge — a visible review of the current code, never a stale
+                  # or empty approval. (This is what stops a "no reviews" MR reaching the train.)
+                  [ "$(cat "$D/review-note-sha" 2>/dev/null)" = "$SHA" ] || BOTS_OK=0
+                elif [ "$(jq -r '.reviews_seen // false' "$D/mr-check.json")" = true ]; then
+                  # No local agents: still gate on the CI review bots having actually posted.
                   { [ "$(jq -r '.reviews_done // false' "$D/mr-check.json")" = true ] && [ "$(jq -r '.bot_notes // 0' "$D/mr-check.json")" -gt 0 ]; } || BOTS_OK=0
                 fi
                 GATE_GREEN=0
