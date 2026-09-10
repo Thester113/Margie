@@ -233,8 +233,20 @@ async function runPoller(p: Poller) {
     const isMarker = /^\[(no output|timed out|exec error|claude exited|done)\b/.test(out);
     if (out && out !== "[no output]" && !isMarker && !looksLikeError) {
       const text = out.split("\n").filter(Boolean).join(" — ").slice(0, 400);
-      p.lastNotice = text;
-      notice(text);
+      // Edge-trigger, don't level-trigger: a poller that repeats the SAME line
+      // every cycle (e.g. agent-messages "You have 1 unacked …") must announce
+      // once, not re-emit each interval — that floods history and crowds real
+      // context out of the brain's window. lastNotice was recorded but never
+      // checked; finish that here.
+      if (text !== p.lastNotice) {
+        p.lastNotice = text;
+        notice(text);
+      }
+    } else if (!out || out === "[no output]") {
+      // Backlog cleared (nothing to report) → let an identical notice fire
+      // again if the same condition returns later (e.g. a new message after
+      // the old one was acked).
+      p.lastNotice = "";
     }
   } catch (e) {
     dlog(`poller ${p.name} error: ${(e as Error).message}`);

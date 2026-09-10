@@ -34,7 +34,10 @@ api() { # api <METHOD> <path> [json]
   fi
 }
 # Accept a raw id, a dashed uuid, or a Notion URL; return the 32-hex id.
-nid() { printf '%s' "$1" | grep -oE '[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | tail -1 | tr -d '-'; }
+# Strip the query/fragment first: a Notion DB-view URL is /p/<dbid>?v=<viewid>,
+# and the VIEW id is the last hex in the string — grabbing it gives "page not found".
+# The real page/database id is the last hex in the PATH.
+nid() { printf '%s' "$1" | sed 's/[?#].*//' | grep -oE '[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | tail -1 | tr -d '-'; }
 fail_if_error() { # fail_if_error <json>
   if printf '%s' "$1" | jq -e '.object == "error"' >/dev/null 2>&1; then
     echo "Notion says: $(printf '%s' "$1" | jq -r '.message')" >&2; exit 1
@@ -77,6 +80,19 @@ ds_of() {
   esac
   [ -z "$v" ] && { echo "No data source configured for '$a', dearie — add notion_${a}_ds to ~/.margie/config.json." >&2; return 1; }
   printf '%s' "$v" | sed 's|^collection://||'
+}
+# List a database's rows (a linked DB URL resolves to a database, not a page).
+db_rows() { # db_rows <database-id> [n]
+  local dbid="$1" n="${2:-40}" R ds
+  R="$(api2 GET "/databases/$dbid")"
+  ds="$(printf '%s' "$R" | jq -r '.data_sources[0].id // empty')"
+  [ -z "$ds" ] && ds="$dbid"   # id may already be a data-source id
+  R="$(api2 POST "/data_sources/$ds/query" "$(jq -n --argjson n "$n" '{page_size:$n, sorts:[{timestamp:"last_edited_time", direction:"descending"}]}')")"
+  fail_if_error "$R"
+  printf '%s' "$R" | jq -r '.results[]? |
+    ((.properties | to_entries | map(select(.value.type=="title")) | .[0].value.title[0].plain_text) // "(untitled)")
+    + (if .properties.ID.unique_id then "  [" + (.properties.ID.unique_id.prefix // "") + "-" + (.properties.ID.unique_id.number|tostring) + "]" else "" end)
+    + (if .properties.Status.status then "  (" + .properties.Status.status.name + ")" elif .properties.Status.select then "  (" + .properties.Status.select.name + ")" else "" end)'
 }
 # Confirm-gate dry description: print one line and exit without touching Notion.
 desc() { if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then echo "$*"; exit 0; fi; }
@@ -128,7 +144,15 @@ case "$cmd" in
     [ -n "$OUT" ] && echo "$OUT" || echo "The Margie integration can't see any pages yet, dearie — connect a page to it (page → ··· → Connections → Margie)." ;;
   read)
     id="$(nid "${1:-}")"; [ -z "$id" ] && { echo "usage: notion.sh read <id|url> [n]" >&2; exit 1; }
-    P="$(api GET "/pages/$id")"; fail_if_error "$P"
+    P="$(api GET "/pages/$id")"
+    if printf '%s' "$P" | jq -e '.object=="error"' >/dev/null 2>&1; then
+      # A linked DATABASE (or data-source) url isn't a page — list its rows instead
+      # of erroring out (this is what a "Bug Reports"/"Tickets" DB link resolves to).
+      if printf '%s' "$P" | jq -r '.message // ""' | grep -qiE "is a database|data.?source"; then
+        echo "# (database $id) — recent rows:"; db_rows "$id" "${2:-40}"; exit 0
+      fi
+      fail_if_error "$P"
+    fi
     echo "# $(printf '%s' "$P" | jq -r "$TITLE_JQ")"
     B="$(api GET "/blocks/$id/children?page_size=${2:-40}")"; fail_if_error "$B"
     printf '%s' "$B" | text_of_blocks ;;

@@ -65,10 +65,33 @@ case "$cmd" in
   ready)
     R="$(api GET "/phone_numbers?page[size]=50")"; N="$(printf '%s' "$R" | jq -r '.data | length')"
     B="$(api GET "/10dlc/brand?page=1&recordsPerPage=1" | jq -r '(.records // .data // []) | length')"
-    C="$(api GET "/10dlc/campaign?page=1&recordsPerPage=1" | jq -r '(.records // .data // []) | length')"
-    echo "Numbers: $N. 10DLC brand: $([ "${B:-0}" -gt 0 ] && echo yes || echo NO). 10DLC campaign: $([ "${C:-0}" -gt 0 ] && echo yes || echo NO)."
-    if [ "${B:-0}" -gt 0 ] && [ "${C:-0}" -gt 0 ]; then echo "A2P to US: registered — sends should deliver."
-    else echo "A2P to US: NOT deliverable yet — US carriers reject unregistered A2P long-code traffic (error 40010). Register a 10DLC brand + campaign (company legal name/EIN/address + a small per-campaign fee) before any real send. This is on Tom."; fi ;;
+    # The campaign LIST endpoint is unreliable (returns 0 even when a campaign exists),
+    # so read our saved campaign directly for status + carrier (MNO) registration.
+    CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"; CST=""; CMNO="no"
+    if [ -n "$CID" ]; then
+      CJ="$(api GET "/10dlc/campaign/$CID")"
+      CST="$(printf '%s' "$CJ" | jq -r '.status // .campaignStatus // empty')"
+      CMNO="$(printf '%s' "$CJ" | jq -r 'if .isTMobileRegistered==true then "yes" else "no" end')"
+    fi
+    echo "Numbers: $N. 10DLC brand: $([ "${B:-0}" -gt 0 ] && echo yes || echo NO). 10DLC campaign: ${CST:-NONE}."
+    if [ "${B:-0}" -gt 0 ] && [ -n "$CST" ]; then
+      ASG=""; [ -n "$FROM" ] && ASG="$(api GET "/10dlc/phoneNumberCampaigns/$FROM" | jq -r '.telnyxCampaignId // empty' 2>/dev/null)"
+      if [ -n "$ASG" ]; then echo "A2P to US: number $FROM assigned to campaign — sends should deliver."
+      elif [ "$CMNO" = "yes" ]; then echo "A2P to US: campaign approved (carriers registered) but $FROM is not assigned yet — run: telnyx.sh campaign assign"
+      else echo "A2P to US: NOT deliverable yet — campaign is $CST at TCR but carrier (MNO) review isn't finished (T-Mobile registered: $CMNO), so number assignment is still blocked. Re-check later, then telnyx.sh campaign assign."; fi
+    else echo "A2P to US: NOT deliverable yet — need a 10DLC brand + campaign registered first."; fi ;;
+  watch)
+    # Silent poller contract: print ONE line only when the state changes to actionable
+    # (poller-level dedup collapses repeats). Otherwise say nothing.
+    CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"; [ -z "$CID" ] && exit 0
+    [ -z "$FROM" ] && exit 0
+    CJ="$(api GET "/10dlc/campaign/$CID")" || exit 0
+    printf '%s' "$CJ" | jq -e '.errors' >/dev/null 2>&1 && exit 0
+    MNO="$(printf '%s' "$CJ" | jq -r 'if .isTMobileRegistered==true then "yes" else "no" end')"
+    ASG="$(api GET "/10dlc/phoneNumberCampaigns/$FROM" | jq -r '.telnyxCampaignId // empty' 2>/dev/null)"
+    [ -n "$ASG" ] && exit 0   # already assigned & delivering — nothing to report
+    [ "$MNO" = "yes" ] && echo "Telnyx 10DLC campaign is now carrier-approved — the number $FROM can finally be assigned. Run: telnyx.sh campaign assign"
+    exit 0 ;;
   spike)
     TO="${1:?<agent +1>,<client +1>}"
     [ -z "$FROM" ] && { echo "Buy and assign a number first, dearie (telnyx.sh search/buy/assign)." >&2; exit 1; }
@@ -93,16 +116,28 @@ case "$cmd" in
         CID="$(printf '%s' "$R" | jq -r '.campaignId // .id // .tcrCampaignId // empty')"
         echo "Submitted 10DLC campaign${CID:+ $CID} — status $(printf '%s' "$R" | jq -r '.status // "pending"'). Next: assign $FROM to it, then A2P sends deliver." ;;
       assign)
-        CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"; PID="$(cfg telnyx_profile_id)"
-        { [ -z "$CID" ] || [ -z "$PID" ]; } && { echo "Need a campaign id (~/.margie/telnyx-campaign-id.txt) and telnyx_profile_id, dearie." >&2; exit 1; }
-        desc "would assign messaging profile $PID (number ${FROM:-?}) to 10DLC campaign $CID"
-        R="$(api POST /10dlc/phoneNumberAssignmentByProfile -d "$(jq -nc --arg p "$PID" --arg c "$CID" '{messagingProfileId:$p, campaignId:$c}')")"; err "$R" && exit 1
-        echo "Assigned profile $PID (number ${FROM:-?}) to campaign $CID — $(printf '%s' "$R" | jq -r '.taskId // .status // "queued"'). A2P delivers once the campaign is APPROVED." ;;
+        # Per-number assignment (synchronous, clear errors) beats the by-profile task,
+        # which returns a taskId and then fails silently while the campaign is still in
+        # carrier (MNO) review.
+        CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"
+        [ -z "$CID" ] && { echo "No campaign id saved yet, dearie (~/.margie/telnyx-campaign-id.txt)." >&2; exit 1; }
+        [ -z "$FROM" ] && { echo "No number to assign, dearie — set telnyx_number in config or pass --from +1…." >&2; exit 1; }
+        desc "would assign number $FROM to 10DLC campaign $CID"
+        R="$(api POST /10dlc/phoneNumberCampaign -d "$(jq -nc --arg p "$FROM" --arg c "$CID" '{phoneNumber:$p, campaignId:$c}')")"
+        if printf '%s' "$R" | jq -e '.errors' >/dev/null 2>&1; then
+          CODE="$(printf '%s' "$R" | jq -r '.errors[0].code // ""')"
+          if [ "$CODE" = "10036" ]; then
+            echo "Not yet, dearie — Telnyx is still finishing carrier (MNO) review of the campaign, so it won't accept the number assignment. Nothing's wrong: re-run 'telnyx.sh campaign assign' once 'telnyx.sh ready' shows the campaign fully approved (T-Mobile registered: yes)."
+            exit 2
+          fi
+          echo "Telnyx refused the assignment: $(printf '%s' "$R" | jq -r '.errors[0].detail // .errors[0].title')" >&2; exit 1
+        fi
+        echo "Assigned $FROM to campaign $CID — A2P to US should deliver shortly. Verify: telnyx.sh ready" ;;
       status)
         CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"; [ -z "$CID" ] && { echo "No campaign id saved yet, dearie." >&2; exit 1; }
         R="$(api GET "/10dlc/campaign/$CID")"; err "$R" && exit 1
-        printf '%s' "$R" | jq -r '"campaign \(.campaignId // "?") — status \(.status // .campaignStatus // "?"), usecase \(.usecase // "-")"' ;;
+        printf '%s' "$R" | jq -r '"campaign \(.campaignId // "?") (\(.tcrCampaignId // "?")) — status \(.status // .campaignStatus // "?"), usecase \(.usecase // "-"), carriers registered (T-Mobile): \(if .isTMobileRegistered then "yes" else "no — assignment blocked until this flips" end)"' ;;
       *) echo "usage: telnyx.sh campaign fill | submit | assign | status" >&2; exit 1 ;;
     esac ;;
-  *) echo "usage: telnyx.sh numbers | search <area> [n] | buy <+1> | profile [name] | assign <+1> [profile] | send-group \"<+1,+1>\" \"<text>\" [--from +1] | send <+1> \"<text>\" | message <id> | ready | campaign fill|submit | spike \"<agent>,<client>\"" >&2; exit 1 ;;
+  *) echo "usage: telnyx.sh numbers | search <area> [n] | buy <+1> | profile [name] | assign <+1> [profile] | send-group \"<+1,+1>\" \"<text>\" [--from +1] | send <+1> \"<text>\" | message <id> | ready | campaign fill|submit|assign|status | watch | spike \"<agent>,<client>\"" >&2; exit 1 ;;
 esac

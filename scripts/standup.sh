@@ -118,12 +118,31 @@ sapi() { local m="$1"; shift; curl -sS --max-time 10 -H "Authorization: Bearer $
 find_prompt() {
   local cid; cid="$(channel_id)"; [ -z "$cid" ] && return 1
   local since; since="$(date -j -f '%Y-%m-%d %H:%M:%S' "$TODAY 00:00:00" +%s 2>/dev/null || date +%s)"
-  sapi conversations.history --get --data-urlencode "channel=$cid" -d "limit=80" -d "oldest=$since" \
+  # The standup bot asks everyone to "reply in :thread:". It may address the owner
+  # by name/mention (per-person prompt: "Tom — standup …") OR post ONE shared prompt
+  # for the whole team ("Daily standup — please reply in :thread: …"). PREFER an
+  # owner-addressed prompt; otherwise fall back to the shared one — either way we
+  # reply in its thread. (The old code REQUIRED the owner's name at the start, so
+  # the shared-prompt format silently produced no ts → a top-level post.)
+  # Retry the fetch: a transient rate-limit/timeout returning empty here would make
+  # post() fall back to a TOP-LEVEL message — the very bug we're fixing. Only trust
+  # an ok:true response.
+  local resp=""; local i
+  for i in 1 2 3; do
+    resp="$(sapi conversations.history --get --data-urlencode "channel=$cid" -d "limit=80" -d "oldest=$since")"
+    printf '%s' "$resp" | jq -e '.ok==true' >/dev/null 2>&1 && break
+    resp=""; sleep 1
+  done
+  [ -n "$resp" ] || return 1
+  printf '%s' "$resp" \
     | jq -r --arg n "$OWNER" --arg id "${OWNER_ID:-__none__}" '
-        .messages[]? | select(.subtype=="bot_message" or .bot_id != null)
-        | select((.text // "") | test("reply in|:thread:"; "i"))
-        | select((.text // "") | (test("^\\s*(<@" + $id + ">|" + $n + ")\\b"; "i")))
-        | [.ts, ((.text // "") | gsub("\n"; " ⏎ "))] | @tsv' | head -1
+        [ .messages[]?
+          | select(.subtype=="bot_message" or .bot_id != null)
+          | select((.text // "") | test("reply in|:thread:"; "i"))
+          | select((.text // "") | test("standup|accomplish yesterday"; "i")) ] as $c
+        | ( ( $c | map(select((.text // "") | test("(<@" + $id + ">|(^|[^\\w])" + $n + "\\b)"; "i"))) | .[0] )
+            // ( $c | .[0] ) )
+        | if . then [.ts, ((.text // "") | gsub("\n"; " ⏎ "))] | @tsv else empty end'
 }
 # Has the owner (or Margie for him) already answered in that thread?
 thread_answered() { # thread_answered <cid> <ts>
@@ -155,10 +174,15 @@ $(cat "$DRAFT")"
   post)
     [ -s "$DRAFT" ] || compose >/dev/null || exit 1
     [ -f "$POSTED" ] && { echo "Today's standup is already posted, dearie: $(cat "$POSTED")"; exit 0; }
-    desc "would post ${OWNER}'s standup for $TODAY in $CHAN$( [ -n "$(find_prompt 2>/dev/null)" ] && echo " — in the thread of today's standup prompt") as @Margie: $(head -2 "$DRAFT" | tr '\n' ' ' | cut -c1-90)…"
     CID="$(channel_id)"; [ -z "$CID" ] && { echo "Couldn't find channel $CHAN, dearie." >&2; exit 1; }
+    # Resolve the standup-bot prompt ONCE (find_prompt retries internally).
     PTS="$(find_prompt 2>/dev/null | cut -f1)"
-    if [ -n "$PTS" ] && thread_answered "$CID" "$PTS"; then echo "That standup thread already has ${OWNER}'s answer, dearie."; : > "$POSTED"; exit 0; fi
+    THREADNOTE=""; [ -n "$PTS" ] && THREADNOTE=" — in the thread of today's standup prompt"
+    desc "would post ${OWNER}'s standup for $TODAY in $CHAN$THREADNOTE as @Margie: $(head -2 "$DRAFT" | tr '\n' ' ' | cut -c1-90)…"
+    # Tom's rule: ALWAYS reply in the standup agent's thread. If we can't find today's
+    # prompt, refuse rather than silently posting a stray top-level message.
+    [ -z "$PTS" ] && { echo "Couldn't find today's standup prompt to reply under, dearie — NOT posting a top-level message. Check #standup (the bot may not have prompted yet, or changed its wording)." >&2; exit 1; }
+    if thread_answered "$CID" "$PTS"; then echo "That standup thread already has ${OWNER}'s answer, dearie."; : > "$POSTED"; exit 0; fi
     TEXT="*${OWNER}'s standup* (via Margie)
 $(cat "$DRAFT")"
     R="$(sapi chat.postMessage --get --data-urlencode "channel=$CID" --data-urlencode "text=$TEXT" ${PTS:+--data-urlencode "thread_ts=$PTS"})"
@@ -179,8 +203,14 @@ $(cat "$DRAFT")"
     compose >/dev/null 2>&1 || exit 0
     : > "$SDIR/$TODAY.notified"
     if [ "$MODE" = "post" ]; then
-      OUT="$("$0" post)"; echo "Your standup is posted in $CHAN, dearie."
-      dm_owner "Standup posted to $CHAN: $(cat "$POSTED")"
+      if "$0" post >/dev/null 2>&1 && [ -f "$POSTED" ]; then
+        echo "Your standup is posted in $CHAN, dearie."
+        dm_owner "Standup posted to $CHAN: $(cat "$POSTED")"
+      else
+        # post refuses to drop a stray top-level message when there's no prompt yet
+        echo "Couldn't post your standup in-thread yet, dearie — no standup prompt found."
+        dm_owner "Heads up: I couldn't post your standup in-thread yet (no standup prompt in $CHAN). The draft's ready — I'll post once the bot prompts, or say \"post my standup\"."
+      fi
     else
       dm_owner "Your standup draft for today — say \"post my standup\" (or \"change …\") to Margie:
 $(cat "$DRAFT")"

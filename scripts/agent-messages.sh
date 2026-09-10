@@ -96,6 +96,18 @@ owner_of() { # owner_of <AgentName> <field>
   jq -r --arg a "$1" ".agents[\$a].$2 // empty" "$(roster_path)" 2>/dev/null
 }
 
+# ack_id <page-id> — add ME to the row's "Acked By" (idempotent). Best-effort:
+# prints nothing, returns non-zero on failure so callers can decide.
+ack_id() {
+  local pid cur new; pid="$(nid "$1")"; [ -n "$pid" ] || return 1
+  cur="$(api GET "/pages/$pid" | jq -c '[.properties["Acked By"].multi_select[]?.name]' 2>/dev/null)" || return 1
+  [ -n "$cur" ] || return 1
+  new="$(printf '%s' "$cur" | jq -c --arg me "$ME" '(. + [$me]) | unique | map({name: .})')"
+  api PATCH "/pages/$pid" "$(jq -cn --argjson a "$new" '{properties: {"Acked By": {multi_select: $a}}}')" \
+    | jq -e '.object == "page"' >/dev/null 2>&1 || return 1
+  : > "$HOME/.claude/agent-messages-last-check-$ME" 2>/dev/null || true
+}
+
 cmd="${1:-check}"; shift || true
 
 case "$cmd" in
@@ -165,11 +177,7 @@ $LINE
 EOF2
     [ -f "$STATE/read/$(printf '%s' "$MID" | tr -d '-')" ] || { echo "I haven't ingested that message yet, dearie — read it first (ack means ingested)." >&2; exit 1; }
     desc "would acknowledge the agent message \"$SUBJ\" from $FROM (mark it ingested by $ME)"
-    CUR="$(api GET "/pages/$(nid "$MID")" | jq -c '[.properties["Acked By"].multi_select[]?.name]')"
-    NEW="$(printf '%s' "$CUR" | jq -c --arg me "$ME" '(. + [$me]) | unique | map({name: .})')"
-    R="$(api PATCH "/pages/$(nid "$MID")" "$(jq -cn --argjson a "$NEW" '{properties: {"Acked By": {multi_select: $a}}}')")"
-    printf '%s' "$R" | jq -e '.object == "page"' >/dev/null || { echo "Notion refused the ack, dearie: $(printf '%s' "$R" | jq -r '.message // "?"')" >&2; exit 1; }
-    : > "$HOME/.claude/agent-messages-last-check-$ME" 2>/dev/null || true
+    ack_id "$MID" || { echo "Notion refused the ack, dearie — see $LOG." >&2; exit 1; }
     echo "Acknowledged \"$SUBJ\", dearie."
     ;;
   send|reply)
@@ -204,6 +212,11 @@ EOF2
     printf '%s' "$R" | jq -e '.object == "page"' >/dev/null || { echo "Notion refused the message, dearie: $(printf '%s' "$R" | jq -r '.message // "?"')" >&2; exit 1; }
     MURL="$(printf '%s' "$R" | jq -r .url)"
     echo "Posted \"$SUBJ\" to $TO: $MURL"
+    # A reply IS proof of ingest — ack the original so it stops showing as
+    # unacked (otherwise the check poller keeps nagging a message we've already
+    # handled, and Margie loses track of the fact she answered it). Best-effort.
+    ACKTGT=""; [ -n "$THREAD" ] && ACKTGT="$THREAD"; { [ -z "$ACKTGT" ] && [ -n "$RE" ]; } && ACKTGT="$RE"
+    [ -n "$ACKTGT" ] && ack_id "$ACKTGT" && echo "Acked the message I replied to, dearie."
     # Slack pointer to each recipient's OWNER — ≤3 sentences, the row is the
     # record. Sent AS the @Margie bot when a bot token exists (per protocol, the
     # agent pings the owner); otherwise through slack.sh's default backend.

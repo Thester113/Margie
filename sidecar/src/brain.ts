@@ -739,6 +739,13 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   inbox — agent-messages.sh sent [To] for agent messages, slack.sh read for
   Slack. agent-messages.sh check/list show only messages TO you, so a thing you
   SENT will not appear there; never conclude "nothing was sent" from your inbox.
+- ANSWERING AN AGENT MESSAGE: to reply to one in your inbox, use
+  agent-messages.sh reply <n|id> "<body>" — NOT send with a hand-typed "Re:"
+  subject. reply threads to the original AND acks it, so it stops showing as
+  unacked; a send does neither and the message will keep nagging. Once you've
+  replied (or a message needs no reply but you've ingested it), it is HANDLED —
+  if you later see it still listed, ack it rather than telling Tom nothing went
+  out; check "sent" before ever saying you haven't answered someone.
 - SESSION PLAY-BY-PLAY: notices shaped "[label] <action>" are a live step from a
   coding session Margie is running (the watcher relays each new action). They are
   already shown to Tom as progress lines — do NOT re-announce or summarise them
@@ -1122,9 +1129,15 @@ function transcript(history: ChatMsg[], turns = 10, conv?: string, speaker?: str
 const IMAGE_EXT: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
 function extractImages(text: string): { text: string; images: Array<{ path: string; media_type: string; data: string }> } {
   const images: Array<{ path: string; media_type: string; data: string }> = [];
-  const re = /(?:"([^"\n]+\.(?:png|jpe?g|gif|webp))"|((?:\\ |[^\s"])+\.(?:png|jpe?g|gif|webp)))\b/gi;
+  // A bare (unquoted) drag-drop path is shell-escaped: "\ ", "\(", "\)", "\&" …,
+  // and macOS screenshot names carry a narrow no-break space (U+202F, also U+00A0)
+  // before AM/PM. Consume backslash-escapes as pairs (\\. first in the alternation)
+  // and let those unicode spaces be part of the token, else the path splits apart.
+  const re = /(?:"([^"\n]+\.(?:png|jpe?g|gif|webp))"|((?:\\.|[^\s"]|[\u00A0\u202F])+\.(?:png|jpe?g|gif|webp)))\b/gi;
   const out = text.replace(re, (m, quoted, bare) => {
-    let p = (quoted || bare || "").replace(/\\ /g, " ").replace(/^~(?=\/|$)/, HOME);
+    // Quoted paths are literal; bare ones need EVERY backslash escape removed
+    // (the old code only unescaped "\ ", so "\(15\)" and escaped narrow spaces broke).
+    let p = (quoted ? quoted : (bare || "").replace(/\\([\s\S])/g, "$1")).replace(/^~(?=\/|$)/, HOME);
     if (!p.startsWith("/")) p = `${HOME}/${p}`;
     try {
       // macOS screenshot names carry a narrow no-break space before AM/PM; a dropped

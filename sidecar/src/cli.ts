@@ -354,7 +354,26 @@ async function repl() {
     busy = false;
     if (closed) { spin.stop(); c.close(); process.stdout.write("\n"); process.exit(0); }
   };
-  rl.on("line", (line) => { const t = line.trim(); if (t) { queue.push(t); void pump(); } else safePrompt(); });
+  // Coalesce a multi-line PASTE into ONE message. readline fires a `line` event per
+  // newline, so pasting a block would submit its first line immediately ("cuts off and
+  // runs margie") and split the rest into separate turns. In an interactive terminal we
+  // buffer lines that arrive back-to-back and flush them as a single message once input
+  // goes idle — a paste delivers every line within a few ms; a human is one line then a
+  // pause. Piped / non-TTY input keeps its line-at-a-time behaviour (the queue handles it).
+  let lineBuf: string[] = [];
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  const flushLines = () => {
+    flushTimer = undefined;
+    const t = lineBuf.join("\n").trim();
+    lineBuf = [];
+    if (t) { queue.push(t); void pump(); } else safePrompt();
+  };
+  rl.on("line", (line) => {
+    if (!TTY) { const t = line.trim(); if (t) { queue.push(t); void pump(); } else safePrompt(); return; }
+    lineBuf.push(line);
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushLines, 40);
+  });
   rl.on("close", () => { closed = true; if (!busy) { spin.stop(); c.close(); process.stdout.write("\n"); process.exit(0); } });
 
   console.log(HELP);
