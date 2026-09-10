@@ -783,6 +783,24 @@ case "$cmd" in
                 if [ -n "$SHA" ] && [ "$(cat "$D/review-sha" 2>/dev/null)" != "$SHA" ] && [ ! -f "$D/review-running" ] && [ "$UNRES" = 0 ] \
                    && [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -lt "$(cfgd review_rounds 2)" ]; then
                   P="$(cat "$DIR/prompts/mr-review.md")"; P="${P//'{{MR}}'/$IID}"; P="${P//'{{PT}}'/$PT}"; P="${P//'{{TARGET}}'/$(cfgd mr_target_branch main)}"; P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"
+                  # Local review charters: the repo's own reviewer subagents (config review_agents,
+                  # e.g. code-reviewer/adr-reviewer) are the local stand-ins for the dead CI review
+                  # bots. Apply their charters here on Tom's plan — cheaper/faster, no CI credits.
+                  RAGENTS=""
+                  for AG in $(jq -r '.review_agents[]? // empty' "$CFG" 2>/dev/null); do
+                    AGF="$WT/.claude/agents/$AG.md"; [ -f "$AGF" ] || continue
+                    RAGENTS="$RAGENTS
+
+===== reviewer charter: $AG (local stand-in for the CI $AG bot) =====
+$(awk 'c>=2; /^---$/{c++}' "$AGF")"
+                  done
+                  [ -n "$RAGENTS" ] && RAGENTS="
+DO THE REVIEW BY APPLYING THESE REPO REVIEWER CHARTERS — the local stand-ins for the CI
+review bots (same criteria, run here on Tom's plan). Work through each in turn and base your
+findings on it; map their must-fix / ADR-violation findings to blocker or major, nits to nit.
+Cover BOTH code review and ADR compliance.$RAGENTS
+"
+                  P="${P//'{{REVIEW_AGENTS}}'/$RAGENTS}"
                   SUBDIR="$(dmeta "$D" subdir)"; MODEL_OPT=(); M="$(cfg qa_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
                   rm -f "$D/review.json"
                   if "$DIR/claude-task.sh" start "$WT${SUBDIR:+/$SUBDIR}" "$P" --deny "Edit,Write,NotebookEdit" --no-subagents --schema "$DIR/schemas/review.schema.json" \
@@ -809,6 +827,7 @@ case "$cmd" in
                 # all — whether a later pipeline pre-empted the auto-run OR the first-pipeline auto-run
                 # completed without posting (seen on mobile-only MRs) — so play the manual request once.
                 if [ ! -f "$D/bots-fallback" ] && [ "$PSTAT" != running ] && [ "$PSTAT" != pending ] \
+                   && [ -z "$(jq -r '.review_agents[]? // empty' "$CFG" 2>/dev/null | head -1)" ] \
                    && [ "$(jq -r '.bot_notes // 0' "$D/mr-check.json")" = 0 ] && [ "$(jq -r '.reviews_seen // false' "$D/mr-check.json")" = true ] \
                    && [ "$(jq -r '.reviews_failed // 0' "$D/mr-check.json")" = 0 ] \
                    && [ $(( $(date +%s) - $(stat -f %m "$D/mr.json") )) -gt 900 ]; then
@@ -819,7 +838,11 @@ case "$cmd" in
                 # The review bots ERRORED (their CI jobs failed, not just slow) — re-running won't
                 # help (e.g. the walt_ui CI's Anthropic "credit balance is too low"). Tell Tom once
                 # per pipeline; merge stays held (BOTS_OK stays 0) because they never really reviewed.
-                if [ "$(jq -r '.reviews_failed // 0' "$D/mr-check.json")" -gt 0 ] && [ "$(cat "$D/reviews-failed-pid" 2>/dev/null)" != "${PID:-x}" ]; then
+                # Only alarm about CI review-bot failures when we're RELYING on the CI bots. With
+                # local review agents configured, their CI counterparts are retired — a failed CI
+                # review job is expected and Margie's own round covers the review, so stay quiet.
+                if [ -z "$(jq -r '.review_agents[]? // empty' "$CFG" 2>/dev/null | head -1)" ] \
+                   && [ "$(jq -r '.reviews_failed // 0' "$D/mr-check.json")" -gt 0 ] && [ "$(cat "$D/reviews-failed-pid" 2>/dev/null)" != "${PID:-x}" ]; then
                   echo "${PID:-x}" > "$D/reviews-failed-pid"
                   announce "Heads up, dearie: the review bots FAILED on MR !$IID for $PT — their CI jobs errored (not just slow), so no real review happened. This usually means the walt_ui CI's Anthropic credit balance ran out; it needs a CI fix, not a re-run. Merge is held until they pass. $(jq -r '.pipeline_url // empty' "$D/mr-check.json")"
                 fi
@@ -835,7 +858,12 @@ case "$cmd" in
                 # trivially true before they post. Require the review bridges finished and the
                 # bots posted (or none exist in this repo). This stops merging unreviewed.
                 BOTS_OK=1
-                if [ "$(jq -r '.reviews_seen // false' "$D/mr-check.json")" = true ]; then
+                # When the repo has local review agents (config review_agents), Margie's own review
+                # round APPLIES their charters — that IS the review, so don't ALSO wait on CI
+                # review-bot GitLab comments (those bots are retired / out of credits). A repo with
+                # no local agents still gates on the CI bots having actually posted.
+                if [ -z "$(jq -r '.review_agents[]? // empty' "$CFG" 2>/dev/null | head -1)" ] \
+                   && [ "$(jq -r '.reviews_seen // false' "$D/mr-check.json")" = true ]; then
                   { [ "$(jq -r '.reviews_done // false' "$D/mr-check.json")" = true ] && [ "$(jq -r '.bot_notes // 0' "$D/mr-check.json")" -gt 0 ]; } || BOTS_OK=0
                 fi
                 GATE_GREEN=0

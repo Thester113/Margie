@@ -6,7 +6,7 @@ plus the tests it adds. Do not edit, commit or push anything.
 
 THE SPEC IT MUST SATISFY:
 {{SPEC}}
-
+{{REVIEW_AGENTS}}
 Judge: correctness against every acceptance criterion; ADR compliance (cite ADR
 n §n); security per the MR checklist (injection, authz scoping, PII in logs);
 tests that actually exercise the behaviour (four-phase shape, sabotage

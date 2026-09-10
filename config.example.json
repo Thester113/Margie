@@ -119,5 +119,9 @@
     "mom": "jane@icloud.com"
   },
   "_contacts": "Spoken alias → iMessage handle (phone/email is most reliable) for messages.sh.",
-  "notion_owner_person_id": "<owner Notion person id — see notion.sh whoami / the users API>"
+  "notion_owner_person_id": "<owner Notion person id — see notion.sh whoami / the users API>",
+  "review_agents": [
+    "code-reviewer",
+    "adr-reviewer"
+  ]
 }
