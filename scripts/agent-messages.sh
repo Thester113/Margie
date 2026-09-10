@@ -20,7 +20,7 @@
 set -uo pipefail
 
 CFG="$HOME/.margie/config.json"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 desc() { if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then echo "$*"; exit 0; fi; }
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="$HOME/.margie/agent-messages.log"

@@ -31,7 +31,7 @@ CFG="$MARGIE_DIR/config.json"
 LOG="$MARGIE_DIR/slack-watch.log"
 HANDLED="$MARGIE_DIR/slack-handled.txt"
 mkdir -p "$MARGIE_DIR"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 logl() { echo "$(date -u +%FT%TZ) $1" >> "$LOG"; }
 
 # `mode` subcommand — the brain's on/off switch.

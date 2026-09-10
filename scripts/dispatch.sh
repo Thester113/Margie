@@ -27,7 +27,7 @@ set -uo pipefail
 MDIR="$HOME/.margie/dispatch"; mkdir -p "$MDIR"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CFG="$HOME/.margie/config.json"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 cfgd() { local v; v="$(cfg "$1")"; printf '%s' "${v:-$2}"; }  # cfgd <key> <default>
 desc() { if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then echo "$*"; exit 0; fi; }
 slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-28; }

@@ -123,5 +123,6 @@
   "review_agents": [
     "code-reviewer",
     "adr-reviewer"
-  ]
+  ],
+  "_secrets_note": "Any value may be a 1Password reference like op://Vault/Item/field — resolved at runtime via the op CLI (sign in with op signin, or set OP_SERVICE_ACCOUNT_TOKEN for headless). Plaintext values still work."
 }

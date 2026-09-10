@@ -10,7 +10,7 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="$HOME/.margie/config.json"; ST="$HOME/.margie/deploy"; mkdir -p "$ST"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 cfgd() { local v; v="$(cfg "$1")"; printf '%s' "${v:-$2}"; }
 REPO="$("$DIR/resolve-repo.sh" "$(cfgd default_repo walt_ui)" 2>/dev/null || echo "$HOME/margie/walt_ui")"
 SUBDIR="$(jq -r --arg r "$(basename "$REPO")" '.repo_subdirs[$r] // empty' "$CFG" 2>/dev/null)"

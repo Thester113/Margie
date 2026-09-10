@@ -13,7 +13,7 @@
 #   telnyx.sh spike "<agent +1>,<client +1>"  the whole T1 check: send the group reply and print what to look for
 set -uo pipefail
 CFG="$HOME/.margie/config.json"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 desc() { if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then echo "$*"; exit 0; fi; }
 KEY="$(cfg telnyx_api_key)"
 [ -z "$KEY" ] && { echo "No Telnyx key yet, dearie — add telnyx_api_key to ~/.margie/config.json (Telnyx portal → API Keys)." >&2; exit 1; }

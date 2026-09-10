@@ -12,7 +12,7 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="$HOME/.margie/config.json"; R="$HOME/.margie/research"; mkdir -p "$R"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-32; }
 resolve() { local x="${1:-latest}"; [ "$x" = latest ] && x="$(ls -t "$R" | head -1)"; [ -d "$R/$x" ] || x="$(ls -t "$R" | grep -F -- "$x" | head -1)"; [ -n "$x" ] && [ -d "$R/$x" ] && echo "$x"; }
 task_json() { # task_json <id> -> path of the task's result json (may be empty/absent)

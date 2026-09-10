@@ -26,7 +26,7 @@ set -uo pipefail
 # it dies with "CocoaPods not installed or not in valid state".
 export PATH="$HOME/.asdf/shims:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/development/flutter/bin:$PATH"
 CFG="$HOME/.margie/config.json"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 FLUTTER="$(command -v flutter || echo "$HOME/development/flutter/bin/flutter")"
 SIMDIR="$HOME/.margie/sims"; mkdir -p "$SIMDIR"
 

@@ -15,7 +15,7 @@
 set -uo pipefail
 
 CFG="$HOME/.margie/config.json"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 FORGE="${MARGIE_FORGE:-$(cfg forge)}"; FORGE="$(printf '%s' "${FORGE:-github}" | tr 'A-Z' 'a-z')"
 ORG="${MARGIE_ORG:-$(cfg org)}"
 REPOS_DIR="${MARGIE_REPOS_DIR:-$(cfg repos_dir)}"

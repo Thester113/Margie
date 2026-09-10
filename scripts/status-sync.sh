@@ -9,7 +9,7 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="$HOME/.margie/config.json"; PROJ="$HOME/.margie/projects"; mkdir -p "$PROJ"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 setcfg() { jq --arg k "$1" --arg v "$2" '.[$k]=$v' "$CFG" > "$CFG.tmp" && mv "$CFG.tmp" "$CFG" && chmod 600 "$CFG"; }
 
 ensure_parent() {

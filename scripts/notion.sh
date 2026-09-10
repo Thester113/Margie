@@ -19,7 +19,7 @@
 set -uo pipefail
 
 CFG="$HOME/.margie/config.json"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 TOKEN="${NOTION_TOKEN:-$(cfg notion_token)}"
 [ -z "$TOKEN" ] && { echo "Notion isn't configured yet, dearie — add notion_token to ~/.margie/config.json." >&2; exit 1; }
 PARENT_DEFAULT="$(cfg notion_parent_page)"

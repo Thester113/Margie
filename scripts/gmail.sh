@@ -15,7 +15,7 @@
 set -uo pipefail
 
 CFG="$HOME/.margie/config.json"
-cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
+cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 ADDR="$(cfg gmail_address)"
 PASS="$(cfg gmail_app_password)"
 IMAP_HOST="$(cfg gmail_imap_host)"; IMAP_HOST="${IMAP_HOST:-imap.gmail.com}"
