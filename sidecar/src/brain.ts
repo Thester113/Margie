@@ -99,6 +99,15 @@ const DENY: RegExp[] = [
   // The brain never reads its own secrets or helper-script sources (it flailed through both instead of asking).
   /\.margie\/config\.json/,
   /\b(cat|sed|head|tail|less|more|bat|grep|rg|awk)\b[^|]*\bscripts\/[a-z0-9-]+\.sh\b/,
+  // CREDENTIAL BOUNDARY (security review, Cody/Athena 2026-09-10): the brain must never be able
+  // to pull a resolved secret or the service-account token into its own context. op:// refs are
+  // resolved ONLY inside the deterministic helper scripts (cfg()), whose resolved value is used in
+  // the API call and never printed — the model only ever sees op:// references. So the brain is
+  // blocked from running the 1Password CLI, dumping the environment (where OP_SERVICE_ACCOUNT_TOKEN
+  // would live), or reading secret files. Keep this tight; it's the guarantee behind the vault grant.
+  /(^|[;&|]|\s)op\s+(read|inject|run|get|item|list|create|edit|delete|signin|account|vault|document|user|whoami|plugin)\b/,
+  /(^|[;&|]|\s)(env|printenv)\b/,
+  /\.env(\.secrets|\.local)?\b/,
 ];
 function denied(cmd: string): boolean {
   return DENY.some((r) => r.test(cmd));
