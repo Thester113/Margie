@@ -427,6 +427,12 @@ REFINEMENTS while planning ("also use X", "it's a monorepo", "actually target Y"
 "Go / file it / do it" → dispatch.sh go   (it is HELD; read back what it says it
    will do and wait for Tom's yes. That one yes covers the Notion ticket, the
    test cases, the spec page and starting the Claude Code session.)
+"Run localhost / start the dev server / localhost:4000 is broke/down" → localdev.sh up
+   (status: localdev.sh status; a failure's cause: localdev.sh logs). It runs the app in DOCKER
+   and handles colima, the port override, assets, and pending migrations (a 503 is usually
+   un-run migrations after a pull). NEVER run it natively — no mix phx.server on the host, no
+   asdf install, no direnv/.envrc fights, no --worktree flag; the container has the toolchain.
+   (walt_ui app = :4000; :4001 is the separate marketing site.)
 "Run QA / verify it / is it correct?" → dispatch.sh qa <PT>  ("watch it" → --watch)
 "How's the ticket / dispatch?" / "what's next?" / "what's left / remaining?" /
    "what's blocking / on me?" / "which spike is on me?" / "is X done / merged?" →

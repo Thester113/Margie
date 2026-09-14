@@ -116,6 +116,11 @@
     ]
   },
   "_web_review": "web_app_url is the local dev base URL the browser review opens (so Margie has eyes on the same rendered page the owner does). web_review_routes[<repo>] maps a diff path prefix to the exact route to verify — e.g. an Integrations LiveView change is verified at http://localhost:4000/settings/integrations. First matching route wins; no match falls back to web_app_url. Nothing hardcoded in the scripts — set the base/route per project here.",
+  "local_dev_repo": "walt_ui",
+  "local_dev_service": "app",
+  "local_dev_assets_cmd": "mix esbuild app && mix tailwind app",
+  "local_dev_migrate_cmd": "mix ecto.migrate",
+  "_local_dev": "localdev.sh runs the local dev web app via DOCKER (never native mix/asdf/direnv). local_dev_repo (default regression_repo/default_repo) + repo_subdirs[<repo>] locate the backend; local_dev_service is the compose service (app); web_app_url is the URL it polls; local_dev_assets_cmd is run in the container if the JS bundle is missing; local_dev_migrate_cmd applies pending migrations (the usual 503 cause after a pull). localdev.sh up|status|logs|restart.",
   "session_autoanswer": true,
   "_session_autoanswer": "the sessions poller answers Claude Code permission prompts in Margie's coding sessions with yes on the owner's behalf; prompts that look dangerous (force push, reset --hard, secrets, deploys, sudo, curl|sh) are escalated instead.",
   "review_max_rounds": 4,
