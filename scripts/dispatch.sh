@@ -84,6 +84,24 @@ $pats
 EOF
   return 1
 }
+web_review_url() {
+  # The exact local URL a web-UI change should be VERIFIED at, so Margie puts eyes on the same
+  # rendered page Tom does. Config: web_app_url (base, e.g. http://localhost:4000) + per-repo
+  # web_review_routes [{match: <path prefix in the diff>, route: </path>}]. Prints the first
+  # route whose match is in this branch's diff, else the base url. Company-agnostic: nothing hardcoded.
+  local wt="$1" repo="$2" base files
+  base="$(cfgd web_app_url "")"; [ -z "$base" ] && return 1
+  files="$(git -C "$wt" diff --name-only origin/main...HEAD 2>/dev/null)"
+  local n route match; n="$(jq -r --arg r "$repo" '.web_review_routes[$r] | length? // 0' "$CFG" 2>/dev/null)"
+  local i=0
+  while [ "$i" -lt "${n:-0}" ]; do
+    match="$(jq -r --arg r "$repo" --argjson i "$i" '.web_review_routes[$r][$i].match // empty' "$CFG" 2>/dev/null)"
+    route="$(jq -r --arg r "$repo" --argjson i "$i" '.web_review_routes[$r][$i].route // empty' "$CFG" 2>/dev/null)"
+    if [ -n "$match" ] && printf '%s\n' "$files" | grep -q "$match"; then echo "${base}${route}"; return 0; fi
+    i=$((i+1))
+  done
+  echo "$base"
+}
 resolve_d() { # id | PT-### | latest | fuzzy word -> dispatch dir (follows the PT symlink)
   local x="${1:-latest}" p m
   [ "$x" = "latest" ] && { ls -td "$MDIR"/d-* 2>/dev/null | grep -v -- '--' | head -1; return; }
@@ -1032,7 +1050,11 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     if is_web_ui_change "$WT" "$REPO_NAME"; then
                       # WEB UI/UX (Phoenix LiveView / app.heyamby.ai): verify in a BROWSER, not the
                       # iOS sim. Like all UI/UX it never auto-merges — it holds for Tom's approval.
-                      VP="VISUAL REVIEW ONLY (ticket $PT, branch $BR) — this is a WEB UI change (Phoenix LiveView / app.heyamby.ai), so verify it in a BROWSER, not the simulator. You are a VERIFIER, not the implementer: READ-ONLY. Do NOT edit, refactor, commit, push, or modify the MR — make NO production-code change. Steps: (1) read this repo's CLAUDE.md/README for how to run the web app locally (e.g. bin/docker-setup then the Phoenix server, or mix phx.server in $WT/backend) and boot it on THIS branch; (2) to make THIS ticket's screen reachable you MAY make TEMPORARY local-only tweaks — seed a demo tenant/user that holds the required capability (connection.manage) and seed the FUB/Brevo connections the page shows — but REVERT every such edit (git checkout) before you finish and never commit them; (3) open the EXACT page this MR changes (Settings → Integrations) in a headless browser — prefer the repo's own browser tooling (Wallaby/Playwright feature-test helpers can drive a page and screenshot it) or a headless Chrome; (4) capture the screenshot to \"$D/ui-shot.png\"; (5) if the page errors or looks wrong, do NOT change it — say so plainly in your final message for Tom to decide; (6) print MARGIE_UI_SHOT $D/ui-shot.png on its own line and STOP with the worktree clean. If you genuinely cannot boot the web app or capture a screenshot, say exactly why in your final message — do NOT fake a pass; the merge stays held for Tom's browser review either way. Do not loop."
+                      # Verify at the EXACT rendered page (config web_app_url + web_review_routes),
+                      # e.g. an integrations change -> http://localhost:4000/settings/integrations,
+                      # so Margie has eyes on the same page Tom does (Tom's rule 2026-09-14).
+                      TURL="$(web_review_url "$WT" "$REPO_NAME" 2>/dev/null)"
+                      VP="VISUAL REVIEW ONLY (ticket $PT, branch $BR) — this is a WEB UI change (Phoenix LiveView / app.heyamby.ai), so verify it in a BROWSER, not the simulator. You are a VERIFIER, not the implementer: READ-ONLY. Do NOT edit, refactor, commit, push, or modify the MR — make NO production-code change. Steps: (1) get the dev web app running ON THIS BRANCH and open ${TURL:-the exact page this MR changes} in a real browser (a headless Chrome via the debug port, or the repo's Wallaby/Playwright helpers). To bring the local app up if it isn't: in \$(the backend dir) build the walt_ui assets (mix esbuild app && mix tailwind app — the umbrella 'mix assets.build' also builds marketing and can fail on it, that's fine), ensure docker-compose.override.yml publishes the app port, docker compose up -d app, then mix ecto.migrate (a pull usually adds migrations); read the app LOGS if a request 500/503s — they name the cause. (2) You MAY make TEMPORARY local-only tweaks to reach the screen — seed a demo tenant/user with the required capability (connection.manage) and the FUB/Brevo connections the page shows — but REVERT every such edit (git checkout) before you finish and never commit them. (3) Navigate to ${TURL:-the changed page} and ACTUALLY LOOK at the rendered UI: is the layout right, aligned, styled, nothing overflowing/overlapping/unstyled/broken, and does THIS ticket's change appear and work? (4) Capture the screenshot to \"$D/ui-shot.png\". (5) In your final message, give a short UI ASSESSMENT for Tom — call out anything that looks bad or broken (even though the merge still holds for his approval, not yours); do NOT edit it. (6) print MARGIE_UI_SHOT $D/ui-shot.png on its own line and STOP with the worktree clean. If you genuinely cannot boot the app or capture the screenshot, say exactly why — do NOT fake a pass; the merge stays held for Tom's review either way. Do not loop."
                     else
                     VP="VISUAL REVIEW ONLY (ticket $PT, branch $BR). You are a VERIFIER, not the implementer: this is a READ-ONLY screenshot task. Do NOT edit, refactor, rework, improve, commit, push, or open/modify the MR — even if you think the code is wrong. Make NO production-code change. Steps: (1) boot and run this branch in the iOS simulator: sim.sh run \"$WT\"${SUBDIR:+ --subdir $SUBDIR} ; (2) to make THIS ticket's UI visible you MAY make TEMPORARY local-only tweaks — seed demo data, force the feature flag on (demo mode + Firebase Remote Config) — but REVERT every such edit (git checkout) before you finish, and never commit them; (3) navigate to the exact screen this MR changes (use sim.sh scroll / sim.sh tap); (4) capture it: sim.sh shot --out \"$D/ui-shot.png\" ; (5) if the screen looks wrong or you believe code needs changing, do NOT change it — say so in your final message for Tom to decide; (6) print MARGIE_UI_SHOT $D/ui-shot.png on its own line and STOP, leaving the sim running and the worktree clean. If you cannot reach the exact screen, screenshot the closest relevant one and say which. NOTE on EXTERNAL-APP launches: if this ticket's action opens native Messages/Phone/Mail/Maps via an sms:/smsto:/tel:/mailto: URL, the iOS Simulator CAN show it — Messages/Phone/Mail do open in the sim. Capture the RESULT: fire the exact launch URL with \`xcrun simctl openurl <udid> \"<the url>\"\` (or tap the button), then sim.sh shot — a group sms: URL opens a native New Message with both recipients in To:. Screenshot that composer, not just the button. Only if the sim genuinely cannot render it, screenshot the button's screen and note the launch URL is covered by the widget test. Do not loop."
                     if is_chat_change "$WT" "$REPO_NAME"; then

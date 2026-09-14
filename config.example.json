@@ -98,10 +98,24 @@
   "ui_review": true,
   "ui_review_paths": {
     "walt_ui": [
-      "mobile/"
+      "mobile/",
+      "backend/apps/walt_ui/lib/walt_ui_web/"
     ]
   },
-  "_ui_review": "true = an MR whose diff touches any path in ui_review_paths[<repo>] is NEVER auto-merged. When it goes green, tick boots the branch in the iOS simulator, has a Claude Code session make the change visible (demo data + feature flag) and screenshot it (sim.sh), opens the shot on the owner's Mac + Slack-pings him + leaves the sim running, and waits for his explicit 'merge'. Backend-only MRs (no ui_review_paths match) auto-merge normally. Paths are prefix-matched against `git diff --name-only origin/main...HEAD`. sim_device (optional) pins a simulator udid; else sim.sh uses the booted one, else the first available iPhone.",
+  "_ui_review": "true = an MR whose diff touches any path in ui_review_paths[<repo>] is NEVER auto-merged. When it goes green, tick verifies it VISUALLY and waits for the owner's explicit 'merge'. Mobile paths (mobile/) verify in the iOS simulator (sim.sh); web paths (see web_review_paths) verify in a browser. The session makes the change visible, screenshots it, opens the shot on the owner's Mac + Slack-pings him. Backend-only MRs (no ui_review_paths match) auto-merge normally. Paths are prefix-matched against `git diff --name-only origin/main...HEAD`. sim_device (optional) pins a simulator udid.",
+  "web_review_paths": {
+    "walt_ui": [
+      "backend/apps/walt_ui/lib/walt_ui_web/"
+    ]
+  },
+  "_web_review_paths": "Subset of ui_review_paths that is WEB UI (Phoenix LiveView), verified in a browser instead of the iOS sim. A match routes the visual review to a headless-browser screenshot of the rendered page.",
+  "web_app_url": "http://localhost:4000",
+  "web_review_routes": {
+    "walt_ui": [
+      { "match": "backend/apps/walt_ui/lib/walt_ui_web/live/app/integrations", "route": "/settings/integrations" }
+    ]
+  },
+  "_web_review": "web_app_url is the local dev base URL the browser review opens (so Margie has eyes on the same rendered page the owner does). web_review_routes[<repo>] maps a diff path prefix to the exact route to verify — e.g. an Integrations LiveView change is verified at http://localhost:4000/settings/integrations. First matching route wins; no match falls back to web_app_url. Nothing hardcoded in the scripts — set the base/route per project here.",
   "session_autoanswer": true,
   "_session_autoanswer": "the sessions poller answers Claude Code permission prompts in Margie's coding sessions with yes on the owner's behalf; prompts that look dangerous (force push, reset --hard, secrets, deploys, sudo, curl|sh) are escalated instead.",
   "review_max_rounds": 4,
