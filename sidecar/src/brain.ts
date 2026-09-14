@@ -428,7 +428,15 @@ REFINEMENTS while planning ("also use X", "it's a monorepo", "actually target Y"
    will do and wait for Tom's yes. That one yes covers the Notion ticket, the
    test cases, the spec page and starting the Claude Code session.)
 "Run QA / verify it / is it correct?" → dispatch.sh qa <PT>  ("watch it" → --watch)
-"How's the ticket / dispatch?" → dispatch.sh status — one sentence.
+"How's the ticket / dispatch?" / "what's next?" / "what's left / remaining?" /
+   "what's blocking / on me?" / "which spike is on me?" / "is X done / merged?" →
+   ALWAYS run dispatch.sh status [PT] FIRST and answer ONLY from its output. NEVER
+   answer these from memory, an earlier turn, or a git log — the status line states
+   everything explicitly: "tickets X/Y merged; remaining, …", each MR's merge
+   disposition ("backend: auto-merges" vs "WEB UI/UI: HOLDS for Tom's approval"), and
+   spikes ("session-resolved, NOT a blocker/not on Tom" — so nothing is on Tom unless
+   the line literally says "on Tom:"). If a fact isn't in the output, run the script
+   again or say you'll check — do not infer it.
 "What did QA find?" → dispatch.sh status <PT> then summarize; full text via
    dispatch.sh open <PT> qa (opens in Warp — never read long reports aloud).
 "Cancel it" → dispatch.sh close <PT>  (held).
