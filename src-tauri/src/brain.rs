@@ -9,10 +9,11 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tauri::Manager;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::UnixStream;
@@ -42,6 +43,10 @@ pub struct Brain {
     writer: tokio::sync::Mutex<Option<OwnedWriteHalf>>,
     pending: Pending,
     counter: AtomicU64,
+    /// Cleared by the reader task when the daemon closes the connection, so
+    /// the next `ensure_connected` reconnects instead of writing into a dead
+    /// socket.
+    alive: Arc<AtomicBool>,
 }
 
 impl Default for Brain {
@@ -50,8 +55,27 @@ impl Default for Brain {
             writer: tokio::sync::Mutex::new(None),
             pending: Arc::new(Mutex::new(HashMap::new())),
             counter: AtomicU64::new(1),
+            alive: Arc::new(AtomicBool::new(false)),
         }
     }
+}
+
+/// Keep the app registered with the daemon from launch onwards. The daemon
+/// only routes spoken notices (session narration, finished tasks, mentions)
+/// to the announce drop-box while an `app` client is connected, so waiting
+/// for the first question would leave her mute about everything else.
+pub fn keep_connected(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            {
+                let brain = app.state::<Brain>();
+                if let Err(e) = ensure_connected(&brain).await {
+                    eprintln!("[brain] not connected: {e}");
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    });
 }
 
 fn home() -> PathBuf {
@@ -110,9 +134,10 @@ async fn connect_daemon() -> Result<UnixStream, String> {
 /// Ensure a live connection. Holds the writer lock while (re)connecting.
 async fn ensure_connected(brain: &Brain) -> Result<(), String> {
     let mut guard = brain.writer.lock().await;
-    if guard.is_some() {
+    if guard.is_some() && brain.alive.load(Ordering::SeqCst) {
         return Ok(());
     }
+    *guard = None; // stale (daemon restarted/drained): reconnect below
 
     let stream = connect_daemon().await?;
     let (read_half, mut write_half) = stream.into_split();
@@ -123,6 +148,8 @@ async fn ensure_connected(brain: &Brain) -> Result<(), String> {
         .await;
 
     let pending = brain.pending.clone();
+    let alive = brain.alive.clone();
+    alive.store(true, Ordering::SeqCst);
     tokio::spawn(async move {
         let mut lines = BufReader::new(read_half).lines();
         while let Ok(Some(line)) = lines.next_line().await {
@@ -138,7 +165,8 @@ async fn ensure_connected(brain: &Brain) -> Result<(), String> {
             }
         }
         // Connection closed (daemon drained/restarted). Waiting callers time
-        // out; the next request reconnects.
+        // out; the keep-alive loop / next request reconnects.
+        alive.store(false, Ordering::SeqCst);
     });
 
     *guard = Some(write_half);

@@ -8,6 +8,11 @@ that listens, speaks, sees, and directs Claude Code.
 - **Visual forms** — Margie renders as a draggable **orb**, expands to a
   **command bar** for quick asks, and to a full **panel** with conversation
   history and camera preview. `Esc` steps back down a form.
+- **A hologram** — plug in a Looking Glass display (tested on the Go) and
+  Margie.app puts a second window on it: a 3D character (any VRM avatar) that
+  looks at you while she listens, looks away while she thinks, lip-syncs to
+  her own voice and shows what she says as captions. See
+  [Looking Glass](#looking-glass-hologram) below.
 - **Voice** — hybrid pipeline: local wake-word + whisper.cpp for speech-to-text
   (private, always listening), cloud TTS for her voice. v0 ships with mic level
   metering and macOS `speechSynthesis` as the TTS stand-in.
@@ -138,11 +143,45 @@ with the app closed. The app (`ai.margie.app`) is opened by a second launchd
 agent (no Login-Item/AppleScript prompts). Rebuilding `sidecar/dist` still
 makes the daemon drain and restart on its own.
 
+## Looking Glass hologram
+
+Margie can *be* on a [Looking Glass](https://lookingglassfactory.com) light
+field display. When one is connected (Desktop Mode, blue LED) the app opens a
+borderless window on it and renders her as a hologram: 66 views into a quilt,
+then the display's lenticular shader, all inside the webview — no Chrome, no
+Bridge popup dance.
+
+1. **Install Looking Glass Bridge** (look.glass/bridge) and open it once with
+   the display attached. Margie reads the panel's calibration from it and
+   caches it in `~/.margie/lkg/`, so Bridge only needs to be running the first
+   time (and after the cache is deleted).
+2. **Give her a face**. Two model families load: **VRM** (VRoid Studio exports;
+   anime-styled) and **GLB with ARKit-52 face blendshapes** (the realistic avatar
+   creators: [Avaturn](https://avaturn.me), Avatar SDK's
+   [MetaPerson](https://avatarsdk.com/3d-character-creator/), Hyper3D
+   [ChatAvatar](https://hyper3d.ai/chatavatar), Reallusion Character Creator, most
+   Sketchfab "ARKit" characters). Build her in one of those, export GLB *with
+   blendshapes* (and visemes if offered), then
+   `scripts/avatar.sh set ~/Downloads/Margie.glb`. `scripts/avatar.sh sample`
+   fetches a CC0 VRoid placeholder. The model lives in `~/.margie/avatar/` —
+   never in the repo. Try one without installing it:
+   `MARGIE_AVATAR=/path/to/model.glb npm run tauri dev`.
+3. **Tune the framing** with the `hologram_*` keys in `~/.margie/config.json`
+   (see `config.example.json`): focus volume, field of view, depthiness, caption
+   on/off, quilt size. Settings → "Looking Glass" toggles the whole thing.
+
+Debugging: `MARGIE_HOLO_DEBUG="debug=cube&hud=1" npm run tauri dev` shows a
+test cube with an fps HUD; `debug=center` renders a flat centre view and
+`debug=quilt` the raw 11×6 grid; `calib=placeholder` runs without Bridge (the
+picture won't align with the lenses, but proves the pipeline); `demo=1` cycles
+her through listening / thinking / speaking with a made-up voice and captions.
+
 ## Project layout
 
 ```
 src/                 React UI — Orb, CommandBar, Panel, voice/camera hooks
-src-tauri/           Rust shell — window forms, sidecar bridge (brain.rs)
+src/holo/            Looking Glass renderer — calibration, quilt + lenticular pass, VRM avatar, captions
+src-tauri/           Rust shell — window forms, sidecar bridge (brain.rs), hologram window (hologram.rs)
 sidecar/             Node brain — Claude Agent SDK, stdin/stdout JSON protocol
 ```
 
@@ -155,6 +194,7 @@ sidecar/             Node brain — Claude Agent SDK, stdin/stdout JSON protocol
 - [x] Full Mac access: apps, AppleScript, terminals, files, web
 - [x] Dispatch & resume Claude Code sessions headlessly (`claude -p`, `--continue`, `--resume`)
 - [x] Wake word: say "Margie", she listens and shows your command as text (local whisper.cpp)
+- [x] Hologram: a VRM character on a Looking Glass display, lip-synced to her voice
 - [ ] Long-lived sidecar with streaming protocol
 - [ ] Cloud TTS voice for Margie
 - [ ] Interactive `claude` PTY sessions with a live view in the panel

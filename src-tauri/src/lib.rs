@@ -1,4 +1,5 @@
 mod brain;
+mod hologram;
 mod stt;
 mod stt_stream;
 
@@ -212,11 +213,23 @@ pub fn run() {
             stt::stop_stt,
             stt_stream::stt_stream_start,
             stt_stream::stt_stream_feed,
-            stt_stream::stt_stream_stop
+            stt_stream::stt_stream_stop,
+            hologram::hologram_status,
+            hologram::hologram_set,
+            hologram::hologram_config,
+            hologram::read_avatar,
+            hologram::avatar_path_hint,
+            hologram::lkg_calibration_read,
+            hologram::lkg_calibration_write
         ])
         .setup(|app| {
             // Keep a handle around for future subsystems (tray, shortcuts, PTY pool).
             let _window = app.get_webview_window("main");
+            // Put Margie on the Looking Glass when one is connected (hot-plug aware).
+            hologram::start_watch(app.handle().clone());
+            // Register with the brain daemon now, not on the first question, so
+            // spoken notices reach the voice loop from the start.
+            brain::keep_connected(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())

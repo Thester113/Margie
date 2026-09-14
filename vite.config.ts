@@ -8,6 +8,14 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  resolve: {
+    alias: {
+      // holoplay-core (Looking Glass) has a node-only `require("ws")` branch;
+      // never bundle a websocket server into the webview.
+      ws: new URL("./src/holo/empty.ts", import.meta.url).pathname,
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

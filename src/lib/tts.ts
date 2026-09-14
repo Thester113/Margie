@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Alignment } from "./visemes";
 
 export interface TtsConfig {
   /** "eleven" | "openai" | "system" (speechSynthesis fallback) */
@@ -12,15 +13,24 @@ export function getTtsConfig(): Promise<TtsConfig> {
   return invoke<TtsConfig>("tts_config");
 }
 
+export interface Synth {
+  audio: Blob;
+  /** Per-character timing (ElevenLabs only) — drives the hologram's mouth. */
+  alignment?: Alignment;
+}
+
 /**
- * Synthesize speech via the configured cloud provider and return the audio.
- * Keys come from Rust (env), so they never live in source. Throws on HTTP
- * error so the caller can fall back to speechSynthesis.
+ * Synthesize speech via the configured cloud provider and return the audio
+ * (plus word timing when the provider offers it). Keys come from Rust (env),
+ * so they never live in source. Throws on HTTP error so the caller can fall
+ * back to speechSynthesis.
  */
-export async function synthCloud(text: string, cfg: TtsConfig): Promise<Blob> {
+export async function synthCloud(text: string, cfg: TtsConfig): Promise<Synth> {
   if (cfg.provider === "eleven") {
+    // The with-timestamps variant returns the same audio plus character
+    // alignment, so lip-sync can follow the words instead of the loudness.
     const res = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${cfg.voice}`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${cfg.voice}/with-timestamps`,
       {
         method: "POST",
         headers: {
@@ -38,7 +48,18 @@ export async function synthCloud(text: string, cfg: TtsConfig): Promise<Blob> {
       },
     );
     if (!res.ok) throw new Error(`ElevenLabs ${res.status}`);
-    return res.blob();
+    const json = (await res.json()) as {
+      audio_base64: string;
+      alignment?: Alignment | null;
+      normalized_alignment?: Alignment | null;
+    };
+    const bin = atob(json.audio_base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return {
+      audio: new Blob([bytes], { type: "audio/mpeg" }),
+      alignment: json.alignment ?? json.normalized_alignment ?? undefined,
+    };
   }
 
   // OpenAI
@@ -55,5 +76,5 @@ export async function synthCloud(text: string, cfg: TtsConfig): Promise<Blob> {
     }),
   });
   if (!res.ok) throw new Error(`OpenAI TTS ${res.status}`);
-  return res.blob();
+  return { audio: await res.blob() };
 }

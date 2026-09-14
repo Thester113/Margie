@@ -45,6 +45,48 @@ matching component. Sizes live in `src-tauri/src/lib.rs`.
 | `bar` | 560×72 | One-line quick commands, mic toggle |
 | `panel` | 440×640 | Conversation, camera preview, full input |
 
+## The hologram window (Looking Glass)
+
+A second Tauri window, label `holo`, owned by `src-tauri/src/hologram.rs`:
+
+- **Placement.** A watcher thread polls the monitors every 5 s. The Looking
+  Glass is matched by physical size (the Go is 1440×2560; tao names monitors
+  "Monitor #N", so names are useless) or by `hologram_monitor` in the config.
+  The window is borderless, black, never focused, always on top, sized to the
+  panel and put in macOS simple-fullscreen (hides the menu bar without a
+  Space). Unplug → closed; replug → reopened. `hologram: "off"` disables it.
+- **One bundle, two entries.** `main.tsx` mounts `<Hologram/>` (code-split)
+  when the URL carries `?view=holo`, otherwise the normal `<App/>`.
+- **Rendering** (`src/holo/`): the display shows a *quilt* — a grid of views
+  (11×6 on the Go, 4092²) — swizzled onto its subpixels by Looking Glass's
+  lenticular shader (`holoplay-core`'s `Shader`). `quilt.ts` drives a
+  three.js `ArrayCamera` of 66 off-axis cameras sharing one focal plane (the
+  maths from the official WebXR library, which itself can't run in a WKWebView)
+  into a render target, then a full-screen `RawShaderMaterial` pass. The canvas
+  is sized to the panel's physical pixels; any CSS scaling breaks the lens
+  mapping.
+- **Calibration** (`calibration.ts`) comes from Looking Glass Bridge — its
+  HoloPlay driver websocket first, its REST API second — and is cached by Rust
+  in `~/.margie/lkg/calibration.json` so Bridge needn't run afterwards.
+- **The character** (`character.ts`) is loaded from `~/.margie/avatar/` via the
+  `read_avatar` command (binary IPC). `CharacterBase` owns the behaviour —
+  blinking, breathing, gaze at the viewer, per-state posture/expressions and
+  amplitude-driven mouth shapes — and drives a format adapter: `vrmCharacter.ts`
+  (VRM via `@pixiv/three-vrm`) or `arkitCharacter.ts` (any GLB with ARKit-52
+  blendshapes / Oculus visemes and a Head/Neck/Spine skeleton). The loader
+  sniffs which one the file is.
+- **State bus** (`src/lib/holoBus.ts`): the overlay window broadcasts
+  `margie:holo` Tauri events — status changes, the sentence about to be
+  spoken with its timed mouth shapes (`src/lib/visemes.ts`, built from
+  ElevenLabs' with-timestamps character alignment), and ~30 Hz
+  level/centroid/progress/audio-time metered from her own TTS audio through
+  an `AnalyserNode` (`useVoice.ts`). The character plays the viseme track
+  against the audio clock and uses loudness only as a gate; voices without
+  timing fall back to amplitude. The hologram only listens; it never talks to
+  the brain or anything outward.
+- **Captions** (`caption.ts`) are a canvas-textured plane on the focal plane
+  (zero depth, so they stay sharp), chunked and advanced by speech progress.
+
 ## Voice pipeline (implemented)
 
 STT runs entirely on-device via whisper.cpp:

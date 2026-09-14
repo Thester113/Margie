@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getTtsConfig, synthCloud, type TtsConfig } from "../lib/tts";
+import { publishCaption, publishLevel, publishStatus } from "../lib/holoBus";
+import { visemesFromAlignment } from "../lib/visemes";
 
 export type VoiceStatus = "idle" | "listening" | "thinking" | "speaking";
 
@@ -34,6 +36,81 @@ function pickMargieVoice(): SpeechSynthesisVoice | undefined {
 }
 
 /**
+ * Meter her own voice while it plays so the hologram can lip-sync to it.
+ * Routes the <audio> element through an AnalyserNode and publishes
+ * level/centroid/progress on the holo bus until `stop()` is called.
+ *
+ * Returns null (and leaves the element untouched) when the AudioContext
+ * can't run — a media element routed into a suspended context goes silent,
+ * so we never risk that.
+ */
+async function meterSpeech(
+  ctxRef: { current: AudioContext | null },
+  audio: HTMLAudioElement,
+): Promise<(() => void) | null> {
+  try {
+    const ctx = ctxRef.current ?? (ctxRef.current = new AudioContext());
+    if (ctx.state !== "running") {
+      // resume() can stay pending forever when playback isn't allowed yet;
+      // never let that hold up her reply.
+      await Promise.race([ctx.resume(), new Promise((r) => window.setTimeout(r, 400))]);
+    }
+    if (ctx.state !== "running") return null;
+    const source = ctx.createMediaElementSource(audio);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.3; // low: the mouth must not lag the voice
+    source.connect(analyser);
+    analyser.connect(ctx.destination);
+    const bins = new Uint8Array(analyser.frequencyBinCount);
+    const hzPerBin = ctx.sampleRate / analyser.fftSize;
+    // Speech energy lives roughly between 90 Hz and 4 kHz.
+    const lo = Math.max(1, Math.round(90 / hzPerBin));
+    const hi = Math.min(bins.length - 1, Math.round(4000 / hzPerBin));
+    let raf = 0;
+    const tick = () => {
+      analyser.getByteFrequencyData(bins);
+      let sum = 0;
+      let weighted = 0;
+      for (let i = lo; i <= hi; i++) {
+        sum += bins[i];
+        weighted += bins[i] * i;
+      }
+      const count = hi - lo + 1;
+      const level = Math.min(1, (sum / count / 255) * 2.2);
+      const centroidHz = sum > 0 ? (weighted / sum) * hzPerBin : 0;
+      const centroid = Math.max(0, Math.min(1, (centroidHz - 300) / 1400));
+      const progress = audio.duration > 0 ? audio.currentTime / audio.duration : 0;
+      publishLevel(level, centroid, progress, audio.currentTime);
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => {
+      cancelAnimationFrame(raf);
+      try {
+        source.disconnect();
+        analyser.disconnect();
+      } catch {
+        // ignore
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Fallback pulse for voices we can't meter (system speechSynthesis). */
+function fakeSpeechMeter(): () => void {
+  const t0 = performance.now();
+  const id = window.setInterval(() => {
+    const t = (performance.now() - t0) / 1000;
+    const level = 0.25 + 0.35 * Math.abs(Math.sin(t * 7.3)) * (0.6 + 0.4 * Math.abs(Math.sin(t * 1.7)));
+    publishLevel(level, 0.45 + 0.2 * Math.sin(t * 2.9));
+  }, 33);
+  return () => window.clearInterval(id);
+}
+
+/**
  * Margie's voice pipeline.
  *
  * - TTS: cloud provider (ElevenLabs or OpenAI) when a key is configured in
@@ -50,9 +127,19 @@ export function useVoice() {
   const ttsCfgRef = useRef<TtsConfig | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const resolveSpeakRef = useRef<null | (() => void)>(null);
+  // AudioContext used to meter her own voice for the hologram (lazy).
+  const ttsCtxRef = useRef<AudioContext | null>(null);
   // Latest status, read by the announcement poller without re-subscribing it.
   const statusRef = useRef<VoiceStatus>(status);
   statusRef.current = status;
+
+  // Mirror her state to the hologram window (Looking Glass), if any.
+  useEffect(() => {
+    publishStatus(status);
+  }, [status]);
+  useEffect(() => {
+    if (status === "listening") publishLevel(micLevel);
+  }, [micLevel, status]);
 
   /** Stop whatever she's saying immediately (used for barge-in). */
   const stop = useCallback(() => {
@@ -88,11 +175,17 @@ export function useVoice() {
       if (voice) utterance.voice = voice;
       utterance.rate = 0.98;
       utterance.pitch = 1.02;
-      utterance.onstart = () => setStatus("speaking");
+      let stopMeter: (() => void) | null = null;
+      utterance.onstart = () => {
+        setStatus("speaking");
+        stopMeter = fakeSpeechMeter();
+      };
       utterance.onend = () => {
+        stopMeter?.();
         setStatus("idle");
         resolve();
       };
+      publishCaption(text);
       speechSynthesis.speak(utterance);
     });
   }, []);
@@ -103,16 +196,27 @@ export function useVoice() {
       if (cfg && cfg.provider !== "system" && cfg.key) {
         try {
           setStatus("speaking");
-          const blob = await synthCloud(text, cfg);
-          const url = URL.createObjectURL(blob);
+          const synth = await synthCloud(text, cfg);
+          const url = URL.createObjectURL(synth.audio);
           const audio = new Audio(url);
           audioRef.current = audio;
+          const cues = synth.alignment ? visemesFromAlignment(synth.alignment) : undefined;
+          publishCaption(text, cues);
+          void invoke("dbg_log", {
+            line: `${new Date().toISOString()} VISEMES ${cues ? `${cues.length} cues, ${cues[cues.length - 1]?.t1.toFixed(2)}s` : "none (no alignment)"}`,
+          });
+          const meter = await meterSpeech(ttsCtxRef, audio);
+          void invoke("dbg_log", {
+            line: `${new Date().toISOString()} LIPSYNC ${meter ? "analyser" : "fallback-pulse"} ctx=${ttsCtxRef.current?.state}`,
+          });
+          const stopMeter = meter ?? fakeSpeechMeter();
           await new Promise<void>((resolve) => {
             resolveSpeakRef.current = resolve; // so stop() can interrupt cleanly
             audio.onended = () => resolve();
             audio.onerror = () => resolve();
             void audio.play();
           });
+          stopMeter();
           resolveSpeakRef.current = null;
           URL.revokeObjectURL(url);
           audioRef.current = null;

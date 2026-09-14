@@ -5,6 +5,12 @@ import {
   type Settings as SettingsData,
 } from "../lib/settings";
 import { listMics, getSelectedMicId, setSelectedMicId, type MicOption } from "../lib/mic";
+import {
+  avatarPathHint,
+  hologramStatus,
+  setHologramEnabled,
+  type HologramStatus,
+} from "../lib/hologram";
 
 interface SettingsProps {
   onCollapse: () => void;
@@ -27,6 +33,8 @@ export function Settings({ onCollapse, onMicChange }: SettingsProps) {
   const [error, setError] = useState("");
   const [mics, setMics] = useState<MicOption[]>([]);
   const [micId, setMicId] = useState<string>(getSelectedMicId());
+  const [holo, setHolo] = useState<HologramStatus | null>(null);
+  const [avatarPath, setAvatarPath] = useState("");
 
   useEffect(() => {
     readSettings()
@@ -39,7 +47,21 @@ export function Settings({ onCollapse, onMicChange }: SettingsProps) {
         setState("error");
       });
     void listMics().then(setMics);
+    void hologramStatus().then(setHolo).catch(() => setHolo(null));
+    void avatarPathHint().then(setAvatarPath).catch(() => setAvatarPath(""));
   }, []);
+
+  const toggleHologram = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const enabled = e.currentTarget.checked;
+    setHolo((h) => (h ? { ...h, enabled } : h));
+    try {
+      await setHologramEnabled(enabled);
+      setHolo(await hologramStatus());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setState("error");
+    }
+  };
 
   const chooseMic = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const id = e.currentTarget.value;
@@ -139,6 +161,33 @@ export function Settings({ onCollapse, onMicChange }: SettingsProps) {
             onChange={update("voice")}
           />
         </label>
+
+        <div className="settings__field">
+          <span className="settings__label">Looking Glass</span>
+          <label className="settings__check">
+            <input
+              type="checkbox"
+              checked={holo?.enabled ?? true}
+              disabled={holo === null}
+              onChange={toggleHologram}
+            />
+            <span>
+              Show Margie on the Looking Glass
+              {holo && (
+                <em className="settings__hint">
+                  {holo.connected
+                    ? ` — display connected (${holo.monitor})${holo.open ? ", on" : ""}`
+                    : " — no display connected"}
+                </em>
+              )}
+            </span>
+          </label>
+          {avatarPath && (
+            <em className="settings__hint">
+              Avatar: <code>{avatarPath}</code> (VRM; <code>scripts/avatar.sh</code>)
+            </em>
+          )}
+        </div>
 
         <p className="settings__note">
           Stored in <code>~/.margie/config.json</code>. Matching environment

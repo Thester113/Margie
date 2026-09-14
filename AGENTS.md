@@ -41,6 +41,16 @@ npm run tauri dev              # run the app
 - The overlay window is transparent + undecorated; `macOSPrivateApi: true`
   is required for transparency on macOS.
 - Window drag uses `data-tauri-drag-region` attributes — don't remove them.
+- **Two windows.** `main` (overlay) and `holo` (Looking Glass hologram, opened
+  by `hologram.rs` when a 1440×2560 display is present). Both are listed in
+  `capabilities/default.json`; a new command either window calls must stay
+  reachable from both. The holo window is a pure consumer of `margie:holo`
+  events — never give it brain access or outward helpers. Its canvas must map
+  1:1 onto the panel's physical pixels (no CSS scaling, no overlays in the
+  normal path). The avatar (`~/.margie/avatar/margie.vrm`) and the calibration
+  cache (`~/.margie/lkg/`) are runtime state, never repo content.
+- `holoplay-core` (Looking Glass) has a node-only `require("ws")` branch;
+  `vite.config.ts` aliases `ws` to an empty module. Keep that alias.
 - Adding `@tauri-apps/api` window calls may require new permissions in
   `capabilities/default.json`.
 - Margie's replies are spoken aloud — keep the sidecar system prompt tuned

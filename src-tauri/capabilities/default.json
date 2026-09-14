@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for Margie's main overlay window",
-  "windows": ["main"],
+  "description": "Capability for Margie's overlay window and the Looking Glass hologram window",
+  "windows": ["main", "holo"],
   "permissions": [
     "core:default",
     "core:window:allow-set-size",

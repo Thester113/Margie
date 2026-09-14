@@ -9,6 +9,8 @@ lerna-debug.log*
 
 node_modules
 dist
+# copied from node_modules/three by scripts/sync-decoders.sh
+public/decoders
 dist-ssr
 *.local
 

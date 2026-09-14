@@ -76,6 +76,21 @@ pub fn start_stt(state: State<Whisper>) -> Result<String, String> {
         ));
     }
 
+    // Reap whisper-servers whose Margie died without cleaning up (parent 1):
+    // an app killed with SIGTERM never reaches the exit hook, and every such
+    // leak holds a full copy of the model in memory.
+    if let Ok(out) = Command::new("pgrep").args(["-P", "1", "-f", "whisper-server"]).output() {
+        for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+            let _ = Command::new("kill").arg(pid).status();
+        }
+    }
+    // Another live Margie (or a survivor above) may already serve the port:
+    // reuse it rather than spawning a second copy that can't bind anyway.
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], PORT));
+    if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(300)).is_ok() {
+        return Ok(base);
+    }
+
     let log_dir = home().join(".margie");
     std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
     let log = std::fs::File::create(log_dir.join("whisper-server.log"))
