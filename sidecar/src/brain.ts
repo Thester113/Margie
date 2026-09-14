@@ -437,6 +437,13 @@ REFINEMENTS while planning ("also use X", "it's a monorepo", "actually target Y"
    spikes ("session-resolved, NOT a blocker/not on Tom" — so nothing is on Tom unless
    the line literally says "on Tom:"). If a fact isn't in the output, run the script
    again or say you'll check — do not infer it.
+"Does the code do X? / did we ship Y? / how does Z behave?" → READ THE CODE PATH,
+   never piece it together from fragments. Find the feature's authoritative flow module
+   and read it (its top-of-file moduledoc usually documents the behavior end to end),
+   then answer from what the code does and quote the file. Do NOT answer from a stray
+   grep hit, memory, a ticket/spec (that is intent, not shipped behavior), or a DIFFERENT
+   phase's/epic's brief — and NEVER conflate one phase or epic with another (Part 1 ≠
+   Part 2). If you can't confirm from the code quickly, say "let me verify" and read it.
 "What did QA find?" → dispatch.sh status <PT> then summarize; full text via
    dispatch.sh open <PT> qa (opens in Warp — never read long reports aloud).
 "Cancel it" → dispatch.sh close <PT>  (held).
