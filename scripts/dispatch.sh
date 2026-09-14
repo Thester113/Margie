@@ -631,12 +631,16 @@ case "$cmd" in
     fi
     if has_breakdown "$D"; then
       echo "Tickets:"
-      jq -r --slurpfile t "$D/tickets.json" '.tickets[] | .key as $k | "  \(( $t[0][] | select(.key==$k) | .pt ) // $k)  \(.title)  [\(.size)\(if .spike then ", spike — human work" else "" end)]" + (if ((.needs_from_owner // []) | length) > 0 then "  needs from Tom: " + (.needs_from_owner | join("; ")) else "" end)' "$D/breakdown.json" 2>/dev/null
+      jq -r --slurpfile t "$D/tickets.json" '.tickets[] | .key as $k | "  \(( $t[0][] | select(.key==$k) | .pt ) // $k)  \(.title)  [\(.size)\(if .spike then (if ((.needs_from_owner // []) | length) > 0 then ", spike — needs Tom" else ", spike — session-resolved, NOT on Tom" end) else "" end)]" + (if ((.needs_from_owner // []) | length) > 0 then "  needs from Tom: " + (.needs_from_owner | join("; ")) else "" end)' "$D/breakdown.json" 2>/dev/null
       for c in "$MDIR/$(basename "$D")--"*; do [ -d "$c" ] && echo "  ↳ $(cat "$c/key") $(st "$c")$( [ -s "$c/mr.json" ] && echo " MR !$(jq -r .iid "$c/mr.json")")"; done
     fi
-    ONTOM="$(jq -r '[.tickets[]? | select(.spike // false) | .title + (if ((.needs_from_owner // []) | length) > 0 then " (needs: " + (.needs_from_owner | join("; ")) + ")" else "" end)] | join(" | ")' "$D/breakdown.json" 2>/dev/null)"
+    # ONLY a spike that explicitly needs owner input is "on Tom". A code-investigation spike
+    # (no needs_from_owner) is session work the coding sessions resolve — never on Tom, and a
+    # closed epic with no owner-needs has nothing pending.
+    ONTOM="$(jq -r '[.tickets[]? | select((.spike // false) and (((.needs_from_owner // []) | length) > 0)) | .title + " (needs: " + (.needs_from_owner | join("; ")) + ")"] | join(" | ")' "$D/breakdown.json" 2>/dev/null)"
     [ -n "$ONTOM" ] && [ "$S" != closed ] && echo "On Tom: $ONTOM"
     [ -n "$ONTOM" ] && [ "$S" = closed ] && echo "Still on Tom after the merge: $ONTOM"
+    [ -z "$ONTOM" ] && [ "$S" = closed ] && echo "On Tom: nothing — this epic is closed, all tickets merged, no owner action needed (any spikes were code-investigation, resolved in-session)."
     for f in "$HOME/.margie/projects"/*.md; do [ -f "$f" ] || continue
       for w in $(printf '%s' "$T" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' ' ' | tr ' ' '\n' | awk 'length>3' | head -6); do
         grep -qi -- "$w" "$f" && { echo "Project note ($(basename "$f" .md)) — the CURRENT state; trust it over older ticket text:"; sed 's/^/  /' "$f" | head -90; break; }; done; done 2>/dev/null
@@ -649,7 +653,7 @@ case "$cmd" in
       filed|implementing) echo "  coding session in progress; QA and the MR follow automatically" ;;
       qa-running) echo "  QA verifier running" ;; qa-pass) echo "  MR under review; merge is automatic when green with all threads resolved" ;;
       qa-fail) echo "  findings sent back to the session" ;;
-      closed) echo "  merged and done — only the human items above remain" ;;
+      closed) echo "  merged and done$( [ -n "$ONTOM" ] && echo " — only the human items above remain" || echo " — nothing pending, nothing on Tom" )" ;;
       *) echo "  $S" ;;
     esac
     ;;
