@@ -52,6 +52,38 @@ $pats
 EOF
   return 1
 }
+is_chat_change() {
+  # 0 if this branch's diff touches chat/AI code (config chat_review_paths[<repo>],
+  # default the AI domain). Chat MRs must be verified on the UI, not just screenshotted:
+  # the sim visual-review runs the actual chat flows against the branch backend.
+  local wt="$1" repo="$2" pats
+  pats="$(jq -r --arg r "$repo" '.chat_review_paths[$r][]? // empty' "$CFG" 2>/dev/null)"
+  [ -z "$pats" ] && pats="backend/apps/walt_ui/lib/walt_ui/ai/"
+  local files; files="$(git -C "$wt" diff --name-only origin/main...HEAD 2>/dev/null)"
+  [ -z "$files" ] && return 1
+  while IFS= read -r p; do [ -z "$p" ] && continue
+    printf '%s\n' "$files" | grep -q "^$p" && return 0
+  done <<EOF
+$pats
+EOF
+  return 1
+}
+is_web_ui_change() {
+  # 0 if this branch's diff touches WEB UI code (config web_review_paths[<repo>], e.g. the
+  # Phoenix LiveView tree). Web UI changes get a BROWSER visual review (not the iOS sim) and,
+  # like all UI/UX, hold for Tom's approval — they never auto-merge. Backend & mobile return 1.
+  local wt="$1" repo="$2" pats
+  pats="$(jq -r --arg r "$repo" '.web_review_paths[$r][]? // empty' "$CFG" 2>/dev/null)"
+  [ -z "$pats" ] && return 1
+  local files; files="$(git -C "$wt" diff --name-only origin/main...HEAD 2>/dev/null)"
+  [ -z "$files" ] && return 1
+  while IFS= read -r p; do [ -z "$p" ] && continue
+    printf '%s\n' "$files" | grep -q "^$p" && return 0
+  done <<EOF
+$pats
+EOF
+  return 1
+}
 resolve_d() { # id | PT-### | latest | fuzzy word -> dispatch dir (follows the PT symlink)
   local x="${1:-latest}" p m
   [ "$x" = "latest" ] && { ls -td "$MDIR"/d-* 2>/dev/null | grep -v -- '--' | head -1; return; }
@@ -536,8 +568,13 @@ case "$cmd" in
     "$0" file "$(basename "$D")" || exit 1
     if has_breakdown "$D"; then
       st "$D" implementing; status_all "$D" "In Progress" >/dev/null 2>&1
-      SP="$(jq -r '[.tickets[] | select(.spike // false) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
-      [ -n "$SP" ] && echo "On you, dearie (spike work, not automated): $SP."
+      # Only a spike that genuinely needs Tom's input (needs_from_owner) is "on Tom". A pure
+      # code-investigation spike ("locate the entry point", "does X already do Y") is session
+      # work — its answer emerges from the dependent implementation, so never frame it as a hold.
+      OWNER_SP="$(jq -r '[.tickets[] | select((.spike // false) and (((.needs_from_owner // []) | length) > 0)) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
+      SESS_SP="$(jq -r '[.tickets[] | select((.spike // false) and (((.needs_from_owner // []) | length) == 0)) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
+      [ -n "$OWNER_SP" ] && echo "On you, dearie (spike needs YOUR input, not automated): $OWNER_SP."
+      [ -n "$SESS_SP" ] && echo "Code-investigation spike(s) — the sessions resolve these, not you: $SESS_SP."
       K="$(next_child "$D")"; [ -n "$K" ] && start_child "$D" "$K"
     else
       "$0" implement "$(basename "$D")"
@@ -637,12 +674,41 @@ case "$cmd" in
         DONE=0; TOT="$(jq '[.tickets[] | select((.spike // false) | not)] | length' "$D/breakdown.json")"
         for c in "$MDIR/$(basename "$D")--"*; do [ -d "$c" ] && [ "$(st "$c")" = closed ] && DONE=$((DONE+1)); done
         LINE="$LINE, tickets $DONE/$TOT merged"
+        # Enumerate the REMAINING (not-yet-merged) impl tickets with their state, so the
+        # brain can never call an in-flight ticket "the last one" or assume the epic is done.
+        REM=""
+        while IFS=$'\t' read -r k pt; do
+          [ -z "$k" ] && continue
+          cdir="$MDIR/$(basename "$D")--$k"
+          if [ -d "$cdir" ]; then cst="$(st "$cdir")"; else cst="not started"; fi
+          [ "$cst" = closed ] && continue
+          REM="$REM, $pt $k=$cst"
+        done < <(jq -r --slurpfile t "$D/tickets.json" '.tickets[] | select((.spike // false)|not) | .key as $k | ($k + "\t" + (($t[0][]|select(.key==$k)|.pt)//$k))' "$D/breakdown.json" 2>/dev/null)
+        [ -n "$REM" ] && LINE="$LINE; remaining${REM}" || LINE="$LINE; none remaining"
       fi
       if has_breakdown "$D" && [ -s "$D/tickets.json" ] && [ "$S" != closed ]; then
         SPK="$(jq -r --slurpfile t "$D/tickets.json" '[.tickets[] | select(.spike // false) | .key as $k | (($t[0][] | select(.key==$k) | .pt) // $k) + " " + .title] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
-        [ -n "$SPK" ] && LINE="$LINE, on Tom: $SPK$(jq -r '[.tickets[] | select(.spike // false) | .needs_from_owner[]?] | if length>0 then " (needs: " + join("; ") + ")" else "" end' "$D/breakdown.json" 2>/dev/null)"
+        SPKNEEDS="$(jq -r '[.tickets[] | select(.spike // false) | .needs_from_owner[]?] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
+        if [ -n "$SPK" ]; then
+          # A spike is engineering investigation the coding session resolves itself —
+          # only "on Tom" when it explicitly lists needs_from_owner (a real human decision).
+          if [ -n "$SPKNEEDS" ]; then LINE="$LINE, on Tom: $SPK (needs: $SPKNEEDS)"
+          else LINE="$LINE, spike (session-resolved, NOT a blocker/not on Tom): $SPK"; fi
+        fi
       fi
-      [ -s "$D/mr.json" ] && LINE="$LINE, MR !$(jq -r .iid "$D/mr.json")$( [ -s "$D/mr-check.json" ] && echo " (pipeline $(jq -r .pipeline "$D/mr-check.json"), $(jq -r .unresolved "$D/mr-check.json") open threads$( [ -f "$D/review-approved" ] && echo ", review clean"))")"
+      if [ -s "$D/mr.json" ]; then
+        # State the merge disposition explicitly so the brain never guesses "auto-merges":
+        # a UI/UX change holds for Tom's approval; a backend change auto-merges when green.
+        MRNOTE=""
+        if [ -s "$D/impl.json" ]; then
+          MWT="$(jq -r .worktree "$D/impl.json" 2>/dev/null)"; MREPO="$(basename "$(dmeta "$D" repo)")"
+          if is_ui_change "$MWT" "$MREPO" 2>/dev/null; then
+            if is_web_ui_change "$MWT" "$MREPO" 2>/dev/null; then MRNOTE=" — WEB UI: HOLDS for Tom's approval (browser verify), will NOT auto-merge"
+            else MRNOTE=" — UI: HOLDS for Tom's approval (sim verify), will NOT auto-merge"; fi
+          else MRNOTE=" — backend: auto-merges when green + review-approved"; fi
+        fi
+        LINE="$LINE, MR !$(jq -r .iid "$D/mr.json")$( [ -s "$D/mr-check.json" ] && echo " (pipeline $(jq -r .pipeline "$D/mr-check.json"), $(jq -r .unresolved "$D/mr-check.json") open threads$( [ -f "$D/review-approved" ] && echo ", review clean"))")$MRNOTE"
+      fi
       spec_ready "$D" && LINE="$LINE — $(jq -r .title "$D/spec.json" | cut -c1-60)"
       echo "$LINE"
     done
@@ -757,6 +823,16 @@ case "$cmd" in
                 "$0" qa "$(basename "$D")" >/dev/null 2>&1 && announce "Coding on $PT reports done — running QA now, dearie." && S=qa-running
               fi
             fi
+            # A session that opened its OWN MR out-of-band (didn't print MARGIE_READY_FOR_QA)
+            # is also "ready" — otherwise the pipeline never adopts+reviews it and the charter
+            # review never runs (the recurring "reviewer didn't go off" gap on !900 / !907).
+            if [ "$S" = implementing ] && [ ! -s "$D/qa.json" ] && [ ! -f "$D/qa-auto" ]; then
+              OPENMR="$(cd "$WT" 2>/dev/null && glab mr list --source-branch "$BR" -F json 2>/dev/null | jq -r '[.[] | select(.state=="opened")][0].iid // empty')"
+              if [ -n "$OPENMR" ]; then
+                touch "$D/qa-auto"; rm -f "$D/qa-fail-sent"
+                "$0" qa "$(basename "$D")" >/dev/null 2>&1 && announce "$PT has MR !$OPENMR open (the session opened it) — running QA now so it gets reviewed, dearie." && S=qa-running
+              fi
+            fi
             # QA passed -> tell the session to open the MR (once); the merge closes it.
             if [ "$S" = qa-pass ] && [ ! -f "$D/mr-nudged" ]; then
               touch "$D/mr-nudged"
@@ -797,9 +873,25 @@ case "$cmd" in
                 UNRES="$(jq -r '.unresolved // 0' "$D/mr-check.json")"
                 # Review cadence: a round runs when the MR first settles, then again only after the
                 # session has cleared every open thread — never per commit (that looped the bots).
-                if [ -n "$SHA" ] && [ "$(cat "$D/review-sha" 2>/dev/null)" != "$SHA" ] && [ ! -f "$D/review-running" ] && [ "$UNRES" = 0 ] \
-                   && [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -lt "$(cfgd review_rounds 2)" ]; then
-                  P="$(cat "$DIR/prompts/mr-review.md")"; P="${P//'{{MR}}'/$IID}"; P="${P//'{{PT}}'/$PT}"; P="${P//'{{TARGET}}'/$(cfgd mr_target_branch main)}"; P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"
+                if [ -n "$SHA" ] && [ "$(cat "$D/review-sha" 2>/dev/null)" != "$SHA" ] && [ ! -f "$D/review-running" ] && [ "$UNRES" = 0 ]; then
+                  # Re-review fires on every NEW commit (review-sha guards against re-reviewing the
+                  # same sha) — no total-rounds cap, which used to deadlock: a stale round could burn
+                  # the cap and freeze a request_changes verdict even after the session fixed it
+                  # (the !900 gap). A fresh commit always deserves a fresh verdict, and only an actual
+                  # `approve` merges (never round exhaustion). The re-review is told what the last
+                  # round found and which commits were pushed since, so it VERIFIES each prior finding
+                  # against the current diff instead of parroting it.
+                  PRIOR=""
+                  if [ -s "$D/review.json" ] && jq -e .verdict "$D/review.json" >/dev/null 2>&1; then
+                    PSHA="$(cat "$D/review-sha" 2>/dev/null)"
+                    PF="$(jq -r 'if (.findings|length)>0 then ([.findings[]|"- ["+(.severity//"nit")+"] "+(.file//"")+(if .line then ":"+(.line|tostring) else "" end)+" — "+(.issue//"")]|join("\n")) else "(none)" end' "$D/review.json")"
+                    PRIOR="
+RE-REVIEW — a prior round returned verdict '$(jq -r .verdict "$D/review.json")' with these findings:
+$PF
+Since then the session pushed new commit(s): run \`git log --oneline ${PSHA:+$PSHA..}HEAD\` and read them. For EACH prior finding, check the CURRENT diff and state whether it is now RESOLVED — do NOT re-raise a finding the new commits fixed (a 'missing test' finding is resolved once that test exists in the diff; verify by reading it). Report only findings that STILL hold on the current code, plus any genuinely new problems.
+"
+                  fi
+                  P="$(cat "$DIR/prompts/mr-review.md")"; P="${P//'{{MR}}'/$IID}"; P="${P//'{{PT}}'/$PT}"; P="${P//'{{TARGET}}'/$(cfgd mr_target_branch main)}"; P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"; P="${P//'{{PRIOR_REVIEW}}'/$PRIOR}"
                   # Local review charters: the repo's own reviewer subagents (config review_agents,
                   # e.g. code-reviewer/adr-reviewer) are the local stand-ins for the dead CI review
                   # bots. Apply their charters here on Tom's plan — cheaper/faster, no CI credits.
@@ -821,7 +913,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   SUBDIR="$(dmeta "$D" subdir)"; MODEL_OPT=(); M="$(cfg qa_model)"; [ -n "$M" ] && MODEL_OPT=(--model "$M")
                   rm -f "$D/review.json"
                   if "$DIR/claude-task.sh" start "$WT${SUBDIR:+/$SUBDIR}" "$P" --deny "Edit,Write,NotebookEdit" --no-subagents --schema "$DIR/schemas/review.schema.json" \
-                       --effort "$(cfgd qa_effort medium)" --budget "$(cfgd dispatch_budget_usd 4)" --tag "review:$(basename "$D")" --out "$D/review.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} >/dev/null 2>&1; then
+                       --effort "$(cfgd review_effort high)" --budget "$(cfgd dispatch_budget_usd 4)" --tag "review:$(basename "$D")" --out "$D/review.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} >/dev/null 2>&1; then
                     echo "$SHA" > "$D/review-sha"; touch "$D/review-running"; echo $(( $(cat "$D/review-rounds" 2>/dev/null || echo 0) + 1 )) > "$D/review-rounds"
                   fi
                 fi
@@ -836,13 +928,31 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     RNOTE="$(printf '🤖 Local review (code-reviewer + adr-reviewer charters, on Margie'\''s plan; CI review bots retired) — verdict: **%s**\n\n%s\n\n%s' "$RV" "$RSUM" "$RFND")"
                     ( cd "$WT" && glab mr note create "$IID" --resolvable=false --message "$RNOTE" ) >/dev/null 2>&1 && echo "$SHA" > "$D/review-note-sha"
                   fi
+                  SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"
                   if [ "$RV" = approve ]; then
-                    touch "$D/review-approved"; announce "Reviewed MR !$IID for $PT: $(jq -r .summary_spoken "$D/review.json")"
+                    touch "$D/review-approved"; rm -f "$D/review-rejects"; announce "Reviewed MR !$IID for $PT: $(jq -r .summary_spoken "$D/review.json")"
                   else
                     rm -f "$D/review-approved"
                     FND="$(jq -r '[.findings[] | select(.severity=="blocker" or .severity=="major") | .severity + " " + .file + (if .line then ":" + (.line|tostring) else "" end) + " — " + .issue + " → " + .fix] | join(" | ")' "$D/review.json" | cut -c1-1800)"
-                    "$DIR/session.sh" send "Review of MR !$IID requested changes: $FND. Address each one, keep tests green, commit and push to the MR, then print MARGIE_MR_UPDATED and STOP — do not poll the pipeline, Margie watches it." --branch "$BR" >/dev/null 2>&1
-                    announce "Review of MR !$IID for $PT asked for changes — I've sent them into the session to fix, dearie: $(jq -r .summary_spoken "$D/review.json")"
+                    [ -z "$FND" ] && FND="$(jq -r '.summary_spoken // "see the review note on the MR"' "$D/review.json")"
+                    MSG="Review of MR !$IID requested changes: $FND. Address each one, keep tests green, commit and push to the MR, then print MARGIE_MR_UPDATED and STOP — do not poll the pipeline, Margie watches it."
+                    # Feed the findings back — restart the session if it has exited (findings sent to a
+                    # dead tmux session used to vanish, leaving the MR stuck at request_changes forever).
+                    if tmux has-session -t "$SESS" 2>/dev/null; then
+                      "$DIR/session.sh" send "$MSG" --branch "$BR" >/dev/null 2>&1
+                      announce "Review of MR !$IID for $PT asked for changes — I've sent them into the session to fix, dearie: $(jq -r .summary_spoken "$D/review.json")"
+                    else
+                      "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "You are back on branch $BR (ticket $PT). $MSG" >/dev/null 2>&1
+                      announce "Review of MR !$IID for $PT asked for changes and its session had ended — I restarted a session to fix them, dearie: $(jq -r .summary_spoken "$D/review.json")"
+                    fi
+                    # Loop safety: after enough rejects on this MR, ping Tom once (per commit) — the
+                    # fix loop keeps going, but a review that never clears may need his eyes.
+                    RJ=$(( $(cat "$D/review-rejects" 2>/dev/null || echo 0) + 1 )); echo "$RJ" > "$D/review-rejects"
+                    if [ "$RJ" -ge "$(cfgd review_max_rounds 4)" ] && [ "$(cat "$D/review-escalated-sha" 2>/dev/null)" != "$SHA" ]; then
+                      echo "$SHA" > "$D/review-escalated-sha"
+                      "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): MR !$IID ($PT) has been through $RJ review rounds and still isn't clean — the local review keeps requesting changes. It may need your eyes. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)" >/dev/null 2>&1 || true
+                      announce "Heads up, dearie: MR !$IID for $PT has had $RJ review rounds and still isn't approved — I keep sending the fixes in, but it may need your eyes. I pinged you on Slack."
+                    fi
                   fi
                   cp "$D/review.json" "$D/review-$(date +%H%M).json"
                 elif [ -f "$D/review-running" ] && [ "$("$DIR/claude-task.sh" state "review:$(basename "$D")")" = FAILED ]; then
@@ -879,7 +989,10 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   announce "Pipeline failed on MR !$IID for $PT — I've sent it back to the session to fix, dearie."
                 fi
                 # ready to merge -> tell Tom once per commit; merging is his word (dispatch.sh merge)
-                REVIEW_OK=0; { [ -f "$D/review-approved" ] || [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -ge "$(cfgd review_rounds 2)" ]; } && REVIEW_OK=1
+                # Only an actual `approve` verdict merges — never round exhaustion (Tom's rule:
+                # an approved local review -> merge & move to the next ticket, unless the MR is held).
+                # A stuck request_changes blocks the merge until it's fixed and re-reviewed clean.
+                REVIEW_OK=0; [ -f "$D/review-approved" ] && REVIEW_OK=1
                 # The bots must have ACTUALLY reviewed before merge — "0 open threads" is
                 # trivially true before they post. Require the review bridges finished and the
                 # bots posted (or none exist in this repo). This stops merging unreviewed.
@@ -905,29 +1018,43 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     :   # already shown for this commit — holding for Tom's word
                   elif [ -s "$D/ui-shot.png" ]; then
                     open "$D/ui-shot.png" >/dev/null 2>&1 || true
-                    "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): UI MR !$IID ($PT) is green and ready — I booted it in the simulator; the screenshot is open on your Mac and the sim is still up. Review it and say \"merge\" when it looks right. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)" >/dev/null 2>&1 || true
+                    METHOD="in the simulator"; is_web_ui_change "$WT" "$REPO_NAME" && METHOD="in a browser"
+                    "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): UI MR !$IID ($PT) is green and ready — I verified it $METHOD; the screenshot is open on your Mac. Review it and say \"merge\" when it looks right. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)" >/dev/null 2>&1 || true
                     echo "$SHA" > "$D/ui-verified-sha"
-                    announce "MR !$IID for $PT touches the UI, dearie — I booted it in the simulator and captured a screenshot (open on your Mac, sim still running, and I pinged you on Slack). I won't merge a UI change without your eyes: say \"merge\" when it looks right."
+                    announce "MR !$IID for $PT is a UI/UX change, dearie — I verified it $METHOD and captured a screenshot (open on your Mac, and I pinged you on Slack). I won't merge a UI/UX change without your eyes: say \"merge\" when it looks right."
                   elif [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ]; then
                     echo "$SHA" > "$D/ui-verify-kicked"; rm -f "$D/ui-shot.png"
                     SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"
+                    if is_web_ui_change "$WT" "$REPO_NAME"; then
+                      # WEB UI/UX (Phoenix LiveView / app.heyamby.ai): verify in a BROWSER, not the
+                      # iOS sim. Like all UI/UX it never auto-merges — it holds for Tom's approval.
+                      VP="VISUAL REVIEW ONLY (ticket $PT, branch $BR) — this is a WEB UI change (Phoenix LiveView / app.heyamby.ai), so verify it in a BROWSER, not the simulator. You are a VERIFIER, not the implementer: READ-ONLY. Do NOT edit, refactor, commit, push, or modify the MR — make NO production-code change. Steps: (1) read this repo's CLAUDE.md/README for how to run the web app locally (e.g. bin/docker-setup then the Phoenix server, or mix phx.server in $WT/backend) and boot it on THIS branch; (2) to make THIS ticket's screen reachable you MAY make TEMPORARY local-only tweaks — seed a demo tenant/user that holds the required capability (connection.manage) and seed the FUB/Brevo connections the page shows — but REVERT every such edit (git checkout) before you finish and never commit them; (3) open the EXACT page this MR changes (Settings → Integrations) in a headless browser — prefer the repo's own browser tooling (Wallaby/Playwright feature-test helpers can drive a page and screenshot it) or a headless Chrome; (4) capture the screenshot to \"$D/ui-shot.png\"; (5) if the page errors or looks wrong, do NOT change it — say so plainly in your final message for Tom to decide; (6) print MARGIE_UI_SHOT $D/ui-shot.png on its own line and STOP with the worktree clean. If you genuinely cannot boot the web app or capture a screenshot, say exactly why in your final message — do NOT fake a pass; the merge stays held for Tom's browser review either way. Do not loop."
+                    else
                     VP="VISUAL REVIEW ONLY (ticket $PT, branch $BR). You are a VERIFIER, not the implementer: this is a READ-ONLY screenshot task. Do NOT edit, refactor, rework, improve, commit, push, or open/modify the MR — even if you think the code is wrong. Make NO production-code change. Steps: (1) boot and run this branch in the iOS simulator: sim.sh run \"$WT\"${SUBDIR:+ --subdir $SUBDIR} ; (2) to make THIS ticket's UI visible you MAY make TEMPORARY local-only tweaks — seed demo data, force the feature flag on (demo mode + Firebase Remote Config) — but REVERT every such edit (git checkout) before you finish, and never commit them; (3) navigate to the exact screen this MR changes (use sim.sh scroll / sim.sh tap); (4) capture it: sim.sh shot --out \"$D/ui-shot.png\" ; (5) if the screen looks wrong or you believe code needs changing, do NOT change it — say so in your final message for Tom to decide; (6) print MARGIE_UI_SHOT $D/ui-shot.png on its own line and STOP, leaving the sim running and the worktree clean. If you cannot reach the exact screen, screenshot the closest relevant one and say which. NOTE on EXTERNAL-APP launches: if this ticket's action opens native Messages/Phone/Mail/Maps via an sms:/smsto:/tel:/mailto: URL, the iOS Simulator CAN show it — Messages/Phone/Mail do open in the sim. Capture the RESULT: fire the exact launch URL with \`xcrun simctl openurl <udid> \"<the url>\"\` (or tap the button), then sim.sh shot — a group sms: URL opens a native New Message with both recipients in To:. Screenshot that composer, not just the button. Only if the sim genuinely cannot render it, screenshot the button's screen and note the launch URL is covered by the widget test. Do not loop."
+                    if is_chat_change "$WT" "$REPO_NAME"; then
+                      VP="$VP  ADDITIONAL - THIS MR CHANGES CHAT CODE, so a screenshot of an unchanged screen is NOT enough; you MUST verify the chat behavior ON THE UI against THIS BRANCH's backend: (a) start the branch backend and seed contacts that have Move Scores - in $WT/backend bring up the docker app (bin/docker-setup, or docker compose --env-file .env --env-file .env.secrets up -d app) and seed a few scored contacts; (b) point the simulator app at that backend (Profile -> Set debug URL, or the debug base-url SharedPreference); (c) in Amby Chat run the flagship flows this change affects - at minimum 'Rank my database - which 10% should I focus on right now?' (top-N by Move Score) AND a task-decline flow ('Add a task to follow up with <one of the contacts>'); (d) confirm in the RENDERED result that every contact shows as a CARD and NO raw id leaks: pipe the rendered chat text through chat-leak-scan.sh (it fails on any (id:)/uuid) and eyeball the screen; (e) sim.sh shot --out \"$D/ui-shot.png\" of the chat result. If ANY raw id appears or the flow errors, the fix is NOT verified - say so plainly for Tom and do NOT present it as working. Revert any temporary seed/URL tweaks (git checkout) before finishing."
+                    fi
+                    fi
                     if tmux has-session -t "$SESS" 2>/dev/null; then "$DIR/session.sh" send "$VP" --branch "$BR" >/dev/null 2>&1
                     else "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$VP" >/dev/null 2>&1; fi
-                    announce "MR !$IID for $PT touches the UI - booting it in the simulator to verify visually before any merge, dearie."
+                    if is_web_ui_change "$WT" "$REPO_NAME"; then
+                      announce "MR !$IID for $PT is a web UI/UX change - verifying it in a browser before any merge, dearie (it won't auto-merge; it holds for your approval)."
+                    else
+                      announce "MR !$IID for $PT touches the UI - booting it in the simulator to verify visually before any merge, dearie."
+                    fi
                   fi
                 elif [ "$GATE_GREEN" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
                   echo "$SHA" > "$D/merge-ready"
                   # Tom's explicit instruction (2026-09-03): a green MR with every thread resolved is
                   # merged by Margie herself (config auto_merge, default true); no "say merge" step.
-                  if [ "$(cfgd auto_merge true)" = true ]; then
+                  if [ "$(cfgd auto_merge true)" = true ] && [ ! -f "$D/hold-merge" ]; then
                     MOUT="$("$0" merge "$(basename "$D")" 2>&1 | tail -1)"
                     case "$MOUT" in
                       Merged*) announce "MR !$IID for $PT was green with every thread resolved, so I merged it, dearie.$(printf '%s' "$MOUT" | grep -q 'Auto-merge enabled' && echo ' The merge train will land it.')" ;;
                       *) announce "MR !$IID for $PT is ready but the merge didn't go through, dearie: $MOUT" ;;
                     esac
                   else
-                    announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, every review thread resolved$( [ -f "$D/review-approved" ] && echo ", my review clean" || echo " (review rounds used up; the findings were addressed in the threads)"). Say \"merge\" and I'll merge it."
+                    announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, every review thread resolved, my review clean.$( [ -f "$D/hold-merge" ] && echo " It's held: $(cat "$D/hold-merge")." ) Say \"merge\" and I'll merge it."
                   fi
                 elif [ "$UNRES" != 0 ]; then
                   # See the MR through to approval: keep a coding session working on the open

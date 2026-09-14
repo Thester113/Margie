@@ -53,9 +53,20 @@ resolve_session() {
 
 case "$cmd" in
   list)
-    OUT="$("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' || true)"
-    [ -z "$OUT" ] && { echo "No running sessions, dearie."; exit 0; }
-    echo "$OUT"
+    NAMES="$("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' || true)"
+    [ -z "$NAMES" ] && { echo "No running sessions, dearie."; exit 0; }
+    # Annotate each session working-vs-idle: "esc to interrupt" is Claude Code's
+    # active-turn indicator (shown while thinking or running a tool), so a long
+    # thinking turn reads as [working], not idle.
+    for S in $NAMES; do
+      P="$("$TMUX_BIN" capture-pane -t "$S" -p 2>/dev/null)"
+      if printf '%s' "$P" | grep -qE 'esc to interrupt|↓ *[0-9].*token|\([0-9]+m ?[0-9]* ?s? ·|\([0-9]+s ·'; then
+        ACT="$(printf '%s' "$P" | grep -E '^⏺' | tail -1 | sed 's/^⏺ *//' | cut -c1-60)"
+        echo "$S  [working${ACT:+: $ACT}]"
+      else
+        echo "$S  [idle]"
+      fi
+    done
     ;;
   read | show | peek)
     SESSION="$(resolve_session)"
@@ -149,6 +160,23 @@ case "$cmd" in
           else
             echo "[$S] had an instruction stuck unsent — I submitted it: $(printf '%s' "$COMPOSER" | cut -c1-80)"
           fi
+          continue
+        fi
+      fi
+      # Auto-recover from an API/connection drop: Claude Code sometimes ends a turn with
+      # "API Error: Connection lost mid-response" and goes idle mid-task. That's an external
+      # failure, not a real stop — so if the session is idle with an EMPTY composer (the
+      # stuck-send rescue above handles a non-empty one) and the pane shows a transport error,
+      # nudge it to resume. Once per drop (dedup on the screen hash) so it never spams.
+      if [ "$WORKING" = 0 ] && [ -z "$COMPOSER" ] && [ "$IDLE" -ge 15 ] \
+         && printf '%s' "$PANE" | grep -qiE 'API Error|Connection lost mid-response|Request timed out|overloaded_error|Internal server error|error streaming'; then
+        AH="apidrop:$H"
+        if [ "$(cat "$ST/$S.apidrop" 2>/dev/null || true)" != "$AH" ]; then
+          echo "$AH" > "$ST/$S.apidrop"
+          "$TMUX_BIN" send-keys -t "$S" C-u 2>/dev/null; sleep 0.3
+          "$TMUX_BIN" send-keys -t "$S" -l -- "Your last turn was cut off by an API/connection error before finishing. Resume exactly where you left off and continue to completion; if you have uncommitted coherent progress, commit it first so nothing is lost to another drop." ; sleep 0.5
+          "$TMUX_BIN" send-keys -t "$S" Enter; sleep 1
+          echo "[$S] recovered from an API/connection drop — nudged it to resume."
           continue
         fi
       fi

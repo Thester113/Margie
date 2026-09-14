@@ -73,9 +73,12 @@ case "$cmd" in
     [ -z "$LOG" ] && LOG="$SIMDIR/flutter-run.log"
     # kill a previous run we started, then launch fresh in the background
     pkill -f "flutter run.*$DEVICE" 2>/dev/null || true
-    ( cd "$RUNDIR" && nohup "$FLUTTER" run -d "$DEVICE" --debug >"$LOG" 2>&1 & echo $! > "$SIMDIR/run.pid" )
+    # --profile (not --debug): a standalone build that keeps running after `flutter run`
+    # detaches or loses connection, so idb can drive it for verification; also no DEBUG
+    # banner and closer to what users get. Debug builds die when the debugger drops.
+    ( cd "$RUNDIR" && nohup "$FLUTTER" run -d "$DEVICE" --profile >"$LOG" 2>&1 & echo $! > "$SIMDIR/run.pid" )
     echo "Building & launching $RUNDIR on $DEVICE (log: $LOG)…"
-    for _i in $(seq 1 40); do
+    for _i in $(seq 1 60); do
       grep -qiE "Dart VM Service on|Flutter DevTools" "$LOG" 2>/dev/null && { echo "Launched."; exit 0; }
       grep -qiE "^Error:|Could not build|BUILD FAILED|error:.*\.dart" "$LOG" 2>/dev/null && { echo "Build error — see $LOG" >&2; tail -5 "$LOG" >&2; exit 1; }
       sleep 6

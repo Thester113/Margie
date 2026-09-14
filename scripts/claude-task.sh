@@ -77,16 +77,23 @@ launch() { # launch <id> <dir> <prompt> [extra claude flags...]  (honors PERM/TA
     '{id:$id, dir:$dir, task:$task, tag:$tag, out:$out, pid:$pid, started:$started}' > "$TASKS/$id.meta"
 }
 # Copy structured output to its --out destination for any finished task that has one.
+# NEWEST task per --out wins: a re-run (same --out, e.g. a re-review) must overwrite the
+# prior run's result, never be shadowed by it. Iterate newest-first; the newest task claims
+# its out (so older tasks with the same out are skipped); if the newest is still running, the
+# out is left untouched until it finishes rather than letting a stale older run deposit. Each
+# task deposits at most once (the .harvested marker), so review.json's mtime is stable.
 harvest() {
-  local m id out j
-  for m in "$TASKS"/*.meta; do
+  local m id out j seen=" "
+  for m in $(ls -t "$TASKS"/*.meta 2>/dev/null); do
     [ -f "$m" ] || continue
     id="$(basename "$m" .meta)"
     out="$(meta "$id" out)"; [ -z "$out" ] && continue
-    [ -f "$out" ] && continue
-    running "$id" && continue
+    case "$seen" in *" $out "*) continue ;; esac   # a newer task already owns this out
+    seen="$seen$out "
+    running "$id" && continue                       # newest still running — don't deposit a stale one
+    [ -f "$TASKS/$id.harvested" ] && continue       # already deposited this task's output
     j="$TASKS/$id.json"
-    [ -s "$j" ] && jq -e '.structured_output' "$j" >/dev/null 2>&1 && jq '.structured_output' "$j" > "$out"
+    [ -s "$j" ] && jq -e '.structured_output' "$j" >/dev/null 2>&1 && { jq '.structured_output' "$j" > "$out"; touch "$TASKS/$id.harvested"; }
   done
 }
 

@@ -85,7 +85,7 @@ compose() {
   local PROMPT_TEXT; PROMPT_TEXT="$(find_prompt 2>/dev/null | cut -f2 | sed 's/ ⏎ /\n/g')"
   local FORMAT
   if [ -n "$PROMPT_TEXT" ]; then
-    FORMAT="Answer EXACTLY the questions in this standup prompt, as a numbered list in the same order (1., 2., …), one line or a few • bullets per question, and answer its trailing 'Also:' question in one line at the end:
+    FORMAT="Answer the questions in this standup prompt as a numbered list (1., 2., 3., 4.) in the same order, with a few • bullet sub-lines under a question when it has several items. Do NOT repeat the prompt's title/header line, do NOT restate the questions, and do NOT include any 'reply in thread' line — output ONLY the answers. The questions to answer, in order:
 <<<$PROMPT_TEXT>>>"
   else
     FORMAT="Use this format:
@@ -100,7 +100,7 @@ compose() {
   fi
   local P="You are Margie, ${OWNER}'s assistant, drafting HIS daily standup for the team's standup channel, first person as ${OWNER}. Below is the evidence of what he did (git commits, merge requests, tickets, Margie's dispatch pipeline). $FORMAT
 
-Rules: ≤ 14 words per line, plain Slack formatting (no markdown headings), group related commits into one bullet, cite MR numbers (!123) and Notion ticket ids (PT-###) when present. NEVER mention Margie-internal identifiers (dispatch ids like d-1788…, task ids, file paths); for unfiled work say 'in planning, not yet ticketed'. 'Today' is inferred from in-flight dispatches/tickets/open MRs; if unknown say 'continue on <the in-flight item>'. Blockers: only real ones, else 'None' — include anything the dispatch status marks as waiting on Tom (spike work, decisions). Work is 'merged' only when its MR shows merged; an open MR is 'in review', a live session is 'in progress' — never say done/complete otherwise. Do not invent work that isn't in the evidence. Output ONLY the standup text.
+Rules: ≤ 14 words per line, Slack formatting ONLY — *single asterisks* for bold, NEVER **double asterisks**; no markdown headings (#); never echo the prompt's title or the questions themselves. Group related commits into one bullet, cite MR numbers (!123) and Notion ticket ids (PT-###) when present. NEVER mention Margie-internal identifiers (dispatch ids like d-1788…, task ids, file paths); for unfiled work say 'in planning, not yet ticketed'. 'Today' is inferred from in-flight dispatches/tickets/open MRs; if unknown say 'continue on <the in-flight item>'. Blockers: only real ones, else 'None' — include anything the dispatch status marks as waiting on Tom (spike work, decisions). Work is 'merged' only when its MR shows merged; an open MR is 'in review', a live session is 'in progress' — never say done/complete otherwise. Do not invent work that isn't in the evidence. Output ONLY the standup text.
 
 EVIDENCE:
 $EV"

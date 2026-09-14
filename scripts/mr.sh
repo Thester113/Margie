@@ -158,13 +158,28 @@ case "$cmd" in
   threads)
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"; [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // empty' "$D/mr.json" 2>/dev/null)"
     [ -z "$NUM" ] && { echo "usage: mr.sh threads <PT|!n>" >&2; exit 1; }
-    cd "${WT:-${REPO_ARG:-$PWD}}" || exit 1
-    glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq -r '
+    [ -z "$WT" ] && [ -n "$REPO_ARG" ] && WT="$("$DIR/resolve-repo.sh" "$REPO_ARG" 2>/dev/null)"
+    cd "${WT:-$PWD}" || { echo "Couldn't resolve a checkout for !$NUM, dearie — pass --repo <name>." >&2; exit 1; }
+    DISC="$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null)"
+    NOTES="$(glab api "projects/:id/merge_requests/$NUM/notes?per_page=100" 2>/dev/null)"
+    FOUND=0
+    # 1) Unresolved, resolvable discussion threads (the blocking ones).
+    TOUT="$(printf '%s' "$DISC" | jq -r '
       .[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false))
       | .notes[0] as $n
-      | "• " + ($n.author.username // "?") + ($n.position.new_path // "" | if .=="" then "" else " (" + . + (($n.position.new_line // "" | tostring)|if .=="" or .=="null" then "" else ":" + . end) + ")" end) + ": "
-        + ($n.body | gsub("\n";" ") | .[0:400])' 2>/dev/null
-    [ -z "$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq -r '[.[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false))] | length')" ] && echo "(none)" ;;
+      | "• [thread] " + ($n.author.username // "?") + ($n.position.new_path // "" | if .=="" then "" else " (" + . + (($n.position.new_line // "" | tostring)|if .=="" or .=="null" then "" else ":" + . end) + ")" end) + ": "
+        + ($n.body | gsub("\n";" ") | .[0:400])' 2>/dev/null)"
+    [ -n "$TOUT" ] && { printf '%s\n' "$TOUT"; FOUND=1; }
+    # 2) Review feedback posted as NON-resolvable notes — the local charter review
+    #    (code-reviewer/adr-reviewer) or a reviewer's comment. These are real requested
+    #    changes that never show up as resolvable threads, so surface the latest 2.
+    ROUT="$(printf '%s' "$NOTES" | jq -r '
+      [ .[] | select(.system==false)
+        | select((.body|test("Local review|request.?change|requested change|must-fix|verdict:";"i"))) ]
+      | (sort_by(.created_at) | reverse)[0:2][]
+      | "• [review] " + (.author.username // "?") + ": " + (.body | gsub("\n";" ") | .[0:400])' 2>/dev/null)"
+    [ -n "$ROUT" ] && { printf '%s\n' "$ROUT"; FOUND=1; }
+    [ "$FOUND" = 0 ] && echo "(none)" ;;
   resolve)
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"; [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // empty' "$D/mr.json" 2>/dev/null)"
     [ -z "$NUM" ] && { echo "usage: mr.sh resolve <PT|!n> [thread-id]" >&2; exit 1; }

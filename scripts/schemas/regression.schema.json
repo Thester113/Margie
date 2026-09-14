@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "required": ["regressions"],
+  "additionalProperties": false,
+  "properties": {
+    "regressions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "file", "summary", "evidence", "repro", "fix", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "description": "short kebab-case slug unique to this regression" },
+          "severity": { "type": "string", "enum": ["blocker", "major", "minor"] },
+          "file": { "type": "string" },
+          "line": { "type": ["integer", "null"] },
+          "summary": { "type": "string" },
+          "evidence": { "type": "string", "description": "the exact code/test read that proves it — quote it" },
+          "repro": { "type": "string", "description": "concrete steps or the failing test that reproduces the break" },
+          "fix": { "type": "string", "description": "the concrete fix" },
+          "confidence": { "type": "string", "enum": ["confirmed", "likely", "uncertain"] }
+        }
+      }
+    },
+    "summary_spoken": { "type": "string" }
+  }
+}

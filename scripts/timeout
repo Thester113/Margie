@@ -1,0 +1,9 @@
+#!/bin/bash
+# Fallback `timeout` for macOS, which has no coreutils `timeout`. Margie's brain and
+# pollers sometimes wrap a command in `timeout <secs> …`; without this shim that errors
+# ("timeout: command not found") and silently drops the command (e.g. standup.sh draft).
+# Prefer coreutils gtimeout when present; otherwise run the command untimed.
+if command -v gtimeout >/dev/null 2>&1; then exec gtimeout "$@"; fi
+# usage here is always: timeout <duration> <command...> — drop the duration, run the rest.
+shift 2>/dev/null || true
+exec "$@"

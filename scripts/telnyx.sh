@@ -75,7 +75,7 @@ case "$cmd" in
     fi
     echo "Numbers: $N. 10DLC brand: $([ "${B:-0}" -gt 0 ] && echo yes || echo NO). 10DLC campaign: ${CST:-NONE}."
     if [ "${B:-0}" -gt 0 ] && [ -n "$CST" ]; then
-      ASG=""; [ -n "$FROM" ] && ASG="$(api GET "/10dlc/phoneNumberCampaigns/$FROM" | jq -r '.telnyxCampaignId // empty' 2>/dev/null)"
+      ASG=""; [ -n "$FROM" ] && ASG="$(api GET "/10dlc/phoneNumberCampaign/$FROM" | jq -r 'if (.assignmentStatus//"")=="ASSIGNED" or ((.campaignId//"")|length>0) then (.campaignId // "assigned") else empty end' 2>/dev/null)"
       if [ -n "$ASG" ]; then echo "A2P to US: number $FROM assigned to campaign — sends should deliver."
       elif [ "$CMNO" = "yes" ]; then echo "A2P to US: campaign approved (carriers registered) but $FROM is not assigned yet — run: telnyx.sh campaign assign"
       else echo "A2P to US: NOT deliverable yet — campaign is $CST at TCR but carrier (MNO) review isn't finished (T-Mobile registered: $CMNO), so number assignment is still blocked. Re-check later, then telnyx.sh campaign assign."; fi
@@ -88,7 +88,7 @@ case "$cmd" in
     CJ="$(api GET "/10dlc/campaign/$CID")" || exit 0
     printf '%s' "$CJ" | jq -e '.errors' >/dev/null 2>&1 && exit 0
     MNO="$(printf '%s' "$CJ" | jq -r 'if .isTMobileRegistered==true then "yes" else "no" end')"
-    ASG="$(api GET "/10dlc/phoneNumberCampaigns/$FROM" | jq -r '.telnyxCampaignId // empty' 2>/dev/null)"
+    ASG="$(api GET "/10dlc/phoneNumberCampaign/$FROM" | jq -r 'if (.assignmentStatus//"")=="ASSIGNED" or ((.campaignId//"")|length>0) then .campaignId else empty end' 2>/dev/null)"
     [ -n "$ASG" ] && exit 0   # already assigned & delivering — nothing to report
     [ "$MNO" = "yes" ] && echo "Telnyx 10DLC campaign is now carrier-approved — the number $FROM can finally be assigned. Run: telnyx.sh campaign assign"
     exit 0 ;;

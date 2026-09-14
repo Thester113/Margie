@@ -201,6 +201,7 @@ function startPollers() {
     ["standup", "standup.sh auto", 60000],
     ["sessions", "session.sh needs", 45000],
     ["deploy", "deploy.sh check", 60000],
+    ["regressions", "regressions.sh auto", 300000],   // proactive regression sweep of owned code (config regression_scan)
     ["status-sync", "status-sync.sh push", 600000],   // back Margie's state up to Notion every 10 min        // watch a production deploy Tom triggers     // a coding session waiting on a human
   ];
   let extra: Array<{ name?: string; cmd?: string; every?: unknown }> = [];
