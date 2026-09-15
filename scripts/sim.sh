@@ -42,6 +42,25 @@ pick_device() {
   # first available iPhone
   xcrun simctl list devices available 2>/dev/null | grep -iE 'iPhone' | grep -oE '\([0-9A-F-]{36}\)' | head -1 | tr -d '()'
 }
+sim_name_for() { printf 'margie-sim-%s' "$(printf '%s' "$1" | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-' | cut -c1-60)"; }
+# device_for <name> — a DEDICATED simulator for <name> (a branch/worktree), so parallel mobile
+# verifications never collide on one shared device. Reused by name; created on first use from the
+# base device's model+runtime (config sim_verify_base_udid, else sim_device). Prints the udid (booted).
+device_for() {
+  local name udid base info rt dt
+  name="$(sim_name_for "$1")"
+  udid="$(xcrun simctl list devices -j 2>/dev/null | jq -r --arg n "$name" '.devices | to_entries[] | .value[] | select(.name==$n) | .udid' 2>/dev/null | head -1)"
+  if [ -z "$udid" ]; then
+    base="$(cfg sim_verify_base_udid)"; [ -z "$base" ] && base="$(cfg sim_device)"
+    info="$(xcrun simctl list devices -j 2>/dev/null | jq -r --arg u "$base" '.devices | to_entries[] | .key as $rt | .value[] | select(.udid==$u) | "\($rt)\t\(.deviceTypeIdentifier)"' 2>/dev/null | head -1)"
+    rt="$(printf '%s' "$info" | cut -f1)"; dt="$(printf '%s' "$info" | cut -f2)"
+    [ -z "$dt" ] && { echo "no base device to clone from (set sim_verify_base_udid), dearie" >&2; return 1; }
+    udid="$(xcrun simctl create "$name" "$dt" "$rt" 2>/dev/null)"
+    [ -z "$udid" ] && { echo "couldn't create a sim for $name, dearie" >&2; return 1; }
+  fi
+  xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || xcrun simctl boot "$udid" >/dev/null 2>&1 || true
+  echo "$udid"
+}
 
 cmd="${1:-device}"; shift || true
 DEVICE=""; SUBDIR=""; OUT=""; LOG=""
@@ -56,6 +75,11 @@ esac; done; set -- ${ARGS[@]+"${ARGS[@]}"}
 
 case "$cmd" in
   device) echo "${DEVICE:-<none — no iPhone simulator found>}" ;;
+  device-for) device_for "${1:?usage: sim.sh device-for <branch|name>}" ;;
+  free)
+    nm="$(sim_name_for "${1:?usage: sim.sh free <branch|name>}")"
+    u="$(xcrun simctl list devices -j 2>/dev/null | jq -r --arg n "$nm" '.devices|to_entries[]|.value[]|select(.name==$n)|.udid' 2>/dev/null | head -1)"
+    if [ -n "$u" ]; then xcrun simctl shutdown "$u" >/dev/null 2>&1; xcrun simctl delete "$u" >/dev/null 2>&1; echo "freed per-worktree sim $nm"; else echo "no per-worktree sim named $nm"; fi ;;
   boot)
     [ -n "${1:-}" ] && DEVICE="$1"
     [ -z "$DEVICE" ] && { echo "No simulator device found, dearie — open Xcode once to install one." >&2; exit 1; }
