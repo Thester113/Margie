@@ -85,7 +85,7 @@ compose() {
   local PROMPT_TEXT; PROMPT_TEXT="$(find_prompt 2>/dev/null | cut -f2 | sed 's/ ⏎ /\n/g')"
   local FORMAT
   if [ -n "$PROMPT_TEXT" ]; then
-    FORMAT="Answer the questions in this standup prompt as a numbered list (1., 2., 3., 4.) in the same order, with a few • bullet sub-lines under a question when it has several items. Do NOT repeat the prompt's title/header line, do NOT restate the questions, and do NOT include any 'reply in thread' line — output ONLY the answers. The questions to answer, in order:
+    FORMAT="Answer the questions in this standup prompt in order, under these Slack-bold section headers (map each question to its header): *Yesterday:* (what was accomplished), *Today:* (what's being worked on), *Blockers:* (or 'None'), *Anything else:* (or omit the section if nothing). Put a few • bullets under each header; every bullet is a full line of content — NEVER leave a header or number on a line by itself. Use *single asterisks* for bold, never **double**. Do NOT repeat the prompt's title/header line, do NOT restate the questions, and do NOT include any 'reply in thread' line — output ONLY the answers. The questions to answer, in order:
 <<<$PROMPT_TEXT>>>"
   else
     FORMAT="Use this format:
@@ -200,7 +200,19 @@ $(cat "$DRAFT")"
     PROMPT_TS="$(find_prompt 2>/dev/null | cut -f1)"
     if [ -z "$PROMPT_TS" ]; then [ "$(date +%H:%M)" \< "$STIME" ] && exit 0; fi
     if [ -n "$PROMPT_TS" ] && thread_answered "$(channel_id)" "$PROMPT_TS"; then : > "$POSTED"; exit 0; fi
-    compose >/dev/null 2>&1 || exit 0
+    # compose is a slow `claude -p` (~80s). Run it DETACHED so the poller's short bash timeout
+    # can't kill it mid-draft — that inline-and-killed compose is why standups were missed. A
+    # later poller tick finds the finished draft and posts it.
+    if [ ! -s "$DRAFT" ]; then
+      cpid="$(cat "$SDIR/$TODAY.composing" 2>/dev/null)"
+      if [ -z "$cpid" ] || ! kill -0 "$cpid" 2>/dev/null; then
+        nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' -- "$DIR/standup.sh" draft >/dev/null 2>&1 &
+        echo $! > "$SDIR/$TODAY.composing"
+        dm_owner "Drafting your standup now, dearie — I'll post it to $CHAN in a minute."
+      fi
+      exit 0
+    fi
+    rm -f "$SDIR/$TODAY.composing"
     : > "$SDIR/$TODAY.notified"
     if [ "$MODE" = "post" ]; then
       if "$0" post >/dev/null 2>&1 && [ -f "$POSTED" ]; then
