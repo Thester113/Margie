@@ -724,9 +724,9 @@ case "$cmd" in
         MRNOTE=""
         if [ -s "$D/impl.json" ]; then
           MWT="$(jq -r .worktree "$D/impl.json" 2>/dev/null)"; MREPO="$(basename "$(dmeta "$D" repo)")"
-          if is_ui_change "$MWT" "$MREPO" 2>/dev/null; then
-            if is_web_ui_change "$MWT" "$MREPO" 2>/dev/null; then MRNOTE=" — WEB UI: HOLDS for Tom's approval (browser verify), will NOT auto-merge"
-            else MRNOTE=" — UI: HOLDS for Tom's approval (sim verify), will NOT auto-merge"; fi
+          if is_web_ui_change "$MWT" "$MREPO" 2>/dev/null; then MRNOTE=" — WEB UI: HOLDS for Tom's approval (browser verify), will NOT auto-merge"
+          elif is_ui_change "$MWT" "$MREPO" 2>/dev/null; then MRNOTE=" — MOBILE UI: HOLDS for Tom's approval (sim verify), will NOT auto-merge"
+          elif is_chat_change "$MWT" "$MREPO" 2>/dev/null; then MRNOTE=" — CHAT change: HOLDS for Tom's approval (sim chat-flow verify), will NOT auto-merge"
           else MRNOTE=" — backend: auto-merges when green + review-approved"; fi
         fi
         LINE="$LINE, MR !$(jq -r .iid "$D/mr.json")$( [ -s "$D/mr-check.json" ] && echo " (pipeline $(jq -r .pipeline "$D/mr-check.json"), $(jq -r .unresolved "$D/mr-check.json") open threads$( [ -f "$D/review-approved" ] && echo ", review clean"))")$MRNOTE"
@@ -1031,7 +1031,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                 GATE_GREEN=0
                 { [ "$PSTAT" = success ] && [ "$UNRES" = 0 ] && [ "$(jq -r .conflicts "$D/mr-check.json")" = false ] && [ "$REVIEW_OK" = 1 ] && [ "$BOTS_OK" = 1 ]; } && GATE_GREEN=1
                 REPO_NAME="$(basename "$(dmeta "$D" repo)")"
-                if [ "$GATE_GREEN" = 1 ] && is_ui_change "$WT" "$REPO_NAME"; then
+                if [ "$GATE_GREEN" = 1 ] && { is_ui_change "$WT" "$REPO_NAME" || is_chat_change "$WT" "$REPO_NAME"; }; then
                   # Tom's rule (2026-09-03): a UI-touching MR is NEVER auto-merged. Margie boots
                   # it in the simulator, verifies it visually, shows Tom (screenshot opened on his
                   # Mac + Slack ping, sim left running) and waits for his explicit "merge". Backend
