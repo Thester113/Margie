@@ -107,7 +107,7 @@ while IFS=$'\t' read -r kind cid label; do
     | (.text // "") as $t
     | ($all[$i+1] // {}) as $prev
     | (($prev.user // "") == $bot and (($prev.text // "") | test("\\?\\s*$")) and ((.ts|tonumber) - ($prev.ts|tonumber) < 600)) as $answering_her
-    | select(($now - (.ts|tonumber)) < 1800)   # nothing older than 30 min is ever answered, whatever kind
+    | select(($now - (.ts|tonumber)) < 7200)   # 2h window (survives daemon restarts; slack-handled.txt dedups)
     # Rule from Tom, 2026-09-03: in any group setting Margie speaks ONLY when tagged or named.
     | (($t | contains("<@"+$bot+">")) or ($t | test("\\bmargie\\b"; "i"))) as $named
     | (if $kind=="im" then "im"
@@ -134,7 +134,7 @@ while IFS=$'\t' read -r kind cid label; do
       sapi conversations.replies --get --data-urlencode "channel=$cid" --data-urlencode "ts=$pts" -d "limit=30" \
       | jq -r --arg bot "$BOTID" --arg owner "${OWNER:-__none__}" --arg cid "$cid" --arg label "$label" --arg pts "$pts" --arg mine "$mine" --argjson now "$NOW" '
           .messages[]? | select(.ts != $pts) | select(.subtype==null) | select((.user // "") != $bot)
-          | select(($now - (.ts|tonumber)) < 1800)   # nothing older than 30 min (avoid answering stale mentions)
+          | select(($now - (.ts|tonumber)) < 7200)   # 2h window (survives restarts; slack-handled.txt dedups)
           | (((.text // "") | contains("<@"+$bot+">")) or ((.text // "") | test("\\bmargie\\b"; "i"))) as $named
           # Respond when Margie is tagged/named anywhere, OR — in a thread SHE started — to a
           # colleague answering her even without a tag. Owner replies still need a tag; general
