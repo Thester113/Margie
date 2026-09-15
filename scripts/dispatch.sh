@@ -1079,7 +1079,14 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   if [ "$(cfgd auto_merge true)" = true ] && [ ! -f "$D/hold-merge" ]; then
                     MOUT="$("$0" merge "$(basename "$D")" 2>&1 | tail -1)"
                     case "$MOUT" in
-                      Merged*) announce "MR !$IID for $PT was green with every thread resolved, so I merged it, dearie.$(printf '%s' "$MOUT" | grep -q 'Auto-merge enabled' && echo ' The merge train will land it.')" ;;
+                      Merged*)
+                        DEP=""
+                        case "$MOUT" in
+                          *"deploy to prod"*) DEP=" It'll deploy to prod." ;;
+                          *"NOT auto-deploying"*) DEP=" It's High Risk, so it won't auto-deploy — say the word to ship it." ;;
+                          *"won't auto-deploy"*) DEP=" Heads up: it merged but I couldn't add the deploy label, so it won't ship on its own." ;;
+                        esac
+                        announce "MR !$IID for $PT was green with every thread resolved, so I merged it, dearie.$DEP$(printf '%s' "$MOUT" | grep -q 'Auto-merge enabled' && echo ' The merge train will land it.')" ;;
                       *) announce "MR !$IID for $PT is ready but the merge didn't go through, dearie: $MOUT" ;;
                     esac
                   else

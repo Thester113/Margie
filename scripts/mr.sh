@@ -7,7 +7,9 @@
 #   mr.sh update <PT|!n> [--title <t>] [--description-file <f>]      [held]
 #   mr.sh view   <PT|!n> [repo]                read-only (forge.sh mr)
 #   mr.sh check  <PT|!n> [--repo r]            one JSON line: state, pipeline, unresolved, approvals, sha
-#   mr.sh merge  <PT|!n> [--repo r]            merge it (held; the session's branch is removed)
+#   mr.sh merge  <PT|!n> [--repo r]            merge it (held; branch removed). Also applies the
+#                                              config auto_deploy_label so the merge ships to prod,
+#                                              unless the MR is High Risk (then it waits for Tom).
 #   mr.sh request-review <PT|!n> [--repo r]    play the manual review-bot jobs on the MR's latest pipeline
 #   mr.sh threads <PT|!n>                      the unresolved review threads (bot or human), one per line
 #   mr.sh resolve <PT|!n> [thread-id]          resolve one (or every) open review thread once addressed
@@ -246,11 +248,32 @@ case "$cmd" in
           unresolved: $unres, approved: ($appr.approved // true), approvals_left: ($appr.approvals_left // 0), pipelines: $npipes, bot_notes: $botn,
           reviews_done: ($rdone==1), reviews_seen: ($rseen==1), reviews_failed: $rfailed}'
     else
-      T="$(glab mr view "$NUM" -F json 2>/dev/null | jq -r '.title // "?"')"
-      desc "would merge MR !$NUM (\"$T\") into $TARGET and delete its source branch"
+      MV="$(glab mr view "$NUM" -F json 2>/dev/null)"
+      T="$(printf '%s' "$MV" | jq -r '.title // "?"')"
+      desc "would merge MR !$NUM (\"$T\") into $TARGET and delete its source branch$([ -n "$(cfg auto_deploy_label)" ] && echo ", applying the $(cfg auto_deploy_label) label unless it's High Risk")"
+      # Auto-Deploy gate (Tom's rule, 2026-09-15): a merge should also SHIP. The
+      # release job only deploys a merged MR that carries the deploy label (or a
+      # manual play), and it reads labels live at deploy time — so add it here at
+      # merge, on both paths (backend auto-merge and Tom's "merge" for UI/chat,
+      # since his "merge" is his approval to ship). NEVER auto-label a High Risk
+      # MR — those merge but wait for Tom to add the label / play the deploy.
+      # Config-gated (auto_deploy_label; empty = feature off) to stay repo-agnostic.
+      ADLABEL="$(cfg auto_deploy_label)"; AD_MSG=""
+      if [ -n "$ADLABEL" ]; then
+        LBLS="$(printf '%s' "$MV" | jq -r '.labels[]? // empty' 2>/dev/null)"
+        if printf '%s\n' "$LBLS" | grep -qx "High Risk"; then
+          AD_MSG=" (High Risk — NOT auto-deploying; add ~\"$ADLABEL\" yourself to ship it)"
+        elif printf '%s\n' "$LBLS" | grep -qx "$ADLABEL"; then
+          AD_MSG=" ($ADLABEL already set — it'll deploy to prod)"
+        elif glab mr update "$NUM" --label "$ADLABEL" >/dev/null 2>&1; then
+          AD_MSG=" (added $ADLABEL — it'll deploy to prod on merge)"
+        else
+          AD_MSG=" (couldn't add $ADLABEL — it merged but won't auto-deploy)"
+        fi
+      fi
       OUT="$(glab mr merge "$NUM" --yes --remove-source-branch 2>&1 | tail -2 | tr '\n' ' ')"
       case "$OUT" in *rror*|*failed*|*cannot*|*Cannot*) echo "Merge of !$NUM didn't go through, dearie: $OUT"; exit 1 ;; esac
-      echo "Merged MR !$NUM (\"$T\") into $TARGET, dearie. $OUT"
+      echo "Merged MR !$NUM (\"$T\") into $TARGET, dearie.$AD_MSG $OUT"
     fi ;;
   view)
     "$DIR/forge.sh" mr "$(printf '%s' "$REF" | grep -oE '[0-9]+$')" "${1:-}" ;;

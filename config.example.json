@@ -95,6 +95,8 @@
   "_budgets": "Every headless Claude run gets --max-budget-usd: dispatch_budget_usd for planner/QA (default 4), task_budget_usd for other tasks (default 5). daily_budget_usd (optional) refuses new headless launches once usage.sh reports today's spend at or above it.",
   "auto_merge": true,
   "_auto_merge": "tick merges an MR itself once its pipeline is green and every review thread is resolved (and the self-review approved or its rounds are used up). false = announce 'ready to merge' and wait for the owner's word.",
+  "auto_deploy_label": "Auto-Deploy",
+  "_auto_deploy_label": "The CI label that gates a production deploy of a merged MR (release:create ships only a merged MR carrying this label, or a manual play; labels are read live at deploy time). mr.sh merge adds it at merge on both paths — backend auto-merge and the owner's explicit 'merge' for UI/chat (his 'merge' is his approval to ship) — but NEVER on a High Risk MR (those merge and wait for the owner to add the label / play the deploy). Empty = feature off (no deploy label; the repo has no such gate).",
   "ui_review": true,
   "ui_review_paths": {
     "walt_ui": [
