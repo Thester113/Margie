@@ -443,6 +443,18 @@ REFINEMENTS while planning ("also use X", "it's a monorepo", "actually target Y"
    spikes ("session-resolved, NOT a blocker/not on Tom" — so nothing is on Tom unless
    the line literally says "on Tom:"). If a fact isn't in the output, run the script
    again or say you'll check — do not infer it.
+DATA-SOURCE / INFRA questions ("where is X data?", "which DB has Y?", "where do we
+   store Z?") — do NOT punt and NEVER force-fit dispatch tickets. FIND the answer with
+   your bash tool: (1) grep the repo — adapters/config name the sources (e.g. Scout =
+   a Snowflake export at s3://scout-snowflake-exports/agents/, HouseCanary = the
+   house_canary Cloud SQL DB via HouseCanaryRepo, Faraday = api.faraday.ai for
+   enrichment); (2) use gcloud for GCP resources (gcloud sql instances list, etc.).
+   Answer from what you find and cite the file/instance. Only say "I don't have
+   visibility, ask <owner>" for something genuinely outside every tool — e.g. a list
+   sitting in someone's email inbox. NEVER substitute PT tickets/status for a
+   data-source question: PT tickets are your CODING work, not data resources or
+   databases. A confident wrong answer from the wrong source (listing MRs when asked
+   about databases) is the WORST failure here — worse than a short "let me look".
 "Does the code do X? / did we ship Y? / how does Z behave?" → READ THE CODE PATH,
    never piece it together from fragments. Find the feature's authoritative flow module
    and read it (its top-of-file moduledoc usually documents the behavior end to end),

@@ -102,6 +102,22 @@ web_review_url() {
   done
   echo "$base"
 }
+# web_review_slot_free <dispatch> <worktree> <repo> — 0 (free) if this branch may boot its web
+# verification now. Mobile is always free (per-worktree sims don't collide). Web verifications
+# all bind the same host port (localhost:4000), so only ONE runs at a time — a lock at
+# $MDIR/web-review.lock holds the dispatch that's mid-verify. Freed when that dispatch captured
+# its shot, its dir is gone, or the lock is stale (>15m, a crashed verifier).
+web_review_slot_free() {
+  local d="$1" wt="$2" repo="$3" lock="$MDIR/web-review.lock" hold
+  is_web_ui_change "$wt" "$repo" 2>/dev/null || return 0
+  hold="$(cat "$lock" 2>/dev/null)"
+  [ -z "$hold" ] && return 0
+  [ "$hold" = "$(basename "$d")" ] && return 0
+  [ -d "$MDIR/$hold" ] || { rm -f "$lock"; return 0; }
+  [ -s "$MDIR/$hold/ui-shot.png" ] && return 0
+  [ -n "$(find "$lock" -mmin +15 2>/dev/null)" ] && { rm -f "$lock"; return 0; }
+  return 1
+}
 resolve_d() { # id | PT-### | latest | fuzzy word -> dispatch dir (follows the PT symlink)
   local x="${1:-latest}" p m
   [ "$x" = "latest" ] && { ls -td "$MDIR"/d-* 2>/dev/null | grep -v -- '--' | head -1; return; }
@@ -1039,13 +1055,15 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   if [ "$(cat "$D/ui-verified-sha" 2>/dev/null)" = "$SHA" ]; then
                     :   # already shown for this commit — holding for Tom's word
                   elif [ -s "$D/ui-shot.png" ]; then
+                    [ "$(cat "$MDIR/web-review.lock" 2>/dev/null)" = "$(basename "$D")" ] && rm -f "$MDIR/web-review.lock"
                     open "$D/ui-shot.png" >/dev/null 2>&1 || true
                     METHOD="in the simulator"; is_web_ui_change "$WT" "$REPO_NAME" && METHOD="in a browser"
                     "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): UI MR !$IID ($PT) is green and ready — I verified it $METHOD; the screenshot is open on your Mac. Review it and say \"merge\" when it looks right. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)" >/dev/null 2>&1 || true
                     echo "$SHA" > "$D/ui-verified-sha"
                     announce "MR !$IID for $PT is a UI/UX change, dearie — I verified it $METHOD and captured a screenshot (open on your Mac, and I pinged you on Slack). I won't merge a UI/UX change without your eyes: say \"merge\" when it looks right."
-                  elif [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ]; then
+                  elif [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ] && web_review_slot_free "$D" "$WT" "$REPO_NAME"; then
                     echo "$SHA" > "$D/ui-verify-kicked"; rm -f "$D/ui-shot.png"
+                    is_web_ui_change "$WT" "$REPO_NAME" && echo "$(basename "$D")" > "$MDIR/web-review.lock"
                     SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"
                     if is_web_ui_change "$WT" "$REPO_NAME"; then
                       # WEB UI/UX (Phoenix LiveView / app.heyamby.ai): verify in a BROWSER, not the
@@ -1054,7 +1072,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                       # e.g. an integrations change -> http://localhost:4000/settings/integrations,
                       # so Margie has eyes on the same page Tom does (Tom's rule 2026-09-14).
                       TURL="$(web_review_url "$WT" "$REPO_NAME" 2>/dev/null)"
-                      VP="VISUAL REVIEW ONLY (ticket $PT, branch $BR) — this is a WEB UI change (Phoenix LiveView / app.heyamby.ai), so verify it in a BROWSER, not the simulator. You are a VERIFIER, not the implementer: READ-ONLY. Do NOT edit, refactor, commit, push, or modify the MR — make NO production-code change. Steps: (1) get the dev web app running ON THIS BRANCH and open ${TURL:-the exact page this MR changes} in a real browser (a headless Chrome via the debug port, or the repo's Wallaby/Playwright helpers). To bring the local app up if it isn't: in \$(the backend dir) build the walt_ui assets (mix esbuild app && mix tailwind app — the umbrella 'mix assets.build' also builds marketing and can fail on it, that's fine), ensure docker-compose.override.yml publishes the app port, docker compose up -d app, then mix ecto.migrate (a pull usually adds migrations); read the app LOGS if a request 500/503s — they name the cause. (2) You MAY make TEMPORARY local-only tweaks to reach the screen — seed a demo tenant/user with the required capability (connection.manage) and the FUB/Brevo connections the page shows — but REVERT every such edit (git checkout) before you finish and never commit them. (3) Navigate to ${TURL:-the changed page} and ACTUALLY LOOK at the rendered UI: is the layout right, aligned, styled, nothing overflowing/overlapping/unstyled/broken, and does THIS ticket's change appear and work? (4) Capture the screenshot to \"$D/ui-shot.png\". (5) In your final message, give a short UI ASSESSMENT for Tom — call out anything that looks bad or broken (even though the merge still holds for his approval, not yours); do NOT edit it. (6) print MARGIE_UI_SHOT $D/ui-shot.png on its own line and STOP with the worktree clean. If you genuinely cannot boot the app or capture the screenshot, say exactly why — do NOT fake a pass; the merge stays held for Tom's review either way. Do not loop."
+                      VP="VISUAL REVIEW ONLY (ticket $PT, branch $BR) — this is a WEB UI change (Phoenix LiveView / app.heyamby.ai), so verify it in a BROWSER, not the simulator. You are a VERIFIER, not the implementer: READ-ONLY. Do NOT edit, refactor, commit, push, or modify the MR — make NO production-code change. Steps: (1) get the dev web app running ON THIS BRANCH and open ${TURL:-the exact page this MR changes} in a real browser (a headless Chrome via the debug port, or the repo's Wallaby/Playwright helpers). To bring the local app up if it isn't: in \$(the backend dir) build the walt_ui assets (mix esbuild app && mix tailwind app — the umbrella 'mix assets.build' also builds marketing and can fail on it, that's fine), ensure docker-compose.override.yml publishes the app port, docker compose up -d app, then mix ecto.migrate (a pull usually adds migrations); read the app LOGS if a request 500/503s — they name the cause. (2) You MAY make TEMPORARY local-only tweaks to reach the screen — seed a demo tenant/user with the required capability (connection.manage) and the FUB/Brevo connections the page shows — but REVERT every such edit (git checkout) before you finish and never commit them. (3) Navigate to ${TURL:-the changed page} and ACTUALLY LOOK at the rendered UI: is the layout right, aligned, styled, nothing overflowing/overlapping/unstyled/broken, and does THIS ticket's change appear and work? (4) Capture the screenshot to \"$D/ui-shot.png\". (5) In your final message, give a short UI ASSESSMENT for Tom — call out anything that looks bad or broken (even though the merge still holds for his approval, not yours); do NOT edit it. (6) print MARGIE_UI_SHOT $D/ui-shot.png on its own line and STOP with the worktree clean. If you genuinely cannot boot the app or capture the screenshot, say exactly why — do NOT fake a pass; the merge stays held for Tom's review either way. (7) After the screenshot, bring the local app DOWN to free port 4000 for the next web verification: in the backend dir run 'docker compose stop app' (or 'docker compose down'). Do not loop."
                     else
                     # Allocate a DEDICATED per-worktree simulator (a clone of the base device) so
                     # parallel mobile verifications never collide on one shared sim.

@@ -39,7 +39,7 @@ BOT_SEND=0
 # so route a permalink read to the bot-token thread reader.
 if [ "${1:-read}" = read ] && printf '%s' "${2:-}" | grep -qE '^https?://[^ ]+/archives/[A-Z0-9]+/p[0-9]+' && [ -n "$BTOK" ]; then set -- thread "$2"; fi
 case "${1:-read}" in
-  send|reply|dm|channels|thread) [ -n "$BTOK" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;   # sends, membership and thread-reads are the bot
+  send|reply|dm|channels|thread|read|unread) [ -n "$BTOK" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;   # sends, membership, thread-reads AND reads go through the @Margie bot — it is a member of the operational channels (so conversations.replies/history work), whereas the claude.ai connector (as Tom) is not, and returned channel_not_found on the very threads Margie is @mentioned in
 esac
 
 # ── Backend 2: Claude Code's Slack connector (the claude.ai Slack app) ──────────
