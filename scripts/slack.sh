@@ -39,7 +39,7 @@ BOT_SEND=0
 # so route a permalink read to the bot-token thread reader.
 if [ "${1:-read}" = read ] && printf '%s' "${2:-}" | grep -qE '^https?://[^ ]+/archives/[A-Z0-9]+/p[0-9]+' && [ -n "$BTOK" ]; then set -- thread "$2"; fi
 case "${1:-read}" in
-  send|reply|dm|channels|thread|read|unread) [ -n "$BTOK" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;   # sends, membership, thread-reads AND reads go through the @Margie bot — it is a member of the operational channels (so conversations.replies/history work), whereas the claude.ai connector (as Tom) is not, and returned channel_not_found on the very threads Margie is @mentioned in
+  send|reply|dm|channels|thread|read|unread|upload|react|join) [ -n "$BTOK" ] && { BOT_SEND=1; TOKEN="$BTOK"; } ;;   # sends, membership, thread-reads AND reads go through the @Margie bot — it is a member of the operational channels (so conversations.replies/history work), whereas the claude.ai connector (as Tom) is not, and returned channel_not_found on the very threads Margie is @mentioned in
 esac
 
 # ── Backend 2: Claude Code's Slack connector (the claude.ai Slack app) ──────────
@@ -195,7 +195,12 @@ case "$cmd" in
     fi
     [ -z "$ch" ] || [ -z "$ts" ] && { echo "usage: slack.sh thread <permalink> | <channel-id> <ts>" >&2; exit 1; }
     R="$(api conversations.replies --get --data-urlencode "channel=$ch" --data-urlencode "ts=$ts" -d "limit=50")"
-    echo "$R" | ok || { echo "Couldn't read that thread, dearie: $(echo "$R" | jq -r '.error // "unknown"') (is @margie in the conversation?)" >&2; exit 1; }
+    # Self-heal: if we're not in the channel, join it (public channels, needs channels:join) and retry once.
+    if ! echo "$R" | ok && printf '%s' "$R" | grep -qE '"error":"(not_in_channel|channel_not_found)"'; then
+      api conversations.join -d "channel=$ch" >/dev/null 2>&1
+      R="$(api conversations.replies --get --data-urlencode "channel=$ch" --data-urlencode "ts=$ts" -d "limit=50")"
+    fi
+    echo "$R" | ok || { echo "Couldn't read that thread, dearie: $(echo "$R" | jq -r '.error // "unknown"') (is @margie in the conversation? channels:join lets me self-join public ones.)" >&2; exit 1; }
     echo "$R" | jq -r '.messages | sort_by(.ts|tonumber) | .[] | "\((.ts|tonumber|strftime("%b %-d %H:%M")))\t\(.user // .bot_id // "?")\t\((.text // "")|gsub("\n";" "))"' | \
       while IFS=$'\t' read -r when who what; do printf '%s %s: %s\n' "$when" "$(uname_of "$who")" "$what"; done
     ;;
@@ -234,8 +239,45 @@ $text" >/dev/null 2>&1 || true
     api conversations.list --get --data-urlencode "types=public_channel,private_channel,mpim" -d "limit=1000" \
       | jq -r --argjson u "$USERS" '.channels[]? | if .is_mpim then "\(.id)  group DM: \([.name | split("--")[] | ltrimstr("mpdm-") | rtrimstr("-1")] | join(", "))" else "#\(.name)  \(.id)" end' | sort
     ;;
+  upload)
+    # slack.sh upload <file> --to <#channel|@user|permalink|cid> [--thread <ts>] [--comment "<text>"]
+    # Posts an actual file (e.g. a UI screenshot) into Slack as the @Margie bot (files:write).
+    FILE=""; UTARGET=""; UTHREAD="${SLACK_THREAD_TS:-}"; UCOMMENT=""
+    while [ $# -gt 0 ]; do case "$1" in --to) UTARGET="${2:-}"; shift 2 ;; --thread) UTHREAD="${2:-}"; shift 2 ;; --comment) UCOMMENT="${2:-}"; shift 2 ;; *) [ -z "$FILE" ] && FILE="$1"; shift ;; esac; done
+    [ -z "$FILE" ] && FILE="$args"
+    { [ -z "$FILE" ] || [ ! -s "$FILE" ]; } && { echo "usage: slack.sh upload <file> --to <target> [--thread ts] [--comment text]  (file must exist)" >&2; exit 1; }
+    # A permalink target carries its own thread.
+    if printf '%s' "$UTARGET" | grep -qE '/archives/[A-Z0-9]+/p[0-9]+'; then
+      pts="$(printf '%s' "$UTARGET" | grep -oE '/p[0-9]+' | tr -d '/p')"; [ -z "$UTHREAD" ] && UTHREAD="${pts:0:10}.${pts:10}"
+    fi
+    cid="$(resolve_target "$UTARGET")"
+    [ -z "$cid" ] && { echo "Couldn't resolve '$UTARGET' for the upload, dearie — give me a #channel, @name, permalink or channel id." >&2; exit 1; }
+    LEN="$(wc -c < "$FILE" | tr -d ' ')"; FN="$(basename "$FILE")"
+    U="$(api files.getUploadURLExternal --get --data-urlencode "filename=$FN" -d "length=$LEN")"
+    echo "$U" | ok || { echo "Upload URL failed, dearie: $(echo "$U" | jq -r '.error // "unknown"')" >&2; exit 1; }
+    UURL="$(echo "$U" | jq -r '.upload_url')"; FID="$(echo "$U" | jq -r '.file_id')"
+    curl -sS -f -F "file=@$FILE" "$UURL" >/dev/null || { echo "File POST to Slack failed, dearie." >&2; exit 1; }
+    R="$(api files.completeUploadExternal --data-urlencode "files=[{\"id\":\"$FID\",\"title\":\"$FN\"}]" -d "channel_id=$cid" ${UTHREAD:+-d "thread_ts=$UTHREAD"} ${UCOMMENT:+--data-urlencode "initial_comment=$UCOMMENT"})"
+    echo "$R" | ok && echo "Uploaded $FN to ${UTARGET:-$cid}, dearie." || { echo "Upload finalize failed, dearie: $(echo "$R" | jq -r '.error // "unknown"')" >&2; exit 1; }
+    ;;
+  react)
+    # slack.sh react <permalink | "<cid> <ts>"> <emoji>   — acknowledge a message (reactions:write)
+    EMOJI="$(printf '%s' "$args" | awk '{print $NF}' | tr -d ':')"; rest="${args% *}"
+    if printf '%s' "$rest" | grep -qE '/archives/[A-Z0-9]+/p[0-9]+'; then
+      ch="$(printf '%s' "$rest" | grep -oE '/archives/[A-Z0-9]+' | cut -d/ -f3)"
+      pts="$(printf '%s' "$rest" | grep -oE '/p[0-9]+' | tr -d '/p')"; ts="${pts:0:10}.${pts:10}"
+    else ch="$(printf '%s' "$rest" | awk '{print $1}')"; ts="$(printf '%s' "$rest" | awk '{print $2}')"; fi
+    { [ -z "$ch" ] || [ -z "$ts" ] || [ -z "$EMOJI" ]; } && { echo "usage: slack.sh react <permalink|\"<cid> <ts>\"> <emoji>" >&2; exit 1; }
+    R="$(api reactions.add -d "channel=$ch" -d "timestamp=$ts" -d "name=$EMOJI")"
+    echo "$R" | ok || { e="$(echo "$R" | jq -r '.error // "unknown"')"; [ "$e" = already_reacted ] && exit 0; echo "React failed, dearie: $e" >&2; exit 1; }
+    ;;
+  join)
+    # slack.sh join <cid>  — self-join a public channel to read its history (needs channels:join)
+    ch="$(printf '%s' "$args" | awk '{print $1}')"; [ -z "$ch" ] && { echo "usage: slack.sh join <channel-id>" >&2; exit 1; }
+    R="$(api conversations.join -d "channel=$ch")"; echo "$R" | ok && echo "Joined $ch, dearie." || echo "Couldn't join $ch: $(echo "$R" | jq -r '.error // "unknown"') (needs channels:join)" >&2
+    ;;
   *)
-    echo "usage: slack.sh read [query] | send \"<target>: msg\" | reply \"<target>: msg\" | channels" >&2
+    echo "usage: slack.sh read [query] | send \"<target>: msg\" | reply \"<target>: msg\" | thread <link> | upload <file> --to <t> | react <link> <emoji> | join <cid> | channels" >&2
     exit 1
     ;;
 esac

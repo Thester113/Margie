@@ -177,6 +177,9 @@ dm_owner() { # dm_owner "<text>"
 MARGIE_CLI="$(cd "$(dirname "$0")/.." && pwd)/bin/margie"
 SPOKEN_ITEMS=()
 while IFS=$'\t' read -r kind cid label ts thread user text; do
+  # Immediately signal she's on it (react before the slower compose) so nobody wonders
+  # if she saw it. :eyes: = noticed; the actual reply follows. reactions:write, best-effort.
+  sapi reactions.add -d "channel=$cid" -d "timestamp=$ts" -d "name=eyes" >/dev/null 2>&1 || true
   # Tom DMing Margie = talking to her. Full brain, same history and confirmation
   # gate as voice/CLI; the reply goes back into the DM. Detached so a long turn
   # (tool calls, held commands) can't stall the poller.

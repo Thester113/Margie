@@ -1058,7 +1058,11 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     [ "$(cat "$MDIR/web-review.lock" 2>/dev/null)" = "$(basename "$D")" ] && rm -f "$MDIR/web-review.lock"
                     open "$D/ui-shot.png" >/dev/null 2>&1 || true
                     METHOD="in the simulator"; is_web_ui_change "$WT" "$REPO_NAME" && METHOD="in a browser"
-                    "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): UI MR !$IID ($PT) is green and ready — I verified it $METHOD; the screenshot is open on your Mac. Review it and say \"merge\" when it looks right. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)" >/dev/null 2>&1 || true
+                    UIMSG="UI MR !$IID ($PT) is green and ready — I verified it $METHOD (screenshot attached). Review it and say \"merge\" when it looks right. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
+                    # Upload the screenshot INTO Slack (files:write) so Tom reviews it there, not only
+                    # on his Mac; fall back to a text ping if the upload fails.
+                    "$DIR/slack.sh" upload "$D/ui-shot.png" --to "@$(cfgd owner_first_name Tom)" --comment "$UIMSG" >/dev/null 2>&1 \
+                      || "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): $UIMSG (screenshot is open on your Mac.)" >/dev/null 2>&1 || true
                     echo "$SHA" > "$D/ui-verified-sha"
                     announce "MR !$IID for $PT is a UI/UX change, dearie — I verified it $METHOD and captured a screenshot (open on your Mac, and I pinged you on Slack). I won't merge a UI/UX change without your eyes: say \"merge\" when it looks right."
                   elif [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ] && web_review_slot_free "$D" "$WT" "$REPO_NAME"; then
