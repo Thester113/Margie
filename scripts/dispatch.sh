@@ -1067,7 +1067,14 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     announce "MR !$IID for $PT is a UI/UX change, dearie — I verified it $METHOD and captured a screenshot (open on your Mac, and I pinged you on Slack). I won't merge a UI/UX change without your eyes: say \"merge\" when it looks right."
                   elif [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ] && web_review_slot_free "$D" "$WT" "$REPO_NAME"; then
                     echo "$SHA" > "$D/ui-verify-kicked"; rm -f "$D/ui-shot.png"
-                    is_web_ui_change "$WT" "$REPO_NAME" && echo "$(basename "$D")" > "$MDIR/web-review.lock"
+                    if is_web_ui_change "$WT" "$REPO_NAME"; then
+                      echo "$(basename "$D")" > "$MDIR/web-review.lock"
+                      # This verifier holds the single web-review slot, so it OWNS localhost:4000.
+                      # Free the port first: stop any other compose app publishing host 4000 (a
+                      # leftover localdev or a prior verify) so this branch's app can bind it — the
+                      # #1 cause of a web verify silently opening the wrong app or getting bumped.
+                      for c in $(docker ps --format '{{.ID}}\t{{.Ports}}' 2>/dev/null | grep -E ':4000->4000' | cut -f1); do docker stop "$c" >/dev/null 2>&1; done
+                    fi
                     SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"
                     if is_web_ui_change "$WT" "$REPO_NAME"; then
                       # WEB UI/UX (Phoenix LiveView / app.heyamby.ai): verify in a BROWSER, not the
@@ -1086,8 +1093,14 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                       VP="$VP  ADDITIONAL - THIS MR CHANGES CHAT CODE, so a screenshot of an unchanged screen is NOT enough; you MUST verify the chat behavior ON THE UI against THIS BRANCH's backend: (a) start the branch backend and seed contacts that have Move Scores - in $WT/backend bring up the docker app (bin/docker-setup, or docker compose --env-file .env --env-file .env.secrets up -d app) and seed a few scored contacts; (b) point the simulator app at that backend (Profile -> Set debug URL, or the debug base-url SharedPreference); (c) in Amby Chat run the flagship flows this change affects - at minimum 'Rank my database - which 10% should I focus on right now?' (top-N by Move Score) AND a task-decline flow ('Add a task to follow up with <one of the contacts>'); (d) confirm in the RENDERED result that every contact shows as a CARD and NO raw id leaks: pipe the rendered chat text through chat-leak-scan.sh (it fails on any (id:)/uuid) and eyeball the screen; (e) sim.sh shot${SIMDEV:+ --device $SIMDEV} --out \"$D/ui-shot.png\" of the chat result. If ANY raw id appears or the flow errors, the fix is NOT verified - say so plainly for Tom and do NOT present it as working. Revert any temporary seed/URL tweaks (git checkout) before finishing."
                     fi
                     fi
-                    if tmux has-session -t "$SESS" 2>/dev/null; then "$DIR/session.sh" send "$VP" --branch "$BR" >/dev/null 2>&1
-                    else "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$VP" >/dev/null 2>&1; fi
+                    # The visual-review prompt is long; handing it to a session as one giant tmux
+                    # paste gets TRUNCATED (the session then sees only the tail — e.g. "step 7" with
+                    # steps 1-6 missing, so it never boots/screenshots). Write it to a file and give
+                    # the session a SHORT pointer to READ it — delivered intact every time.
+                    printf '%s\n' "$VP" > "$D/verify-prompt.txt"
+                    VPMSG="VISUAL REVIEW for ticket $PT (branch $BR): read the file $D/verify-prompt.txt and follow ALL of its steps exactly, then STOP. It is a READ-ONLY screenshot task — do not edit, commit, or push."
+                    if tmux has-session -t "$SESS" 2>/dev/null; then "$DIR/session.sh" send "$VPMSG" --branch "$BR" >/dev/null 2>&1
+                    else "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$VPMSG" >/dev/null 2>&1; fi
                     if is_web_ui_change "$WT" "$REPO_NAME"; then
                       announce "MR !$IID for $PT is a web UI/UX change - verifying it in a browser before any merge, dearie (it won't auto-merge; it holds for your approval)."
                     else
