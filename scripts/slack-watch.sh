@@ -233,6 +233,25 @@ Tom's request in that thread: $ASK"
   fi
   who="$(uname_of "$user")"
   clean="$(printf '%s' "$text" | sed "s/<@$BOTID>//g; s/<@${OWNER:-__none__}>/@$OWNER_NAME/g" | sed 's/^ *//;s/ *$//')"
+  # Named ≠ addressed. "margie already filed that" or "thanks @Tom" matched the name test
+  # and got a composed reply (a Claude run) it never wanted. Jev (jev.sh mention) reads the
+  # message: a confident "no_reply" is logged — and for an owner mention still DM'd to Tom
+  # as an FYI — but nothing is composed or posted. Uncertain or unavailable → reply as before.
+  # Tom's rule stands: she only ever speaks when tagged or named; this only makes her quieter.
+  if [ "$kind" = "bot" ] || [ "$kind" = "owner" ]; then
+    MWHO="Margie"; [ "$kind" = "owner" ] && MWHO="$OWNER_NAME"
+    MJ="$(printf '%s' "$clean" | "$(dirname "$0")/jev.sh" mention "$MWHO" "$OWNER_NAME" 2>/dev/null)"
+    if [ "$(printf '%s' "$MJ" | cut -f1)" = "no_reply" ] && awk -v c="$(printf '%s' "$MJ" | cut -f2)" 'BEGIN{exit !(c >= 0.7)}'; then
+      logl "skip ($kind, not addressed per jev $(printf '%s' "$MJ" | cut -f2)) $label ts=$ts: $(printf '%s' "$clean" | cut -c1-80)"
+      echo "${NOW}|${ts}" >> "$HANDLED"
+      if [ "$kind" = "owner" ]; then
+        LINK="$(sapi chat.getPermalink --get --data-urlencode "channel=$cid" --data-urlencode "message_ts=$ts" | jq -r '.permalink // empty')"
+        dm_owner "FYI — $who mentioned you in $label (no reply needed): \"$clean\"${LINK:+
+$LINK}"
+      fi
+      continue
+    fi
+  fi
   if [ "$kind" = "colleague" ]; then
     # Defer when Tom is actively in the thread (he replied after this message) — he's got it.
     if owner_replied_after "$cid" "$thread" "$ts"; then

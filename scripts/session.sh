@@ -209,7 +209,17 @@ case "$cmd" in
       # genuinely dangerous — force pushes, history resets, secrets, deploys, privilege
       # escalation, piping downloads into a shell — are escalated to him instead.
       if [ "$WHY" = "waiting on a prompt" ] && [ "$(jq -r '.session_autoanswer // true' "$HOME/.margie/config.json" 2>/dev/null)" = true ]; then
-        if printf '%s' "$TAIL" | grep -qiE 'push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|deploy|production|secrets?|credential|\.env\b|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -rf /'; then
+        # Two opinions, either one escalates: the regex list, and Jev (jev.sh danger) reading
+        # the prompt itself — so a risky command phrased in a way the list never saw is still
+        # Tom's call. Jev unavailable → the regex alone, as before.
+        # Once per screen (the prompt sits there for every 45 s cycle until it is answered).
+        JDANGER="$(cat "$ST/$S.danger" 2>/dev/null | grep "^$H:" | cut -d: -f2)"
+        if [ -z "$JDANGER" ]; then
+          JDANGER="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|esc to interrupt' | tail -12 | "$(dirname "$0")/jev.sh" danger 2>/dev/null | cut -f1)"
+          [ -n "$JDANGER" ] && echo "$H:$JDANGER" > "$ST/$S.danger"
+        fi
+        if printf '%s' "$TAIL" | grep -qiE 'push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|deploy|production|secrets?|credential|\.env\b|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -rf /' \
+           || [ "$JDANGER" = "yes" ]; then
           WHY="waiting on a prompt I will NOT answer for you (it looks dangerous)"
         elif printf '%s' "$TAIL" | grep -qE 'Yes, I trust'; then
           "$TMUX_BIN" send-keys -t "$S" Down; sleep 0.3; "$TMUX_BIN" send-keys -t "$S" Enter
@@ -233,6 +243,21 @@ case "$cmd" in
       # project notes and conventions. She escalates only money, credentials or product calls.
       if printf '%s' "$WHY" | grep -qE "asked a question|finished its task" && [ -x "$MARGIE_CLI" ] && [ "$(jq -r '.session_autoanswer // true' "$HOME/.margie/config.json" 2>/dev/null)" = true ]; then
         Q="$(printf '%s' "$CONTENT" | tail -25)"
+        # TRIAGE with Jev before waking the brain. The regexes above are loose on purpose
+        # (a "?" or "next steps" anywhere), so most of what reached the brain was a done
+        # summary, a feedback survey or a connection error — each a 10–100 s Claude turn
+        # that ended "nothing to do". Jev classifies the tail in ~300 ms; only a real
+        # question or hand-off goes to the brain. Anything uncertain falls through to the
+        # brain exactly as before (fail closed). Decisions are auditable in ~/.margie/jev.log.
+        JEV="$(printf '%s' "$Q" | "$(dirname "$0")/jev.sh" session 2>/dev/null)"
+        JKIND="$(printf '%s' "$JEV" | cut -f1)"; JCONF="$(printf '%s' "$JEV" | cut -f2)"; JNEED="$(printf '%s' "$JEV" | cut -f3)"
+        if [ -n "$JKIND" ] && awk -v c="${JCONF:-0}" -v n="${JNEED:-1}" 'BEGIN{exit !(c >= 0.5 && n < 0.5)}'; then
+          case "$JKIND" in
+            working) continue ;;                                         # the regex misread a busy screen
+            transient_error) echo "Session $S stopped on a transient error (${SNIP:0:120}) — the recovery nudge handles it; nothing to answer." ; continue ;;
+            checkpoint) echo "Session $S is idle with nothing left for anyone (${SNIP:0:140})." ; continue ;;
+          esac
+        fi
         ASK="$(cat <<'EOT'
 SESSION QUESTION/REPORT. A coding session stopped; its last lines follow. Decide the next step yourself: (a) if it asked something you can answer from the notes and conventions (names, versions, defaults, order, what Tom decided), answer it with session.sh send "<answer>" --session SESSION_NAME; (b) if it finished and listed what is still needed, do the next item yourself when a helper covers it (telnyx.sh, notion.sh, dispatch.sh…) or send the next instruction into the session; then reply with one line saying what you did. If the next step needs money you have no standing to spend, credentials, or a product decision Tom has not made, do nothing and reply exactly: ESCALATE: <one-line ask for Tom>. Never leave a session idle with work left.
 EOT

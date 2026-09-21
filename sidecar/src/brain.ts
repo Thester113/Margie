@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { jev, confident, jevEnabled } from "./jev.js";
 
 /** Log the actual conversation with the brain so failures are observable. */
 export function logBrain(line: string) {
@@ -165,6 +166,39 @@ function isAffirmative(text: string): boolean {
   if (t.split(/\s+/).length > 6) return false;
   return /^(yes|yep|yeah|yup|ok|okay|sure|confirm(ed)?|affirmative|approved?|go( ahead| for it)?|send( it| that)?|post( it)?|fire( away| it off)?|ship it|do it|file it|proceed|please do|that's right|correct|y)\b/.test(t);
 }
+/** Second opinion on a short reply the regexes did not recognise ("yeah that works",
+ *  "looks good, send it", "hold on, not yet"). Jev reads Tom's words against what was
+ *  proposed and returns approve | decline | edit | other — used only at HIGH confidence,
+ *  and only to decide between run / cancel / drop, which the code still does itself.
+ *  Anything uncertain or unavailable → null → the regex verdict stands (drop). A "yes,
+ *  but…" is an edit, never an approval: the held command runs verbatim or not at all. */
+async function jevReply(text: string, held: string[], lastMargie: string): Promise<"approve" | "decline" | "edit" | "other" | null> {
+  const words = text.trim().split(/\s+/).length;
+  if (words > 14) return null;                                    // long = a new request, as before
+  const a = await jev("reply", {
+    margie_proposed: lastMargie.slice(0, 700),
+    held_actions: held.map((c) => c.replace(/^\S*\//, "").slice(0, 200)),
+    owner_replied: text.trim(),
+  }, {
+    kind: {
+      type: "choice",
+      instructions: "Margie proposed an action (`margie_proposed`, with the exact commands in `held_actions`) and waits for the owner's go-ahead. How should `owner_replied` be read?",
+      criteria: {
+        approve: "An unconditional go-ahead to do exactly what was proposed, as worded",
+        decline: "A refusal or cancellation: do not do it, stop, not now, never mind",
+        edit: "A conditional yes or a change request: yes but with a different wording, recipient, timing or scope",
+        other: "Unrelated, a question, or a new request rather than an answer to the proposal",
+      },
+    },
+  });
+  const kind = a?.kind;
+  const k = confident(kind, 0.75) as "approve" | "decline" | "edit" | "other" | null;
+  // Running needs more certainty than refusing: approve only at ≥0.9, else drop as before.
+  if (k === "approve") return kind?.type === "choice" && kind.confidence >= 0.9 ? "approve" : null;
+  return k;
+}
+/** Set per turn by drain(): Tom's short reply was judged an approval (regex or Jev). */
+let turnApproved = false;
 
 /** The one tool the brain gets: run a shell command (guarded). */
 const BASH_TOOL = {
@@ -204,7 +238,7 @@ const PROPOSE_RE = /\b(confirm|say (?:go|yes|the word)|i'?ll (?:fire|file|send|p
 function solicitedGo(cmd: string): boolean {
   if (currentTurn.speaker) return false;                            // only Tom, only his surfaces
   const said = (currentTurn.text || "").trim();
-  if (!isAffirmative(said)) return false;                           // his message must be a yes
+  if (!isAffirmative(said) && !turnApproved) return false;          // his message must be a yes
   const lastMargie = [...history].reverse().find((m) => m.role === "assistant" && !m.conv);
   const last = (lastMargie?.content || "");
   if (!last || !PROPOSE_RE.test(last)) return false;                // she must have just proposed it
@@ -1268,12 +1302,29 @@ async function preBrief(text: string): Promise<string> {
     const dirs = readdirSync(base).filter((n) => n.startsWith("d-") && !n.includes("--"));
     const words = (text.toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter((w) => !["what", "next", "status", "where", "work", "with", "this", "that", "have", "done"].includes(w));
     let best = "", bestScore = -1;
+    const cands: Array<{ id: string; title: string; state: string; mtime: number }> = [];
     for (const n of dirs) {
       let title = "", state = "";
       try { title = String(JSON.parse(readFileSync(`${base}/${n}/spec.json`, "utf8")).title || "").toLowerCase(); } catch { /* no spec */ }
       try { state = readFileSync(`${base}/${n}/state`, "utf8").trim(); } catch { /* none */ }
-      const score = words.filter((w) => title.includes(w) || n.includes(w)).length + (state !== "closed" ? 0.5 : 0) + (statSync(`${base}/${n}`).mtimeMs / 1e15);
+      const mtime = statSync(`${base}/${n}`).mtimeMs;
+      cands.push({ id: n, title, state, mtime });
+      const score = words.filter((w) => title.includes(w) || n.includes(w)).length + (state !== "closed" ? 0.5 : 0) + (mtime / 1e15);
       if (score > bestScore) { bestScore = score; best = n; }
+    }
+    // Which dispatch is he asking about? Word overlap picks wrong when he paraphrases
+    // ("how's the enrichment thing going" vs a spec titled "Faraday move-score fallback").
+    // Jev chooses among the open dispatches by title, with an explicit "none of these";
+    // a confident pick wins, otherwise the overlap score above stands.
+    const open = cands.filter((c) => c.state !== "closed").sort((a, b) => b.mtime - a.mtime).slice(0, 40);
+    if (open.length > 1) {
+      const criteria: Record<string, string> = { none: "Not about any one of these in particular (a general status question, or something else entirely)" };
+      for (const c of open) criteria[c.id] = c.title || c.id;
+      const a = await jev("brief", { question: text }, {
+        dispatch: { type: "choice", instructions: "The owner asks about the status of work in flight. Which dispatched piece of work (keyed by id, described by its title) is `question` about?", criteria },
+      });
+      const pick = confident(a?.dispatch, 0.6);
+      if (pick && pick !== "none" && criteria[pick]) { logBrain(`JEV brief → ${pick}`); best = pick; }
     }
     if (!best) return "";
     const out = await runBashRaw(`${SCRIPTS}/dispatch.sh brief ${best}`);
@@ -1473,8 +1524,21 @@ async function drain() {
     const started = Date.now();
     currentEmit = turn.emit ?? null;
     // Confirm-first gate: held outward commands run only on Tom's short "yes".
+    // The regexes answer instantly; when they recognise nothing and something is
+    // held (or Margie just proposed an action), Jev reads the reply — approve /
+    // decline at high confidence only, everything else drops, exactly as before.
+    // A colleague's turn can never confirm: the gate is Tom's.
+    const lastMargie = [...history].reverse().find((m) => m.role === "assistant" && !m.conv)?.content || "";
+    let verdict: "yes" | "no" | "" = isAffirmative(text) ? "yes" : isNegative(text) ? "no" : "";
+    if (turn.speaker) verdict = "";
+    else if (!verdict && (pending.length || PROPOSE_RE.test(lastMargie))) {
+      const k = await jevReply(text, pending.map((p) => p.cmd), lastMargie);
+      if (k === "approve") verdict = "yes"; else if (k === "decline") verdict = "no";
+      if (k) logBrain(`JEV reply → ${k}${pending.length ? ` (${pending.length} held)` : ""}: ${text.trim().slice(0, 80)}`);
+    }
+    turnApproved = verdict === "yes";
     const fresh = pending.filter((p) => Date.now() - p.at < PENDING_TTL_MS);
-    if (fresh.length && isAffirmative(text)) {
+    if (fresh.length && verdict === "yes") {
       pending = []; savePending();
       const results: string[] = [];
       for (const held of fresh) {
@@ -1489,9 +1553,24 @@ async function drain() {
       turn.reply(spoken);
       continue;
     }
+    // A yes that lands after the window closed must SAY so and offer to redo it.
+    // Dropping it in silence is what made Margie look like she ignored Tom.
+    if (!fresh.length && pending.length && verdict === "yes") {
+      const expired = pending.map((p) => p.cmd);
+      logBrain(`HELD command(s) EXPIRED before Tom's yes: ${expired.join(" || ")}`);
+      pending = []; savePending();
+      const spoken =
+        `Your yes came after the hold expired, dearie — nothing ran. It was: ${expired
+          .map((c) => c.slice(0, 120))
+          .join("; ")}. Say the word and I'll set it up again.`;
+      history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
+      trimHistory();
+      turn.reply(spoken);
+      continue;
+    }
     // A clear "no" cancels deterministically — no model turn, so nothing can be
     // re-invoked under the guise of cancelling.
-    if (pending.length && isNegative(text)) {
+    if (pending.length && verdict === "no") {
       logBrain(`HELD command(s) CANCELLED by Tom: ${pending.map((p) => p.cmd).join(" || ")}`);
       pending = []; savePending();
       const spoken = "Cancelled, dearie — nothing was done.";
@@ -1500,8 +1579,10 @@ async function drain() {
       turn.reply(spoken);
       continue;
     }
-    // Anything else drops the held command (Tom can re-ask or amend).
-    if (pending.length) {
+    // Anything else FROM TOM drops the held command (he can re-ask or amend). A
+    // colleague's turn in another conversation is not his answer — it neither
+    // confirms nor drops what he is being asked about.
+    if (pending.length && !turn.speaker) {
       logBrain(`HELD command(s) dropped: ${pending.map((p) => p.cmd).join(" || ")}`);
       pending = []; savePending();
     }
@@ -1543,7 +1624,7 @@ export function noteToHistory(text: string) {
 }
 export function brainStatus() {
   return {
-    brains: { voice: BRAIN_VOICE, text: BRAIN_TEXT === "claude" ? `claude:${BRAIN_CLAUDE_MODEL}` : BRAIN_TEXT },
+    brains: { voice: BRAIN_VOICE, text: BRAIN_TEXT === "claude" ? `claude:${BRAIN_CLAUDE_MODEL}` : BRAIN_TEXT, jev: jevEnabled() ? "on" : "off" },
     turns: Math.floor((history.length - 1) / 2),
     busy: running,
     queue: queue.length,

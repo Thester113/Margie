@@ -121,10 +121,25 @@
   on Tom's Mac, Slack-pings him and leaves the sim running — merge waits for his
   explicit "merge". Backend-only MRs auto-merge as before. `mr.sh resolve`
   resolves review threads once a session has addressed them.
+- **Jev is the harness's classifier, not a brain** (`scripts/jev.sh`,
+  `sidecar/src/jev.ts`; TypeSafe's System One model, ~300 ms, key
+  `typesafe_api_key`, `jev: off` disables). It answers the small typed questions
+  the code used to guess with regexes and never generates text or runs anything:
+  `session.sh needs` triages an idle session (question | handoff |
+  transient_error | checkpoint) BEFORE waking the brain — done summaries,
+  surveys and connection drops no longer cost a 10–100 s Claude turn;
+  `slack-watch.sh` skips mentions that aren't addressed to her ("margie already
+  did that"); a session's permission prompt gets a second risk opinion that can
+  only ADD an escalation; the confirm gate reads a short reply the regexes
+  missed ("kk", "looks good, send it", "hold on") — approve only at ≥0.9
+  confidence, "yes but…" is an edit and drops; `preBrief` picks which dispatch a
+  status question is about. Every decision fails closed to the old path and is
+  one line in `~/.margie/jev.log`; `jev.sh check` runs the fixture set (run it
+  when `jev-latest` moves). Don't give the brain `jev.sh` — it's for code.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
-  it verbatim only on a ≤6-word affirmative within 3 minutes; anything else
-  drops it. The prompt-only rule was skipped by the model in testing.
+  it verbatim only on Tom's short affirmative (regex, or Jev at ≥0.9) within
+  15 minutes; anything else drops it. The prompt-only rule was skipped by the model in testing.
 
 ## Build & verify
 

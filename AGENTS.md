@@ -92,6 +92,12 @@ npm run tauri dev              # run the app
   prompts (`scripts/prompts/`). Notion writes go through notion.sh, which must
   keep `MARGIE_DESCRIBE=1` side-effect-free on EVERY write subcommand — the
   sidecar uses it to read back exactly what a held command will do.
+- `jev.sh` / `sidecar/src/jev.ts` (TypeSafe's Jev) is a calibrated classifier
+  the harness code calls for typed decisions (session triage, Slack mention
+  addressed?, prompt risky?, was a short reply a yes/no, which dispatch a status
+  question means). It is confidence-gated and fails closed to the previous
+  regex/brain path; the brain never calls it. New decision → a subcommand in
+  `jev.sh` (or a `jev()` call in TS) plus a fixture in `jev.sh check`.
 - The brain is a small, fast, non-reasoning model: it is unreliable with long
   piped one-liners and tends to open a Warp session instead. Anything she
   should do inline gets a tested helper script with trivial subcommands
