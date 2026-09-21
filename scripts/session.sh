@@ -96,6 +96,11 @@ case "$cmd" in
       PANE="$("$TMUX_BIN" capture-pane -t "$S" -p -S -60 2>/dev/null | sed 's/[[:space:]]*$//' | grep -v '^$')"
       [ -z "$PANE" ] && continue
       TAIL="$(printf '%s\n' "$PANE" | tail -12)"
+      # A permission menu whose options wrap (long command + "Yes, and don't ask again for
+      # <command> in <path>") pushes "Do you want to proceed?" and "❯ 1. Yes" above the
+      # 12-line window; the answer and danger checks read a taller slice so the command
+      # itself is judged and the menu is still answered (PT-1402 sat unanswered on one).
+      MENU="$(printf '%s\n' "$PANE" | tail -28)"
       # PLAY-BY-PLAY: announce each new action the session takes (Claude Code narrates its
       # own steps with ⏺ bullets). Emit the newest bullet when it changes, so Tom follows
       # along without watching the tab. Label the session by its Claude-set window title.
@@ -215,7 +220,7 @@ case "$cmd" in
         # Once per screen (the prompt sits there for every 45 s cycle until it is answered).
         JD="$(cat "$ST/$S.danger" 2>/dev/null | grep "^$H:" | cut -d: -f2-)"
         if [ -z "$JD" ]; then
-          JD="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|esc to interrupt' | tail -12 | "$(dirname "$0")/jev.sh" danger 2>/dev/null | tr '\t' ':')"
+          JD="$(printf '%s' "$MENU" | grep -vE '^[│>❯ ]*$|esc to interrupt' | tail -24 | "$(dirname "$0")/jev.sh" danger 2>/dev/null | tr '\t' ':')"
           [ -n "$JD" ] && echo "$H:$JD" > "$ST/$S.danger"
         fi
         JDANGER="${JD%%:*}"; JPROB="${JD#*:}"; [ "$JPROB" = "$JD" ] && JPROB=""
@@ -225,17 +230,19 @@ case "$cmd" in
         # in .env, ls .env.secrets) on Tom for hours; now Jev clears a SOFT match when it is
         # confident the prompt is safe (risky < 0.35), and anything else still escalates —
         # Jev unavailable or unsure means the old behaviour.
-        HARD='push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -rf /|terraform (apply|destroy)|\.margie/config\.json|>>? *[^ ]*\.env'
+        # rm is hard only outside the checkout or on source trees; the project's own tmp/_build/
+        # deps cleanup is Jev's call (it reads "rm -rf tmp/x" as routine since 2026-09-21).
+        HARD='push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -r[a-z]* +(/|~|\$HOME|\.\.|(lib|apps|src|test|config|priv|scripts)/)|git clean|git checkout (-- )?\.( |$)|terraform (apply|destroy)|\.margie/config\.json|>>? *[^ ]*\.env'
         SOFT='deploy|production|secrets?|credential|\.env\b'
         SAFE=0; [ "$JDANGER" = "no" ] && [ -n "$JPROB" ] && [ "$(awk -v p="$JPROB" 'BEGIN{print (p<0.35)}')" = 1 ] && SAFE=1
-        if printf '%s' "$TAIL" | grep -qiE "$HARD" \
-           || { printf '%s' "$TAIL" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } \
+        if printf '%s' "$MENU" | grep -qiE "$HARD" \
+           || { printf '%s' "$MENU" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } \
            || [ "$JDANGER" = "yes" ]; then
           WHY="waiting on a prompt I will NOT answer for you (it looks dangerous)"
-        elif printf '%s' "$TAIL" | grep -qE 'Yes, I trust'; then
+        elif printf '%s' "$MENU" | grep -qE 'Yes, I trust'; then
           "$TMUX_BIN" send-keys -t "$S" Down; sleep 0.3; "$TMUX_BIN" send-keys -t "$S" Enter
           echo "$H" > "$ST/$S.told"; echo "Session $S asked to trust its folder — answered yes for you."; continue
-        elif printf '%s' "$TAIL" | grep -qE '❯ *1\.|^ *1\. Yes|Do you want to'; then
+        elif printf '%s' "$MENU" | grep -qE '❯ *1\.|^ *1\. Yes|Do you want to'; then
           "$TMUX_BIN" send-keys -t "$S" 1; sleep 0.3; "$TMUX_BIN" send-keys -t "$S" Enter
           echo "$H" > "$ST/$S.told"; echo "Session $S asked permission ($(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | grep -iE 'want to|proceed|allow|run' | head -1 | cut -c1-120)) — answered yes for you."; continue
         elif printf '%s' "$TAIL" | grep -qE '\(y/n\)|\[Y/n\]|\[y/N\]'; then
