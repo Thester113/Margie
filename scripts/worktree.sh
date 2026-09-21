@@ -16,6 +16,13 @@ cmd="${1:-list}"; repo_arg="${2:-$PWD}"; branch="${3:-}"
 # Resolve <repo> to a git dir (local clone, or GitHub clone on demand).
 REPO="$("$(dirname "$0")/resolve-repo.sh" "$repo_arg" 2>/dev/null)"
 [ -z "$REPO" ] && { echo "Couldn't find repo '$repo_arg', dearie." >&2; exit 1; }
+# A linked worktree passed as <repo> means its MAIN repository. Otherwise wtdir()
+# doubles the name (walt_ui__<branch>__<branch>), that directory doesn't exist,
+# and a kickoff silently starts its session in $HOME (2026-09-18, PT-1353/PT-1361).
+COMMON="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+if [ -n "$COMMON" ] && [ "$(basename "$COMMON")" = ".git" ]; then
+  MAIN="$(dirname "$COMMON")"; [ -d "$MAIN" ] && [ "$MAIN" != "$REPO" ] && REPO="$MAIN"
+fi
 
 slug() { printf '%s' "$1" | tr '/ ' '--'; }
 wtdir() { echo "$WT_ROOT/$(basename "$REPO")__$(slug "$branch")"; }

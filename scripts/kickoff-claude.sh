@@ -111,7 +111,8 @@ case "$(printf '%s' "$ENGINE" | tr 'A-Z' 'a-z')" in
   *) ENGINE_BIN="claude"
      # Default model for dispatched sessions (claude_model in ~/.margie/config.json).
      DM="$(jq -r '.claude_model // empty' "$HOME/.margie/config.json" 2>/dev/null)"
-     [ -n "$DM" ] && ENGINE_BIN="claude --model '$DM'" ;;
+     EF="$(jq -r '.claude_effort // empty' "$HOME/.margie/config.json" 2>/dev/null)"
+     [ -n "$DM" ] && ENGINE_BIN="claude --model '$DM'${EF:+ --effort '$EF'}" ;;
 esac
 if [ -n "${MARGIE_TEST_CMD:-}" ]; then
   CLAUDE_LINE="$MARGIE_TEST_CMD"
@@ -133,7 +134,7 @@ trust_dir "$DIR_ABS"; [ -n "$SUBDIR" ] && trust_dir "$DIR_ABS/$SUBDIR"
 
 cat > "$INNER" <<INNEREOF
 #!/bin/bash
-cd "$DIR_ABS${SUBDIR:+/$SUBDIR}" || cd "\$HOME"
+cd "$DIR_ABS${SUBDIR:+/$SUBDIR}" || { echo "kickoff: '$DIR_ABS${SUBDIR:+/$SUBDIR}' does not exist — refusing to start a coding session in \$HOME instead."; sleep 30; exit 1; }
 $CLAUDE_LINE
 INNEREOF
 chmod +x "$INNER"

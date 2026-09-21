@@ -109,6 +109,9 @@ case "$cmd" in
     else echo "Couldn't dispatch the fix for $id, dearie (a planner may already be running in $REPO_ARG)."; fi ;;
 
   auto)
+    # Honour the global pause (dispatch.sh pause): a paused Margie starts no
+    # scan, so nothing new gets dispatched while Tom has her stopped.
+    [ -f "$HOME/.margie/paused" ] && exit 0
     MODE="$(cfgd regression_scan off)"; [ "$MODE" = off ] && exit 0
     HH="$(date +%H%M)"; WANT="$(cfgd regression_scan_time 0930 | tr -d ':')"
     DOW="$(date +%u)"  # 1..7

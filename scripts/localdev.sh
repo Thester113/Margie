@@ -63,7 +63,7 @@ case "${1:-up}" in
   up)
     ensure_colima
     ensure_override
-    echo "starting $SVC + typesense (docker) in $BE…"
+    echo "starting $SVC + typesense (docker) in ${BE}..."
     dc up -d "$SVC" typesense >/dev/null 2>&1
     # if the app crashed on a missing JS bundle, build assets once (in the container) and retry
     if docker logs "$(appname)" --tail 20 2>&1 | grep -qi "bundle was never built\|BundleError"; then

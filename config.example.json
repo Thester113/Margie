@@ -105,6 +105,19 @@
     ]
   },
   "_ui_review": "true = an MR whose diff touches any path in ui_review_paths[<repo>] is NEVER auto-merged. When it goes green, tick verifies it VISUALLY and waits for the owner's explicit 'merge'. Mobile paths (mobile/) verify in the iOS simulator (sim.sh); web paths (see web_review_paths) verify in a browser. The session makes the change visible, screenshots it, opens the shot on the owner's Mac + Slack-pings him. Backend-only MRs (no ui_review_paths match) auto-merge normally. Paths are prefix-matched against `git diff --name-only origin/main...HEAD`. sim_device (optional) pins a simulator udid.",
+  "domain_owners": {
+    "walt_ui": [
+      {
+        "domain": "enrichment",
+        "name": "Erich",
+        "slack": "@U0BE9N6K50R",
+        "paths": [
+          "backend/apps/walt_ui/lib/walt_ui/enrichment/"
+        ]
+      }
+    ]
+  },
+  "_domain_owners": "The human who owns a domain hears about changes in it: when an MR opens whose diff touches any of a domain's paths (prefix-matched against `git diff --name-only origin/main...HEAD`), tick Slack-DMs that owner once per dispatch (marker owner-notified-<domain>). An FYI, never a gate — the MR still reviews and merges on its own (process/cross-domain-proceed.md). `slack` takes a @handle or @Uxxxx id. Adding an owner is a config edit; no person is ever named in code.",
   "web_review_paths": {
     "walt_ui": [
       "backend/apps/walt_ui/lib/walt_ui_web/live/"

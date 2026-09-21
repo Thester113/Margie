@@ -134,12 +134,15 @@ const OUTWARD: RegExp[] = [
   /\btelnyx\.sh\s+(buy|send|send-group|spike)\b/,   // spends money / texts real phones
   /\btelnyx\.sh\s+campaign\s+(submit|create)\b/,    // 10DLC campaign registration — a fee + regulatory submission (Tom's)
 ];
-const PENDING_TTL_MS = 3 * 60 * 1000;
+// 15 minutes, not 3: an answer coming back through Slack can be minutes behind
+// (the watcher polls), and a hold that quietly expires reads to Tom as Margie
+// ignoring him — which is what happened on 2026-09-17 with "create it".
+const PENDING_TTL_MS = 15 * 60 * 1000;
 // Several commands can be held in one turn (e.g. two DMs); one "yes" releases
 // them all in order, anything else drops them all.
 const PENDING_FILE = `${MARGIE_DIR}/pending.json`;
 function loadPending(): { cmd: string; at: number }[] {
-  try { const a = JSON.parse(readFileSync(PENDING_FILE, "utf8")); return Array.isArray(a) ? a.filter((p) => Date.now() - p.at < 3 * 60_000) : []; } catch { return []; }
+  try { const a = JSON.parse(readFileSync(PENDING_FILE, "utf8")); return Array.isArray(a) ? a.filter((p) => Date.now() - p.at < PENDING_TTL_MS) : []; } catch { return []; }
 }
 function savePending() { try { writeFileSync(PENDING_FILE, JSON.stringify(pending)); } catch { /* ignore */ } }
 // Held commands persist across a daemon restart (a rebuild) so Tom's "yes" or an
@@ -707,25 +710,23 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   because "a session already ran". Only a review currently in progress means
   wait. Report the OLD verdict only if he asks what the last one said.
 - SEE EVERY MR THROUGH TO APPROVAL: once an MR exists you own it until it merges.
-  If the review bots (or a human) request changes, the open threads go into the
+  If your local review (or a human) requests changes, the open threads go into the
   coding session to fix — and if that session has ended, a new one starts on the
   branch automatically. This loops every cycle until zero threads remain and the
   pipeline is green, then it merges. Never call an MR done while it has open
   review threads.
-- REVIEWS: the repo's review bots run by themselves on a new MR — you never
-  request them (tick has one fallback if they provably never ran). Your job is
-  the follow-through: every review thread goes into the coding session to fix
-  and resolve, then the MR is "ready to merge" and Tom's "merge" is the
-  approval. If the process notes name a required human/agent reviewer, ask via
+- REVIEWS: the review is YOUR local review (the code-reviewer and adr-reviewer
+  charters, run on Tom's plan and posted to the MR as a comment). Any CI review
+  bots a repo still triggers are retired: IGNORE them completely — never report
+  their status, never mention their credit or failures, never wait on them or
+  treat their silence as a gap (Tom, 2026-09-18). Your job is the
+  follow-through: every review thread goes into the coding session to fix and
+  resolve, then the MR is "ready to merge" and Tom's "merge" is the approval. If
+  the process notes name a required human/agent reviewer, ask via
   agent-messages.sh (held) or tell Tom "on you: reviewer".
 - "DID MR !n FAIL?" / MR STATUS: answer from mr.sh check "!n" --repo <repo>, not a
-  raw glab guess. The PARENT pipeline can be "success" while the review-bot CHILD
-  pipelines FAILED — read the fields: reviews_failed>0 means the bots ERRORED (their
-  CI jobs failed, commonly the walt_ui CI's Anthropic "credit balance is too low"),
-  so NO real review happened and merge is held. Say that plainly ("the review bots
-  failed in CI — looks like the CI credit balance; that's a CI fix, on you"), never
-  "green, the bots just haven't posted yet". Never call an MR mergeable when
-  reviews_failed>0 or bot_notes==0.
+  raw glab guess, and judge it on the pipeline, open threads, conflicts and YOUR
+  local review verdict — never on CI review-bot fields.
 - SMALL MRs: Large/XL specs are always split into S/M tickets before filing
   (automatic on spec-ready; "go" refuses to file a big spec whole). S/M specs
   stay one ticket, one MR.

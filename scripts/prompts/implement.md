@@ -22,12 +22,12 @@ CONVENTIONS
   Margie's QA verifier runs automatically. If it passes you will be told
   "QA passed — open the MR" with the prepared description at {{MR_FILE}}; open
   it then with the repo's /merge-request skill and print MARGIE_MR_OPEN <url>.
-  The repo's review bots run automatically on the MR's FIRST pipeline only, so
-  after opening the MR do NOT push again until that pipeline's review jobs have
-  finished (watch it with glab ci status / glab mr view). Anything that must
-  cite the MR number (e.g. sabotage records) is pushed after that. Review
-  threads then arrive; address every one, push, and resolve the threads you
-  fixed — the MR is mergeable only when all threads are resolved. After any
+  Do NOT wait on any CI review-bot jobs the repo still triggers — they are
+  retired and ignored; Margie's local review is the review, and it posts its
+  verdict to the MR. Anything that must cite the MR number (e.g. sabotage
+  records) can be pushed once the MR exists. Review threads (from Margie's
+  review or a human) then arrive; address every one, push, and resolve the
+  threads you fixed — the MR is mergeable only when all threads are resolved. After any
   push, print MARGIE_MR_UPDATED and STOP; never sit polling the pipeline —
   Margie watches it and comes back to you only if something fails.
   If it fails you will be given the findings; fix them, then print

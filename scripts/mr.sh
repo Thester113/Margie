@@ -142,7 +142,11 @@ case "$cmd" in
       URL="$(printf '%s' "$OUT" | grep -oE 'https://github.com/[^ ]+/pull/[0-9]+' | tail -1)"
     fi
     [ -z "$URL" ] && { echo "Opening the MR failed, dearie: $(printf '%s' "$OUT" | tail -1 | cut -c1-160)" >&2; exit 1; }
-    jq -n --arg url "$URL" --arg branch "$BRANCH" --arg title "$TITLE" --arg at "$(date -u +%FT%TZ)" '{url:$url, branch:$branch, title:$title, opened_at:$at}' > "$STATE/mr.json"
+    # `iid` is what dispatch.sh's tick reads to track the MR; without it the
+    # status line says "MR !null" and the MR lifecycle never runs (PT-1362).
+    jq -n --arg url "$URL" --arg branch "$BRANCH" --arg title "$TITLE" --arg at "$(date -u +%FT%TZ)" \
+      --argjson iid "$(printf '%s' "$URL" | grep -oE '[0-9]+$' || echo null)" \
+      '{iid:$iid, url:$url, branch:$branch, title:$title, opened_at:$at}' > "$STATE/mr.json"
     if [ -n "$PT" ]; then
       printf 'MR opened: %s\n' "$URL" > "$STATE/mr-note.md"
       "$DIR/notion.sh" ticket append "$PT" --md "$STATE/mr-note.md" >/dev/null 2>&1 || true
@@ -251,6 +255,31 @@ case "$cmd" in
       MV="$(glab mr view "$NUM" -F json 2>/dev/null)"
       T="$(printf '%s' "$MV" | jq -r '.title // "?"')"
       desc "would merge MR !$NUM (\"$T\") into $TARGET and delete its source branch$([ -n "$(cfg auto_deploy_label)" ] && echo ", applying the $(cfg auto_deploy_label) label unless it's High Risk")"
+      # Tom's rule (2026-09-18): every MR we author merges only on a posted local-review
+      # verdict of approve FOR ITS CURRENT COMMIT. This is the one place every merge path
+      # passes through — dispatch auto-merge, Tom's "merge", and a hand-run merge alike —
+      # so a hand-opened MR (like !1183) can no longer slip past the review. Override with
+      # MARGIE_SKIP_REVIEW_GATE=1 only for an MR that was NOT authored by us.
+      if [ "${MARGIE_SKIP_REVIEW_GATE:-0}" != 1 ]; then
+        HEAD_SHA="$(printf '%s' "$MV" | jq -r '.sha // ""')"
+        RNOTE="$(glab api "projects/:id/merge_requests/$NUM/notes?per_page=100&sort=desc" 2>/dev/null \
+          | jq -r --arg s "$HEAD_SHA" '[.[] | select(.system==false) | select(.body | test("Local review .*verdict: \\*\\*approve\\*\\*"))] | map(select(.body | contains($s[0:8]))) | length')"
+        # Notes posted before 2026-09-18 don't name their commit; for a tracked dispatch,
+        # its own record of which commit the review approved is equally authoritative.
+        if [ "${RNOTE:-0}" -lt 1 ] && [ -n "$HEAD_SHA" ]; then
+          GD="$D"
+          # Called by MR number (how the pipeline merges): find the dispatch tracking it.
+          [ -z "$GD" ] && GD="$(grep -lsx "$NUM" "$MDIR"/d-*/mr.json 2>/dev/null | head -1 | xargs -I{} dirname {} 2>/dev/null)"
+          [ -z "$GD" ] && GD="$(for d in "$MDIR"/d-*; do [ -s "$d/mr.json" ] && [ "$(jq -r '.iid // empty' "$d/mr.json" 2>/dev/null)" = "$NUM" ] && { echo "$d"; break; }; done)"
+          if [ -n "$GD" ] && [ "$(cat "$GD/review-approved" 2>/dev/null)" = "$HEAD_SHA" ] && [ "$(cat "$GD/review-note-sha" 2>/dev/null)" = "$HEAD_SHA" ]; then
+            RNOTE=1
+          fi
+        fi
+        if [ "${RNOTE:-0}" -lt 1 ]; then
+          echo "Not merging !$NUM, dearie: no local-review 'approve' verdict posted for its current commit ${HEAD_SHA:0:8}. Run the charter review first (dispatch.sh review <PT>, or the hotfix review), and merge once it approves."
+          exit 1
+        fi
+      fi
       # Auto-Deploy gate (Tom's rule, 2026-09-15): a merge should also SHIP. The
       # release job only deploys a merged MR that carries the deploy label (or a
       # manual play), and it reads labels live at deploy time — so add it here at
@@ -272,8 +301,20 @@ case "$cmd" in
         fi
       fi
       OUT="$(glab mr merge "$NUM" --yes --remove-source-branch 2>&1 | tail -2 | tr '\n' ' ')"
-      case "$OUT" in *rror*|*failed*|*cannot*|*Cannot*) echo "Merge of !$NUM didn't go through, dearie: $OUT"; exit 1 ;; esac
-      echo "Merged MR !$NUM (\"$T\") into $TARGET, dearie.$AD_MSG $OUT"
+      # Report what GitLab actually did: re-read the MR instead of pattern-matching
+      # glab's prose. The old match missed "Merge conflicts exist; resolve the
+      # conflicts…" and announced a merge that never happened (!1123, 2026-09-17),
+      # and called "auto-merge enabled" (still open) merged (!1100).
+      AFTER="$(glab mr view "$NUM" -F json 2>/dev/null)"
+      MST="$(printf '%s' "$AFTER" | jq -r '.state // empty' 2>/dev/null)"
+      MWPS="$(printf '%s' "$AFTER" | jq -r '.merge_when_pipeline_succeeds // false' 2>/dev/null)"
+      if [ "$MST" = merged ]; then
+        echo "Merged MR !$NUM (\"$T\") into $TARGET, dearie.$AD_MSG"
+      elif [ "$MWPS" = true ]; then
+        echo "MR !$NUM (\"$T\") is set to merge into $TARGET when its pipeline passes, dearie — not merged yet.$AD_MSG"
+      else
+        echo "Merge of !$NUM didn't go through, dearie (state: ${MST:-unknown}): $OUT"; exit 1
+      fi
     fi ;;
   view)
     "$DIR/forge.sh" mr "$(printf '%s' "$REF" | grep -oE '[0-9]+$')" "${1:-}" ;;

@@ -30,7 +30,7 @@ CFG="$HOME/.margie/config.json"
 cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 cfgd() { local v; v="$(cfg "$1")"; printf '%s' "${v:-$2}"; }  # cfgd <key> <default>
 desc() { if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then echo "$*"; exit 0; fi; }
-slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-28; }
+slug() { printf '%s' "$1" | tr '\n\r\t' '   ' | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-28 | sed -E 's/-+$//'; }
 st() { # st <dir> [new-state]
   if [ $# -gt 1 ]; then printf '%s' "$2" > "$1/state"; else cat "$1/state" 2>/dev/null || echo "unknown"; fi
 }
@@ -67,6 +67,71 @@ is_chat_change() {
 $pats
 EOF
   return 1
+}
+approved_for() { # approved_for <dispatch dir> <sha> — the local review approved THIS commit
+  local a; [ -f "$1/review-approved" ] || return 1
+  a="$(cat "$1/review-approved" 2>/dev/null)"; [ -z "$a" ] && a="$(cat "$1/review-note-sha" 2>/dev/null)"
+  [ -n "$2" ] && [ "$a" = "$2" ]
+}
+ui_shot_final() {
+  # 0 when the verify session is FINISHED with this screenshot. Without this,
+  # tick grabs ui-shot.png the instant it appears — PT-1354 Slacked Tom a
+  # mid-run capture of the debug host's error screen, which the session then
+  # overwrote with the real one a minute later.
+  local d="$1" screen="$2" age
+  printf '%s' "$screen" | grep -q "MARGIE_UI_SHOT" && return 0
+  age=$(( $(date +%s) - $(stat -f %m "$d/ui-shot.png" 2>/dev/null || echo 0) ))
+  [ "$age" -ge "$(cfgd ui_shot_settle_seconds 120)" ]
+}
+ui_verify_stale() {
+  # 0 when a kicked visual review has produced no screenshot for too long and is
+  # still worth retrying. PT-1354 sat 17h because the kick was delivered as a
+  # truncated tmux paste: the marker said "kicked", so nothing ever retried and
+  # the MR waited on an approval Tom was never asked for.
+  local d="$1" age n
+  [ -f "$d/ui-verify-kicked" ] || return 1
+  [ -s "$d/ui-shot.png" ] && return 1
+  age=$(((  $(date +%s) - $(stat -f %m "$d/ui-verify-kicked" 2>/dev/null || echo 0) ) / 60))
+  [ "$age" -ge "$(cfgd ui_verify_retry_minutes 45)" ] || return 1
+  n="$(cat "$d/ui-verify-attempts" 2>/dev/null || echo 0)"
+  [ "$n" -lt "$(cfgd ui_verify_max_attempts 3)" ]
+}
+ui_verify_exhausted() {
+  local d="$1" n
+  [ -f "$d/ui-verify-kicked" ] && [ ! -s "$d/ui-shot.png" ] || return 1
+  n="$(cat "$d/ui-verify-attempts" 2>/dev/null || echo 0)"
+  [ "$n" -ge "$(cfgd ui_verify_max_attempts 3)" ]
+}
+notify_domain_owners() {
+  # notify_domain_owners <worktree> <repo-name> <dispatch-dir> <PT> <MR iid> <MR url>
+  # Tom's rule (2026-09-17): the person who owns a domain hears about a change in it.
+  # Config `domain_owners[<repo>]`: [{domain, name, slack, paths[]}]. One Slack DM per
+  # domain per dispatch (marker file), sent when the MR opens. An FYI, never a gate —
+  # see ~/.margie/process/cross-domain-proceed.md.
+  local wt="$1" repo="$2" d="$3" pt="$4" iid="$5" url="$6" files n
+  files="$(git -C "$wt" diff --name-only origin/main...HEAD 2>/dev/null)"
+  [ -z "$files" ] && return 0
+  n="$(jq -r --arg r "$repo" '.domain_owners[$r] | length // 0' "$CFG" 2>/dev/null)"
+  [ -z "$n" ] || [ "$n" = null ] && return 0
+  local i=0
+  while [ "$i" -lt "$n" ]; do
+    local owner dom who slack hit=0 p
+    owner="$(jq -c --arg r "$repo" --argjson i "$i" '.domain_owners[$r][$i]' "$CFG" 2>/dev/null)"
+    i=$((i + 1))
+    dom="$(printf '%s' "$owner" | jq -r '.domain // empty')"
+    who="$(printf '%s' "$owner" | jq -r '.name // empty')"
+    slack="$(printf '%s' "$owner" | jq -r '.slack // empty')"
+    [ -z "$slack" ] && continue
+    [ -f "$d/owner-notified-$dom" ] && continue
+    for p in $(printf '%s' "$owner" | jq -r '.paths[]? // empty'); do
+      printf '%s\n' "$files" | grep -q "^$p" && hit=1 && break
+    done
+    [ "$hit" = 1 ] || continue
+    "$DIR/slack.sh" send "$slack: ${who:-there} — $pt touches $dom: $(head -1 "$d/mr.md" 2>/dev/null). MR !$iid $url. Tom asked that you're looped in on $dom changes; this is an FYI, not a gate — it'll go through review and merge on its own, so say so here if you want it done differently." >/dev/null 2>&1 &&
+      touch "$d/owner-notified-$dom" &&
+      announce "I let ${who:-the $dom owner} know on Slack that $pt touches $dom, dearie."
+  done
+  return 0
 }
 is_web_ui_change() {
   # 0 if this branch's diff touches WEB UI code (config web_review_paths[<repo>], e.g. the
@@ -691,7 +756,38 @@ case "$cmd" in
       *) echo "  $S" ;;
     esac
     ;;
+  review)
+    # dispatch.sh review <id|PT> — force a fresh local review round on the MR's current
+    # commit, for when a verdict is stale (the fix wasn't a commit, or context changed).
+    need_d "${1:?usage: dispatch.sh review <id|PT>}"
+    [ -s "$D/mr.json" ] || { echo "No MR tracked for that dispatch yet, dearie." >&2; exit 1; }
+    rm -f "$D/review-sha" "$D/review-running"
+    echo "Fresh review queued for MR !$(jq -r .iid "$D/mr.json"), dearie — it runs on the next tick."
+    ;;
+  child)
+    # dispatch.sh child <epic id|PT> <key…>  — start specific tickets of a broken-down
+    # epic NOW, instead of waiting for each to merge before the next begins. Tom's call
+    # when a few tickets decide whether something is demoable (2026-09-18). Conflicts
+    # between siblings touching the same files are the price; they rebase like any MR.
+    need_d "${1:?usage: dispatch.sh child <epic id|PT> <ticket key…>}"; shift
+    [ -s "$D/breakdown.json" ] || { echo "That dispatch has no ticket breakdown, dearie." >&2; exit 1; }
+    for KEY in "$@"; do
+      jq -e --arg k "$KEY" '.tickets[] | select(.key == $k)' "$D/breakdown.json" >/dev/null 2>&1 \
+        || { echo "No ticket '$KEY' in $(basename "$D"), dearie." >&2; continue; }
+      if [ -d "$(child_dir "$D" "$KEY")" ]; then echo "$KEY is already started, dearie."; continue; fi
+      start_child "$D" "$KEY"
+    done
+    ;;
+  pause)
+    printf '%s\n' "${1:-paused by Tom $(date -u +%FT%TZ)}" > "$HOME/.margie/paused"
+    echo "Paused, dearie — tick advances nothing until you say resume."
+    ;;
+  resume)
+    rm -f "$HOME/.margie/paused"
+    echo "Resumed, dearie — the pipeline picks up on the next tick."
+    ;;
   status)
+    [ -f "$HOME/.margie/paused" ] && echo "PAUSED: $(head -1 "$HOME/.margie/paused")"
     if [ -n "${1:-}" ]; then DIRS="$(resolve_d "$1")"; else DIRS="$(ls -td "$MDIR"/d-* 2>/dev/null)"; fi
     [ -z "$DIRS" ] && { echo "No dispatches, dearie."; exit 0; }
     FOUND=0
@@ -745,7 +841,10 @@ case "$cmd" in
           elif is_chat_change "$MWT" "$MREPO" 2>/dev/null; then MRNOTE=" — CHAT change: HOLDS for Tom's approval (sim chat-flow verify), will NOT auto-merge"
           else MRNOTE=" — backend: auto-merges when green + review-approved"; fi
         fi
-        LINE="$LINE, MR !$(jq -r .iid "$D/mr.json")$( [ -s "$D/mr-check.json" ] && echo " (pipeline $(jq -r .pipeline "$D/mr-check.json"), $(jq -r .unresolved "$D/mr-check.json") open threads$( [ -f "$D/review-approved" ] && echo ", review clean"))")$MRNOTE"
+        # A hold outranks everything above: never report "auto-merges" for an MR that is
+        # held (PT-1353's NAT MRs read "auto-merges when green" while held for Johnny).
+        [ -f "$D/hold-merge" ] && MRNOTE=" — HELD: $(head -1 "$D/hold-merge" | cut -c1-140)"
+        LINE="$LINE, MR !$(jq -r .iid "$D/mr.json")$( [ -s "$D/mr-check.json" ] && echo " (pipeline $(jq -r .pipeline "$D/mr-check.json"), $(jq -r .unresolved "$D/mr-check.json") open threads$( if approved_for "$D" "$(jq -r '.sha // ""' "$D/mr-check.json")"; then echo ", review clean"; elif [ -f "$D/review-approved" ]; then echo ", review pending on the latest commit"; fi))")$MRNOTE"
       fi
       spec_ready "$D" && LINE="$LINE — $(jq -r .title "$D/spec.json" | cut -c1-60)"
       echo "$LINE"
@@ -755,6 +854,11 @@ case "$cmd" in
     ;;
 
   tick)
+    # Global pause (Tom, 2026-09-17): while ~/.margie/paused exists, the pipeline
+    # advances NOTHING — no QA, no MR, no merge, no deploy, no owner pings.
+    # `dispatch.sh status` still reads. Remove the file (or `dispatch.sh resume`)
+    # to start again.
+    [ -f "$HOME/.margie/paused" ] && { echo "Paused: $(head -1 "$HOME/.margie/paused")"; exit 0; }
     [ "${1:-}" = "--announce" ] && export MARGIE_ANNOUNCE=1
     for D in "$MDIR"/d-*; do
       [ -d "$D" ] || continue
@@ -872,8 +976,25 @@ case "$cmd" in
               fi
             fi
             # QA passed -> tell the session to open the MR (once); the merge closes it.
+            # A failed `glab mr create` used to park the dispatch for good: the
+            # marker said "nudged", no mr.json ever appeared, and nothing retried
+            # (PT-1362 sat at qa-pass with its branch pushed and no MR). Retry a
+            # nudge that produced no MR, a few minutes apart, then say so.
+            if [ "$S" = qa-pass ] && [ -f "$D/mr-nudged" ] && [ ! -s "$D/mr.json" ] &&
+               [ "$(( ( $(date +%s) - $(stat -f %m "$D/mr-nudged" 2>/dev/null || echo 0) ) / 60 ))" -ge "$(cfgd mr_open_retry_minutes 10)" ]; then
+              N="$(cat "$D/mr-open-attempts" 2>/dev/null || echo 1)"
+              if [ "$N" -lt "$(cfgd mr_open_max_attempts 3)" ]; then
+                echo $((N + 1)) > "$D/mr-open-attempts"; rm -f "$D/mr-nudged"
+                announce "The MR for $PT never opened, dearie — trying again (attempt $((N + 1)))."
+              elif [ ! -f "$D/mr-open-gaveup" ]; then
+                touch "$D/mr-open-gaveup"
+                "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): $PT passed QA but its MR won't open after $N tries — the branch is pushed; it needs a look (mr.sh create $PT)." >/dev/null 2>&1 || true
+                announce "$PT passed QA but I couldn't open its MR after $N tries, dearie — I've pinged you on Slack."
+              fi
+            fi
             if [ "$S" = qa-pass ] && [ ! -f "$D/mr-nudged" ]; then
               touch "$D/mr-nudged"
+              [ -f "$D/mr-open-attempts" ] || echo 1 > "$D/mr-open-attempts"
               if printf '%s' "$SCREEN" | grep -qE "^[[:space:]]*MARGIE_MR_OPEN|/-/merge_requests/[0-9]+|![0-9]{2,} (opened|created)"; then
                 announce "QA passed on $PT and the session already has an MR open — MR text at $D/mr.md if it needs updating (mr.sh update), dearie."
               else
@@ -887,6 +1008,7 @@ case "$cmd" in
                   IID="$(printf '%s' "$MRURL" | grep -oE '[0-9]+$')"
                   ( cd "$WT" && glab mr view "$IID" -F json 2>/dev/null | jq -c '{iid, url: .web_url, title}' ) > "$D/mr.json"
                   announce "QA passed on $PT — I opened MR !$IID ($MRURL), dearie. It'll go through review and merge on its own."
+                  notify_domain_owners "$WT" "$(basename "$(dmeta "$D" repo)")" "$D" "$PT" "$IID" "$MRURL"
                 else
                   announce "QA passed on $PT but I couldn't open the MR automatically, dearie — the branch may need a manual push. mr.sh create $PT."
                 fi
@@ -900,6 +1022,7 @@ case "$cmd" in
                 if [ -n "$IID" ]; then
                   (cd "$WT" && glab mr view "$IID" -F json 2>/dev/null | jq -c '{iid, url: .web_url, title}') > "$D/mr.json"
                   announce "MR !$IID is open for $PT ($(jq -r .url "$D/mr.json")). I'll review it and watch the pipeline, dearie."
+                  notify_domain_owners "$WT" "$(basename "$(dmeta "$D" repo)")" "$D" "$PT" "$IID" "$(jq -r .url "$D/mr.json")"
                 fi
               fi
               if [ -s "$D/mr.json" ]; then
@@ -909,6 +1032,17 @@ case "$cmd" in
                 SHA="$(jq -r '.sha // ""' "$D/mr-check.json" 2>/dev/null)"; PSTAT="$(jq -r '.pipeline // "none"' "$D/mr-check.json" 2>/dev/null)"; PID="$(jq -r '.pipeline_id // ""' "$D/mr-check.json" 2>/dev/null)"
                 # self-review once per commit, at most 3 rounds
                 UNRES="$(jq -r '.unresolved // 0' "$D/mr-check.json")"
+                # A fix that isn't a commit (replying to and resolving review threads, editing the
+                # MR description) never earned a re-review, because reviews key on the commit sha:
+                # !1154 sat on a stale 'request_changes' about Erich's threads long after every one
+                # was answered (2026-09-18). When the session says MARGIE_MR_UPDATED after a
+                # request_changes on this same sha, allow ONE fresh round for that sha.
+                if [ -n "$SHA" ] && [ "$(cat "$D/review-sha" 2>/dev/null)" = "$SHA" ] && [ ! -f "$D/review-running" ] \
+                   && [ "$(jq -r '.verdict // ""' "$D/review.json" 2>/dev/null)" = request_changes ] \
+                   && [ ! -f "$D/rereviewed-$SHA" ] && printf '%s' "$SCREEN" | grep -q "MARGIE_MR_UPDATED"; then
+                  touch "$D/rereviewed-$SHA"; rm -f "$D/review-sha"
+                  announce "The session says it addressed the review on MR !$(jq -r .iid "$D/mr.json") without a new commit — re-reviewing it, dearie."
+                fi
                 # Review cadence: a round runs when the MR first settles, then again only after the
                 # session has cleared every open thread — never per commit (that looped the bots).
                 if [ -n "$SHA" ] && [ "$(cat "$D/review-sha" 2>/dev/null)" != "$SHA" ] && [ ! -f "$D/review-running" ] && [ "$UNRES" = 0 ]; then
@@ -955,20 +1089,34 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     echo "$SHA" > "$D/review-sha"; touch "$D/review-running"; echo $(( $(cat "$D/review-rounds" 2>/dev/null || echo 0) + 1 )) > "$D/review-rounds"
                   fi
                 fi
-                if [ -f "$D/review-running" ] && [ -s "$D/review.json" ] && jq -e .verdict "$D/review.json" >/dev/null 2>&1; then
-                  rm -f "$D/review-running"; RV="$(jq -r .verdict "$D/review.json")"
+                # A review round that never delivers (its headless task died, the Mac slept, the
+                # network dropped) used to leave `review-running` forever, so no later commit was
+                # ever reviewed: !1186's rebased commit sat green and unreviewed for two hours
+                # (2026-09-19). Treat a marker older than the review's own time budget as dead.
+                if [ -f "$D/review-running" ] && [ ! -s "$D/review.json" ] \
+                   && [ $(( ( $(date +%s) - $(stat -f %m "$D/review-running") ) / 60 )) -ge "$(cfgd review_stale_minutes 45)" ]; then
+                  rm -f "$D/review-running" "$D/review-sha"
+                  announce "A review round on MR !$(jq -r .iid "$D/mr.json") for $PT never came back — starting a fresh one, dearie."
+                fi
+                # Harvest a verdict whenever review.json is NEWER than the last one we recorded —
+                # not only while the running-marker is present. A forced re-review (dispatch.sh
+                # review) whose marker got cleared underneath it left an approve verdict on disk
+                # that tick never read, so !1186 sat unmerged for hours (2026-09-19).
+                if [ -s "$D/review.json" ] && jq -e .verdict "$D/review.json" >/dev/null 2>&1 \
+                   && { [ -f "$D/review-running" ] || [ "$D/review.json" -nt "$D/review-harvested" ] 2>/dev/null || [ ! -f "$D/review-harvested" ]; }; then
+                  rm -f "$D/review-running"; touch "$D/review-harvested"; RV="$(jq -r .verdict "$D/review.json")"
                   # Post the local review to the MR so it is VISIBLE on GitLab (the charter agents
                   # don't post themselves; this record replaces the CI review bots' comments, so an
                   # MR never looks "unreviewed" while a real review happened). Once per commit.
                   if [ -n "$IID" ] && [ "$(cat "$D/review-note-sha" 2>/dev/null)" != "$SHA" ]; then
                     RSUM="$(jq -r '.summary_spoken // ""' "$D/review.json")"
                     RFND="$(jq -r 'if (.findings|length)>0 then ([.findings[] | "- " + (.severity//"nit") + " " + (.file//"") + (if .line then ":"+(.line|tostring) else "" end) + " — " + (.issue//"") + (if .fix then " → " + .fix else "" end)] | join("\n")) else "No findings." end' "$D/review.json")"
-                    RNOTE="$(printf '🤖 Local review (code-reviewer + adr-reviewer charters, on Margie'\''s plan; CI review bots retired) — verdict: **%s**\n\n%s\n\n%s' "$RV" "$RSUM" "$RFND")"
+                    RNOTE="$(printf '🤖 Local review (code-reviewer + adr-reviewer charters, on Margie'\''s plan; CI review bots retired) — verdict: **%s** for commit %s\n\n%s\n\n%s' "$RV" "${SHA:0:8}" "$RSUM" "$RFND")"
                     ( cd "$WT" && glab mr note create "$IID" --resolvable=false --message "$RNOTE" ) >/dev/null 2>&1 && echo "$SHA" > "$D/review-note-sha"
                   fi
                   SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"
                   if [ "$RV" = approve ]; then
-                    touch "$D/review-approved"; rm -f "$D/review-rejects"; announce "Reviewed MR !$IID for $PT: $(jq -r .summary_spoken "$D/review.json")"
+                    echo "$SHA" > "$D/review-approved"; rm -f "$D/review-rejects"; announce "Reviewed MR !$IID for $PT: $(jq -r .summary_spoken "$D/review.json")"
                   else
                     rm -f "$D/review-approved"
                     FND="$(jq -r '[.findings[] | select(.severity=="blocker" or .severity=="major") | .severity + " " + .file + (if .line then ":" + (.line|tostring) else "" end) + " — " + .issue + " → " + .fix] | join(" | ")' "$D/review.json" | cut -c1-1800)"
@@ -1030,7 +1178,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                 # Only an actual `approve` verdict merges — never round exhaustion (Tom's rule:
                 # an approved local review -> merge & move to the next ticket, unless the MR is held).
                 # A stuck request_changes blocks the merge until it's fixed and re-reviewed clean.
-                REVIEW_OK=0; [ -f "$D/review-approved" ] && REVIEW_OK=1
+                REVIEW_OK=0; approved_for "$D" "$SHA" && REVIEW_OK=1
                 # The bots must have ACTUALLY reviewed before merge — "0 open threads" is
                 # trivially true before they post. Require the review bridges finished and the
                 # bots posted (or none exist in this repo). This stops merging unreviewed.
@@ -1054,7 +1202,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   # MRs skip all of this (is_ui_change returns false).
                   if [ "$(cat "$D/ui-verified-sha" 2>/dev/null)" = "$SHA" ]; then
                     :   # already shown for this commit — holding for Tom's word
-                  elif [ -s "$D/ui-shot.png" ]; then
+                  elif [ -s "$D/ui-shot.png" ] && [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" = "$SHA" ] && ui_shot_final "$D" "$SCREEN"; then
                     [ "$(cat "$MDIR/web-review.lock" 2>/dev/null)" = "$(basename "$D")" ] && rm -f "$MDIR/web-review.lock"
                     open "$D/ui-shot.png" >/dev/null 2>&1 || true
                     METHOD="in the simulator"; is_web_ui_change "$WT" "$REPO_NAME" && METHOD="in a browser"
@@ -1065,7 +1213,12 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                       || "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): $UIMSG (screenshot is open on your Mac.)" >/dev/null 2>&1 || true
                     echo "$SHA" > "$D/ui-verified-sha"
                     announce "MR !$IID for $PT is a UI/UX change, dearie — I verified it $METHOD and captured a screenshot (open on your Mac, and I pinged you on Slack). I won't merge a UI/UX change without your eyes: say \"merge\" when it looks right."
-                  elif [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ] && web_review_slot_free "$D" "$WT" "$REPO_NAME"; then
+                  elif { [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ] || ui_verify_stale "$D"; } && web_review_slot_free "$D" "$WT" "$REPO_NAME"; then
+                    if [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" = "$SHA" ]; then
+                      echo $(( $(cat "$D/ui-verify-attempts" 2>/dev/null || echo 0) + 1 )) > "$D/ui-verify-attempts"
+                    else
+                      echo 1 > "$D/ui-verify-attempts"; rm -f "$D/ui-verify-gaveup"
+                    fi
                     echo "$SHA" > "$D/ui-verify-kicked"; rm -f "$D/ui-shot.png"
                     if is_web_ui_change "$WT" "$REPO_NAME"; then
                       echo "$(basename "$D")" > "$MDIR/web-review.lock"
@@ -1106,6 +1259,11 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     else
                       announce "MR !$IID for $PT touches the UI - booting it in the simulator to verify visually before any merge, dearie."
                     fi
+                  elif ui_verify_exhausted "$D" && [ ! -f "$D/ui-verify-gaveup" ]; then
+                    # Retries spent and still no screenshot: tell Tom rather than sit silently.
+                    touch "$D/ui-verify-gaveup"
+                    "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): MR !$IID ($PT) is green and mergeable, but I couldn't capture the UI screenshot after $(cat "$D/ui-verify-attempts" 2>/dev/null || echo several) tries — it's holding for your eyes WITHOUT one. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)" >/dev/null 2>&1 || true
+                    announce "I couldn't get a screenshot of MR !$IID for $PT after several tries, dearie — it's green and held for you, and I've said so on Slack."
                   fi
                 elif [ "$GATE_GREEN" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
                   echo "$SHA" > "$D/merge-ready"
