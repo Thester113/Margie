@@ -235,6 +235,15 @@ case "$cmd" in
         HARD='push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -r[a-z]* +(/|~|\$HOME|\.\.|(lib|apps|src|test|config|priv|scripts)/)|git clean|git checkout (-- )?\.( |$)|terraform (apply|destroy)|\.margie/config\.json|>>? *[^ ]*\.env|(cat|less|more|head|tail|bat) +[^|;&]*\.env(\.secrets)?\b|(printenv|^ *env|set) *\|[^|]*(secret|token|api.?key)'
         SOFT='deploy|production|secrets?|credential|\.env\b'
         SAFE=0; [ "$JDANGER" = "no" ] && [ -n "$JPROB" ] && [ "$(awk -v p="$JPROB" 'BEGIN{print (p<0.35)}')" = 1 ] && SAFE=1
+        # A `git push --force-with-lease origin <this session's own branch>` is the rebase
+        # workflow tick itself asks for after a merge conflict (2026-09-21, !1207): with lease,
+        # to the session's own feature branch, never main. Judge the rest of the prompt as if
+        # that push were not there; a force to any other ref stays HARD.
+        OWNBR="${S#margie-}"; JUDGE="$MENU"
+        if [ -n "$OWNBR" ] && printf '%s' "$MENU" | tr '/' '-' | grep -qE -- "--force-with-lease +origin +${OWNBR}([^a-zA-Z0-9_-]|$)"; then
+          JUDGE="$(printf '%s' "$MENU" | sed -E 's/--force-with-lease +origin +[^ ]+/(own-branch push)/g')"
+          [ "$SAFE" = 0 ] && [ "$JDANGER" = "yes" ] && { JDANGER="own-branch-push"; SAFE=1; }
+        fi
         # Third opinion before Tom (his call, 2026-09-21): a HARD hit goes straight to him,
         # but a Jev/SOFT escalation is judged once by Margie's brain (Claude) with the
         # prompt in front of it — every parked session today (grep .env, ls .env.secrets,
@@ -242,13 +251,13 @@ case "$cmd" in
         # reasoning model clears in one look. The brain answers SAFE or ESCALATE: <why>;
         # anything else (error, timeout) still escalates to Tom. Asked once per prompt.
         BRAIN_SAFE=0; BRAIN_WHY=""
-        if ! printf '%s' "$MENU" | grep -qiE "$HARD" \
-           && { { printf '%s' "$MENU" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } || [ "$JDANGER" = "yes" ]; } \
+        if ! printf '%s' "$JUDGE" | grep -qiE "$HARD" \
+           && { { printf '%s' "$JUDGE" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } || [ "$JDANGER" = "yes" ]; } \
            && [ -x "$MARGIE_CLI" ] && [ "$(cat "$ST/$S.brainask" 2>/dev/null)" != "$H" ]; then
           echo "$H" > "$ST/$S.brainask"
-          BQ="PERMISSION PROMPT from coding session $S (a Claude Code session in its own git worktree). It asks to run what follows. Tom's rule: routine local development steps are answered yes for him — running or writing tests, scripts, seeds and fixtures; the project's own bin/ and mix commands and pre-commit gates (including a secrets SCAN); local docker containers and test databases with throwaway credentials; clearing tmp/_build/deps; grepping .env, .envrc or config/*.exs for key NAMES (those files hold non-secret dev settings; only .env.secrets holds real values). ESCALATE only if saying yes would be irreversible (force-push, history rewrite, discarding uncommitted work, deleting source), touch production or a deployment, print or copy secret VALUES (cat/head of .env.secrets, printenv of keys/tokens) or write credentials, spend money, message people, or reach outside the worktree (absolute paths, ~, ..). Reply with exactly one line: SAFE or ESCALATE: <one-line reason>. Nothing else.
+          BQ="PERMISSION PROMPT from coding session $S (a Claude Code session in its own git worktree). It asks to run what follows. Tom's rule: routine local development steps are answered yes for him — running or writing tests, scripts, seeds and fixtures; the project's own bin/ and mix commands and pre-commit gates (including a secrets SCAN); local docker containers and test databases with throwaway credentials; clearing tmp/_build/deps; grepping .env, .envrc or config/*.exs for key NAMES (those files hold non-secret dev settings; only .env.secrets holds real values). A git push --force-with-lease to the session's OWN feature branch right after a rebase is routine (that is what the harness asked for). ESCALATE only if saying yes would be irreversible (force-push to main or another branch, history rewrite, discarding uncommitted work, deleting source), touch production or a deployment, print or copy secret VALUES (cat/head of .env.secrets, printenv of keys/tokens) or write credentials, spend money, message people, or reach outside the worktree (absolute paths, ~, ..). Reply with exactly one line: SAFE or ESCALATE: <one-line reason>. Nothing else.
 ---
-$(printf '%s' "$MENU" | grep -vE '^[│>❯ ]*$|esc to interrupt' | tail -24)"
+$(printf '%s' "$JUDGE" | grep -vE '^[│>❯ ]*$|esc to interrupt' | tail -24)"
           BA="$(MARGIE_SOURCE=session "$MARGIE_CLI" -q "$BQ" 2>/dev/null | tr -d '\r' | grep -E '^(SAFE|ESCALATE)' | head -1)"
           case "$BA" in
             SAFE*) BRAIN_SAFE=1; "$(dirname "$0")/jev.sh" outcome danger "clear(brain) after jev=${JDANGER:-unavailable}${JPROB:+@$JPROB} $S" >/dev/null 2>&1 ;;
@@ -256,18 +265,18 @@ $(printf '%s' "$MENU" | grep -vE '^[│>❯ ]*$|esc to interrupt' | tail -24)"
             *) "$(dirname "$0")/jev.sh" outcome danger "escalate(brain-unavailable) $S" >/dev/null 2>&1 ;;
           esac
         fi
-        if printf '%s' "$MENU" | grep -qiE "$HARD" \
-           || { [ "$BRAIN_SAFE" = 0 ] && { { printf '%s' "$MENU" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } || [ "$JDANGER" = "yes" ]; }; }; then
+        if printf '%s' "$JUDGE" | grep -qiE "$HARD" \
+           || { [ "$BRAIN_SAFE" = 0 ] && { { printf '%s' "$JUDGE" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } || [ "$JDANGER" = "yes" ]; }; }; then
           WHY="waiting on a prompt I will NOT answer for you (it looks dangerous${BRAIN_WHY:+:$BRAIN_WHY})"
           if [ "$(cat "$ST/$S.dlogged" 2>/dev/null)" != "$H" ]; then echo "$H" > "$ST/$S.dlogged"
-            if printf '%s' "$MENU" | grep -qiE "$HARD"; then DW="escalate(hard)"; elif [ "$JDANGER" = "yes" ]; then DW="escalate(jev=$JPROB)"; else DW="escalate(soft,jev=${JDANGER:-unavailable}${JPROB:+@$JPROB})"; fi
+            if printf '%s' "$JUDGE" | grep -qiE "$HARD"; then DW="escalate(hard)"; elif [ "$JDANGER" = "yes" ]; then DW="escalate(jev=$JPROB)"; else DW="escalate(soft,jev=${JDANGER:-unavailable}${JPROB:+@$JPROB})"; fi
             "$(dirname "$0")/jev.sh" outcome danger "$DW $S" >/dev/null 2>&1
           fi
         elif printf '%s' "$MENU" | grep -qE 'Yes, I trust'; then
           "$TMUX_BIN" send-keys -t "$S" Down; sleep 0.3; "$TMUX_BIN" send-keys -t "$S" Enter
           echo "$H" > "$ST/$S.told"; echo "Session $S asked to trust its folder — answered yes for you."; continue
         elif printf '%s' "$MENU" | grep -qE '❯ *1\.|^ *1\. Yes|Do you want to'; then
-          "$(dirname "$0")/jev.sh" outcome danger "$( [ "$SAFE" = 1 ] && printf '%s' "$MENU" | grep -qiE "$SOFT" && echo "clear(jev=$JPROB)" || echo "answer(jev=${JDANGER:-unavailable}${JPROB:+@$JPROB})") $S" >/dev/null 2>&1
+          "$(dirname "$0")/jev.sh" outcome danger "$( [ "$SAFE" = 1 ] && printf '%s' "$MENU" | grep -qiE "$SOFT" && echo "clear(${JDANGER:-jev}=$JPROB)" || echo "answer(jev=${JDANGER:-unavailable}${JPROB:+@$JPROB})") $S" >/dev/null 2>&1
           "$TMUX_BIN" send-keys -t "$S" 1; sleep 0.3; "$TMUX_BIN" send-keys -t "$S" Enter
           echo "$H" > "$ST/$S.told"; echo "Session $S asked permission ($(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | grep -iE 'want to|proceed|allow|run' | head -1 | cut -c1-120)) — answered yes for you."; continue
         elif printf '%s' "$TAIL" | grep -qE '\(y/n\)|\[Y/n\]|\[y/N\]'; then
