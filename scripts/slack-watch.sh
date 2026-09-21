@@ -242,6 +242,7 @@ Tom's request in that thread: $ASK"
     MWHO="Margie"; [ "$kind" = "owner" ] && MWHO="$OWNER_NAME"
     MJ="$(printf '%s' "$clean" | "$(dirname "$0")/jev.sh" mention "$MWHO" "$OWNER_NAME" 2>/dev/null)"
     if [ "$(printf '%s' "$MJ" | cut -f1)" = "no_reply" ] && awk -v c="$(printf '%s' "$MJ" | cut -f2)" 'BEGIN{exit !(c >= 0.7)}'; then
+      "$(dirname "$0")/jev.sh" outcome mention "skip $kind $label jev=$(printf '%s' "$MJ" | tr '\t' '@')" >/dev/null 2>&1
       logl "skip ($kind, not addressed per jev $(printf '%s' "$MJ" | cut -f2)) $label ts=$ts: $(printf '%s' "$clean" | cut -c1-80)"
       echo "${NOW}|${ts}" >> "$HANDLED"
       if [ "$kind" = "owner" ]; then
@@ -251,6 +252,7 @@ $LINK}"
       fi
       continue
     fi
+    "$(dirname "$0")/jev.sh" outcome mention "reply $kind $label jev=$(printf '%s' "${MJ:-unavailable}" | tr '\t' '@')" >/dev/null 2>&1
   fi
   if [ "$kind" = "colleague" ]; then
     # Defer when Tom is actively in the thread (he replied after this message) — he's got it.

@@ -232,17 +232,22 @@ case "$cmd" in
         # Jev unavailable or unsure means the old behaviour.
         # rm is hard only outside the checkout or on source trees; the project's own tmp/_build/
         # deps cleanup is Jev's call (it reads "rm -rf tmp/x" as routine since 2026-09-21).
-        HARD='push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -r[a-z]* +(/|~|\$HOME|\.\.|(lib|apps|src|test|config|priv|scripts)/)|git clean|git checkout (-- )?\.( |$)|terraform (apply|destroy)|\.margie/config\.json|>>? *[^ ]*\.env'
+        HARD='push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -r[a-z]* +(/|~|\$HOME|\.\.|(lib|apps|src|test|config|priv|scripts)/)|git clean|git checkout (-- )?\.( |$)|terraform (apply|destroy)|\.margie/config\.json|>>? *[^ ]*\.env|(cat|less|more|head|tail|bat) +[^|;&]*\.env(\.secrets)?\b|(printenv|^ *env|set) *\|[^|]*(secret|token|api.?key)'
         SOFT='deploy|production|secrets?|credential|\.env\b'
         SAFE=0; [ "$JDANGER" = "no" ] && [ -n "$JPROB" ] && [ "$(awk -v p="$JPROB" 'BEGIN{print (p<0.35)}')" = 1 ] && SAFE=1
         if printf '%s' "$MENU" | grep -qiE "$HARD" \
            || { printf '%s' "$MENU" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } \
            || [ "$JDANGER" = "yes" ]; then
           WHY="waiting on a prompt I will NOT answer for you (it looks dangerous)"
+          if [ "$(cat "$ST/$S.dlogged" 2>/dev/null)" != "$H" ]; then echo "$H" > "$ST/$S.dlogged"
+            if printf '%s' "$MENU" | grep -qiE "$HARD"; then DW="escalate(hard)"; elif [ "$JDANGER" = "yes" ]; then DW="escalate(jev=$JPROB)"; else DW="escalate(soft,jev=${JDANGER:-unavailable}${JPROB:+@$JPROB})"; fi
+            "$(dirname "$0")/jev.sh" outcome danger "$DW $S" >/dev/null 2>&1
+          fi
         elif printf '%s' "$MENU" | grep -qE 'Yes, I trust'; then
           "$TMUX_BIN" send-keys -t "$S" Down; sleep 0.3; "$TMUX_BIN" send-keys -t "$S" Enter
           echo "$H" > "$ST/$S.told"; echo "Session $S asked to trust its folder — answered yes for you."; continue
         elif printf '%s' "$MENU" | grep -qE '❯ *1\.|^ *1\. Yes|Do you want to'; then
+          "$(dirname "$0")/jev.sh" outcome danger "$( [ "$SAFE" = 1 ] && printf '%s' "$MENU" | grep -qiE "$SOFT" && echo "clear(jev=$JPROB)" || echo "answer(jev=${JDANGER:-unavailable}${JPROB:+@$JPROB})") $S" >/dev/null 2>&1
           "$TMUX_BIN" send-keys -t "$S" 1; sleep 0.3; "$TMUX_BIN" send-keys -t "$S" Enter
           echo "$H" > "$ST/$S.told"; echo "Session $S asked permission ($(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$' | grep -iE 'want to|proceed|allow|run' | head -1 | cut -c1-120)) — answered yes for you."; continue
         elif printf '%s' "$TAIL" | grep -qE '\(y/n\)|\[Y/n\]|\[y/N\]'; then
@@ -271,11 +276,12 @@ case "$cmd" in
         JKIND="$(printf '%s' "$JEV" | cut -f1)"; JCONF="$(printf '%s' "$JEV" | cut -f2)"; JNEED="$(printf '%s' "$JEV" | cut -f3)"
         if [ -n "$JKIND" ] && awk -v c="${JCONF:-0}" -v n="${JNEED:-1}" 'BEGIN{exit !(c >= 0.5 && n < 0.5)}'; then
           case "$JKIND" in
-            working) continue ;;                                         # the regex misread a busy screen
-            transient_error) echo "Session $S stopped on a transient error (${SNIP:0:120}) — the recovery nudge handles it; nothing to answer." ; continue ;;
-            checkpoint) echo "Session $S is idle with nothing left for anyone (${SNIP:0:140})." ; continue ;;
+            working) "$(dirname "$0")/jev.sh" outcome session "skip working $S" >/dev/null 2>&1; continue ;;   # the regex misread a busy screen
+            transient_error) "$(dirname "$0")/jev.sh" outcome session "skip transient_error $S" >/dev/null 2>&1; echo "Session $S stopped on a transient error (${SNIP:0:120}) — the recovery nudge handles it; nothing to answer." ; continue ;;
+            checkpoint) "$(dirname "$0")/jev.sh" outcome session "skip checkpoint $S" >/dev/null 2>&1; echo "Session $S is idle with nothing left for anyone (${SNIP:0:140})." ; continue ;;
           esac
         fi
+        "$(dirname "$0")/jev.sh" outcome session "brain kind=${JKIND:-unavailable}${JCONF:+@$JCONF} needs=${JNEED:-?} $S" >/dev/null 2>&1
         ASK="$(cat <<'EOT'
 SESSION QUESTION/REPORT. A coding session stopped; its last lines follow. Decide the next step yourself: (a) if it asked something you can answer from the notes and conventions (names, versions, defaults, order, what Tom decided), answer it with session.sh send "<answer>" --session SESSION_NAME; (b) if it finished and listed what is still needed, do the next item yourself when a helper covers it (telnyx.sh, notion.sh, dispatch.sh…) or send the next instruction into the session; then reply with one line saying what you did. If the next step needs money you have no standing to spend, credentials, or a product decision Tom has not made, do nothing and reply exactly: ESCALATE: <one-line ask for Tom>. Never leave a session idle with work left.
 EOT

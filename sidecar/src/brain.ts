@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { jev, confident, jevEnabled } from "./jev.js";
+import { jev, confident, jevEnabled, jevOutcome } from "./jev.js";
 
 /** Log the actual conversation with the brain so failures are observable. */
 export function logBrain(line: string) {
@@ -1023,6 +1023,22 @@ function reviewFastPath(text: string): { pr: string; repo: string } | null {
   return { pr: m[1], repo };
 }
 
+/** Is Tom asking for a review of MR/PR `n`, or does the text only mention one (a status
+ *  line, a quote, a report)? Only a confident "mention" (≥0.9) suppresses the fast path. */
+async function reviewIsMention(text: string, n: string): Promise<boolean> {
+  const a = await jev("review_intent", { text: text.trim().slice(0, 600), number: n }, {
+    intent: {
+      type: "choice",
+      instructions: `The owner's assistant runs a code review when told to. This message names ${NOUN} ${n} and the word "review". Is it an instruction to run a review of ${NOUN} ${n} now?`,
+      criteria: {
+        instruction: `Yes: it asks for a review of ${NOUN} ${n} (review it, have it reviewed, kick off the review, take a look at it)`,
+        mention: `No: it reports, quotes or discusses a review that happened or is pending, asks about the status of one, or names the number for another reason`,
+      },
+    },
+  });
+  return confident(a?.intent, 0.9) === "mention";
+}
+
 function runReviewScript(pr: string, repo: string): Promise<string> {
   return new Promise((resolve) => {
     const child = spawn(`${SCRIPTS}/review-pr.sh`, [pr, repo, ENGINE], { env: process.env });
@@ -1324,7 +1340,8 @@ async function preBrief(text: string): Promise<string> {
         dispatch: { type: "choice", instructions: "The owner asks about the status of work in flight. Which dispatched piece of work (keyed by id, described by its title) is `question` about?", criteria },
       });
       const pick = confident(a?.dispatch, 0.6);
-      if (pick && pick !== "none" && criteria[pick]) { logBrain(`JEV brief → ${pick}`); best = pick; }
+      if (pick && pick !== "none" && criteria[pick]) { logBrain(`JEV brief → ${pick}`); best = pick; jevOutcome("brief", `picked ${pick}`); }
+      else jevOutcome("brief", `fallback-overlap ${best || "none"} (jev=${a?.dispatch && a.dispatch.type === "choice" ? `${a.dispatch.choice}@${a.dispatch.confidence}` : "unavailable"})`);
     }
     if (!best) return "";
     const out = await runBashRaw(`${SCRIPTS}/dispatch.sh brief ${best}`);
@@ -1535,6 +1552,7 @@ async function drain() {
       const k = await jevReply(text, pending.map((p) => p.cmd), lastMargie);
       if (k === "approve") verdict = "yes"; else if (k === "decline") verdict = "no";
       if (k) logBrain(`JEV reply → ${k}${pending.length ? ` (${pending.length} held)` : ""}: ${text.trim().slice(0, 80)}`);
+      jevOutcome("reply", `${k === "approve" ? "run" : k === "decline" ? "cancel" : "drop"} kind=${k || "unavailable"} held=${pending.length}`);
     }
     turnApproved = verdict === "yes";
     const fresh = pending.filter((p) => Date.now() - p.at < PENDING_TTL_MS);
@@ -1587,8 +1605,16 @@ async function drain() {
       pending = []; savePending();
     }
     // Deterministic PR/MR-review dispatch — never let the model self-review.
+    // Only for Tom's own words: a session's screen ("Review of MR !1187 requested
+    // changes…") or a colleague's message can name an MR and "review" without asking
+    // for one, and the fast path used to kick off a real review on it. Jev reads
+    // whether the text is an instruction to review; unsure → the old fast path.
     const fp = reviewFastPath(text);
-    if (fp) {
+    if (fp && (turn.source === "session" || turn.speaker)) {
+      jevOutcome("review_intent", `skip source=${turn.source || "app"}${turn.speaker ? " speaker=" + turn.speaker : ""} ${NOUN} ${fp.pr}`);
+    } else if (fp && await reviewIsMention(text, fp.pr)) {
+      jevOutcome("review_intent", `skip mention ${NOUN} ${fp.pr}: ${text.trim().slice(0, 60)}`);
+    } else if (fp) {
       const out = await runReviewScript(fp.pr, fp.repo);
       logBrain(`MARGIE[${id}] (${Date.now() - started}ms, FASTPATH review ${NOUN} ${fp.pr} ${fp.repo}): ${out}`);
       turn.reply(out);

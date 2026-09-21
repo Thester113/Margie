@@ -441,7 +441,8 @@ case "$cmd" in
         work_existing) [ "$(printf '%s' "$JV" | cut -f2 | awk '{print ($1>=0.9)}')" = 1 ] && EXPT="$FIRSTPT" ;;
         context_only)  [ "$(printf '%s' "$JV" | cut -f2 | awk '{print ($1>=0.9)}')" = 1 ] && EXPT="-" ;;
       esac
-      [ -z "$EXPT" ] && EXPT="$(printf '%s' "$REQ" | head -c 64 | grep -oiE '\bPT-[0-9]+\b' | head -1 | tr 'a-z' 'A-Z')"
+      if [ -n "$EXPT" ]; then "$DIR/jev.sh" outcome ticket "$([ "$EXPT" = "-" ] && echo context_only || echo "work_existing $EXPT") jev=$(printf '%s' "$JV" | tr '\t' '@')" >/dev/null 2>&1
+      else EXPT="$(printf '%s' "$REQ" | head -c 64 | grep -oiE '\bPT-[0-9]+\b' | head -1 | tr 'a-z' 'A-Z')"; "$DIR/jev.sh" outcome ticket "fallback-regex ${EXPT:-none} jev=$(printf '%s' "${JV:-unavailable}" | tr '\t' '@')" >/dev/null 2>&1; fi
       [ "$EXPT" = "-" ] && EXPT=""
     fi
     [ -n "$EXPT" ] && echo "$EXPT" > "$D/existing-pt.txt"
@@ -991,7 +992,7 @@ case "$cmd" in
                 if printf '%s' "$SCREEN" | grep -qiE "waiting (on|for) (margie'?s )?qa|ready for qa|hand(ed)? (off|over) to qa|over to (margie|qa)"; then HANDED=1
                 elif printf '%s' "$SCREEN" | grep -qE "· done [0-9]"; then
                   JK="$(printf '%s' "$SCREEN" | "$DIR/jev.sh" session 2>/dev/null | cut -f1)"
-                  case "$JK" in checkpoint|handoff) HANDED=1 ;; esac
+                  case "$JK" in checkpoint|handoff) HANDED=1; "$DIR/jev.sh" outcome session "qa-handoff $PT kind=$JK" >/dev/null 2>&1 ;; esac
                 fi
               fi
               if { printf '%s' "$SCREEN" | grep -qE '^[[:space:]]*MARGIE_READY_FOR_QA[[:space:]]*$' && [ "$IDLE" = 1 ]; } \
@@ -1205,11 +1206,28 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   echo "${PID:-x}" > "$D/reviews-failed-pid"
                   announce "Heads up, dearie: the review bots FAILED on MR !$IID for $PT — their CI jobs errored (not just slow), so no real review happened. This usually means the walt_ui CI's Anthropic credit balance ran out; it needs a CI fix, not a re-run. Merge is held until they pass. $(jq -r '.pipeline_url // empty' "$D/mr-check.json")"
                 fi
-                # pipeline failed -> once per pipeline, send it back
+                # pipeline failed -> once per pipeline: was it the runner/db/quota (retry the
+                # failed jobs once, same commit) or the code (send it back to the session)?
+                # Jev reads the failed jobs' log tails; unsure or unavailable → the session,
+                # as before. A pipeline is retried at most once (marker ci-retried-<pid>).
                 if [ "$PSTAT" = failed ] && [ -n "$PID" ] && [ "$(cat "$D/pipeline-failed" 2>/dev/null)" != "$PID" ]; then
                   echo "$PID" > "$D/pipeline-failed"
-                  "$DIR/session.sh" send "The MR pipeline failed: $(jq -r .pipeline_url "$D/mr-check.json"). Read the failing job logs (glab ci view / glab api), fix the cause, commit and push, then print MARGIE_MR_UPDATED and STOP — Margie watches the pipeline." --branch "$BR" >/dev/null 2>&1
-                  announce "Pipeline failed on MR !$IID for $PT — I've sent it back to the session to fix, dearie."
+                  CAUSE=""; JC=""; FAILED_JOBS="$(cd "$WT" && glab ci get -p "$PID" -F json 2>/dev/null | jq -r '.jobs[]? | select(.status=="failed" and (.allow_failure|not)) | "\(.id)\t\(.name)"')"
+                  if [ -n "$FAILED_JOBS" ] && [ ! -f "$D/ci-retried-$PID" ]; then
+                    TAILS="$(printf '%s\n' "$FAILED_JOBS" | while IFS=$'\t' read -r jid jname; do [ -n "$jid" ] || continue; echo "=== job $jname"; ( cd "$WT" && glab ci trace "$jid" 2>/dev/null ) | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -vE '^\s*$' | tail -60; done | tail -200)"
+                    JC="$(printf '%s' "$TAILS" | "$DIR/jev.sh" ci_failure 2>/dev/null)" || JC=""
+                    if [ "$(printf '%s' "$JC" | cut -f1)" = infrastructure ] && [ "$(printf '%s' "$JC" | cut -f2 | awk '{print ($1>=0.8)}')" = 1 ]; then CAUSE=infrastructure; fi
+                  fi
+                  if [ "$CAUSE" = infrastructure ]; then
+                    touch "$D/ci-retried-$PID"
+                    printf '%s\n' "$FAILED_JOBS" | while IFS=$'\t' read -r jid jname; do [ -n "$jid" ] && ( cd "$WT" && glab ci retry "$jid" >/dev/null 2>&1 ); done
+                    "$DIR/jev.sh" outcome ci_failure "retry pipeline=$PID jobs=$(printf '%s' "$FAILED_JOBS" | cut -f2 | tr '\n' ',')" >/dev/null 2>&1
+                    announce "Pipeline failed on MR !$IID for $PT but the runner/database gave out, not the code ($(printf '%s' "$FAILED_JOBS" | cut -f2 | tr '\n' ' ')) — I've retried those jobs once, dearie."
+                  else
+                    "$DIR/jev.sh" outcome ci_failure "session pipeline=$PID $( [ -f "$D/ci-retried-$PID" ] && echo already-retried || echo "jev=$(printf '%s' "${JC:-unavailable}" | tr '\t' '@')")" >/dev/null 2>&1
+                    "$DIR/session.sh" send "The MR pipeline failed: $(jq -r .pipeline_url "$D/mr-check.json"). Read the failing job logs (glab ci view / glab api), fix the cause, commit and push, then print MARGIE_MR_UPDATED and STOP — Margie watches the pipeline." --branch "$BR" >/dev/null 2>&1
+                    announce "Pipeline failed on MR !$IID for $PT — I've sent it back to the session to fix, dearie."
+                  fi
                 fi
                 # ready to merge -> tell Tom once per commit; merging is his word (dispatch.sh merge)
                 # Only an actual `approve` verdict merges — never round exhaustion (Tom's rule:

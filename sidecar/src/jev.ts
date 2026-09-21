@@ -68,6 +68,9 @@ export async function jev(tag: string, state: unknown, questions: Record<string,
   }
 }
 
+/** What the caller did with an answer — logged next to it so the log shows decisions, not just answers. */
+export function jevOutcome(tag: string, what: string) { log(`outcome ${tag} ${what}`); }
+
 /** Convenience: a Choice answer only when it is confident enough, else null. */
 export function confident(a: Answer | undefined, min: number): string | null {
   if (!a || a.type !== "choice" || a.confidence < min) return null;

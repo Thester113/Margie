@@ -145,6 +145,25 @@
   deterministic (a field, a status), and moves regex guesses onto Jev with a
   fixture.** A headless task's failure reason (`claude-task.sh why`:
   `terminal_reason` such as `budget_exhausted`) is deterministic — no Jev.
+  Every decision, its gate, and what happens below the gate (all fail closed):
+
+  | decision (`jev.sh` / `jev()`) | caller | acts when | below the gate |
+  |---|---|---|---|
+  | `session` kind + needs_operator | `session.sh needs` | kind conf ≥0.5 and needs <0.5 → skip checkpoint / transient / working | wake the brain (old path) |
+  | `session` (QA hand-off) | `dispatch.sh tick` | idle + clean + ahead of main and kind ∈ {checkpoint, handoff} | wait for the marker |
+  | `danger` risky | `session.sh needs` | HARD regex → escalate always; SOFT word + Jev <0.35 → answer; Jev ≥0.5 → escalate | SOFT word → escalate |
+  | `mention` addressed | `slack-watch.sh` | no_reply ≥0.7 → don't compose | reply as before |
+  | `ticket` intent | `dispatch.sh spec` | ≥0.9 either way | PT in first 64 chars = work it |
+  | `ci_failure` cause | `dispatch.sh tick` | infrastructure ≥0.8 → retry the failed jobs once | send the red pipeline to the session |
+  | `review_intent` | brain fast path | mention ≥0.9 → no fast path; session-sourced or colleague text never fast-paths | run `review-pr.sh` (old path) |
+  | `reply` kind | brain confirm gate | approve ≥0.9 → run; decline/edit/other ≥0.75 | regex verdict (drop) |
+  | `brief` dispatch | brain status pre-brief | ≥0.6 | title-overlap score |
+
+  `jev.sh outcome <decision> <what>` (and `jevOutcome()` in TS) writes what the
+  caller DID next to the answer in `~/.margie/jev.log` — grep `outcome` to see
+  escalate(hard) / clear(jev) / retry / brain / skip counts. `jev.sh auto` (poller,
+  5 min) runs the fixtures nightly and whenever the served model id changes, logs
+  to `~/.margie/jev-check.log`, and Slacks Tom only on a FAIL.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on Tom's short affirmative (regex, or Jev at ≥0.9) within
