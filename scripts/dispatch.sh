@@ -38,6 +38,13 @@ dmeta() { jq -r ".$2 // empty" "$1/d.json" 2>/dev/null; }
 # is_ui_change <worktree> <repo-name> — 0 if this branch's diff touches a UI path
 # (config ui_review_paths[<repo>], e.g. ["mobile/"]); 1 otherwise. Backend-only
 # MRs return 1 so they never trigger the simulator visual-review gate.
+# patch-id of the MR's diff restricted to the repo's ui_review_paths (empty when none).
+ui_patch_id() { # ui_patch_id <worktree> <repo>
+  local wt="$1" repo="$2" pats
+  pats="$(jq -r --arg r "$repo" '.ui_review_paths[$r][]? // empty' "$CFG" 2>/dev/null | tr '\n' ' ')"
+  [ -z "$pats" ] && return 0
+  ( cd "$wt" && git fetch -q origin "$(cfgd mr_target_branch main)" 2>/dev/null; git diff "origin/$(cfgd mr_target_branch main)...HEAD" -- $pats 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1 )
+}
 is_ui_change() {
   local wt="$1" repo="$2" pats f
   [ "$(cfgd ui_review true)" = true ] || return 1
@@ -1078,6 +1085,33 @@ case "$cmd" in
                 SHA="$(jq -r '.sha // ""' "$D/mr-check.json" 2>/dev/null)"; PSTAT="$(jq -r '.pipeline // "none"' "$D/mr-check.json" 2>/dev/null)"; PID="$(jq -r '.pipeline_id // ""' "$D/mr-check.json" 2>/dev/null)"
                 # self-review once per commit, at most 3 rounds
                 UNRES="$(jq -r '.unresolved // 0' "$D/mr-check.json")"
+                # MERGE CONFLICT with main (another MR landed on the same files): the train drops
+                # the MR and nothing used to happen — a human told the session to rebase every
+                # time (!1180/!1186/!1189/!1187 on 09-19, !1207 on 09-21). Tell the session once
+                # per commit; kick a fresh one if it has exited. The rebased commit then goes
+                # through review and the UI check like any other.
+                if [ "$(jq -r '.conflicts // false' "$D/mr-check.json")" = true ] && [ -n "$SHA" ] && [ "$(cat "$D/conflict-nudged" 2>/dev/null)" != "$SHA" ]; then
+                  echo "$SHA" > "$D/conflict-nudged"
+                  CMSG="MR !$IID now CONFLICTS with $(cfgd mr_target_branch main) (another MR touched the same files). Fetch origin, rebase this branch onto origin/$(cfgd mr_target_branch main), resolve every conflict keeping BOTH sides' intent (read the other change's commit message and tests), run the affected tests, force-push with --force-with-lease, then print MARGIE_MR_UPDATED and STOP — Margie re-reviews and re-verifies the new commit."
+                  SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"
+                  if tmux has-session -t "$SESS" 2>/dev/null; then
+                    "$DIR/session.sh" send "$CMSG" --branch "$BR" >/dev/null 2>&1
+                  else
+                    "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "You are back on branch $BR (ticket $PT). $CMSG" >/dev/null 2>&1
+                  fi
+                  announce "MR !$IID for $PT conflicts with $(cfgd mr_target_branch main) now — I've sent the session to rebase and resolve it, dearie."
+                fi
+                # A rebase whose UI diff is byte-identical keeps Tom's screenshot approval: the
+                # shot verifies the UI paths, so if the diff restricted to ui_review_paths has the
+                # same patch-id as the commit he approved, carry the marker to the new commit
+                # instead of taking (and asking him to look at) the same screenshot again.
+                if [ -n "$SHA" ] && [ -s "$D/ui-verified-sha" ] && [ "$(cat "$D/ui-verified-sha")" != "$SHA" ] && [ -s "$D/ui-verified-patch" ]; then
+                  NEWPATCH="$(ui_patch_id "$WT" "$(basename "$(dmeta "$D" repo)")")"
+                  if [ -n "$NEWPATCH" ] && [ "$NEWPATCH" = "$(cat "$D/ui-verified-patch")" ]; then
+                    echo "$SHA" > "$D/ui-verified-sha"
+                    announce "MR !$IID for $PT was rebased with the UI unchanged — keeping your screenshot approval for the new commit, dearie."
+                  fi
+                fi
                 # A fix that isn't a commit (replying to and resolving review threads, editing the
                 # MR description) never earned a re-review, because reviews key on the commit sha:
                 # !1154 sat on a stale 'request_changes' about Erich's threads long after every one
@@ -1281,7 +1315,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     # Mark it shown FIRST. The Slack upload runs claude -p against the connector
                     # (30–90 s); with the marker written after it, a tick killed mid-upload
                     # re-sent the same screenshot every minute (!1200, 2026-09-21).
-                    echo "$SHA" > "$D/ui-verified-sha"
+                    echo "$SHA" > "$D/ui-verified-sha"; ui_patch_id "$WT" "$REPO_NAME" > "$D/ui-verified-patch"
                     open "$D/ui-shot.png" >/dev/null 2>&1 || true
                     METHOD="in the simulator"; is_web_ui_change "$WT" "$REPO_NAME" && METHOD="in a browser"
                     UIMSG="UI MR !$IID ($PT) is green and ready — I verified it $METHOD (screenshot attached). Review it and say \"merge\" when it looks right. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
