@@ -68,7 +68,9 @@
   lives only in `sidecar/src/brain.ts`; stdio mode remains the smoke-test
   surface. Rebuilding `sidecar/dist` makes the daemon drain and restart.
 - **Dispatch pipeline**: `dispatch.sh spec|show|file|implement|go|qa|status|
-  tick|open|close`. Planner/QA output is schema-validated JSON in
+  tick|open|close|spike|replan`. `spike <epic> <T|PT> "<answer>"` answers a
+  spike that was on Tom (notes onto the ticket, Done, marker) so no status line
+  keeps listing it; OUTWARD-held like `file|go|close`. Planner/QA output is schema-validated JSON in
   `~/.margie/dispatch/<id>/`; `file|go|close` are OUTWARD-held; `tick` is
   bookkeeping under the `go` confirmation (including Done-on-merge, Tom's
   explicit choice). Ticket/testcase/page writes go through `notion.sh`, whose
@@ -133,9 +135,16 @@
   only ADD an escalation; the confirm gate reads a short reply the regexes
   missed ("kk", "looks good, send it", "hold on") — approve only at ≥0.9
   confidence, "yes but…" is an edit and drops; `preBrief` picks which dispatch a
-  status question is about. Every decision fails closed to the old path and is
-  one line in `~/.margie/jev.log`; `jev.sh check` runs the fixture set (run it
-  when `jev-latest` moves). Don't give the brain `jev.sh` — it's for code.
+  status question is about; `dispatch.sh spec` asks whether a PT named in the
+  request is the ticket TO WORK or only cited ("don't duplicate PT-1412"), so a
+  request that mentions in-flight work never re-files it. Every decision fails
+  closed to the old path and is one line in `~/.margie/jev.log`; `jev.sh check`
+  runs the fixture set (run it when `jev-latest` moves). Don't give the brain
+  `jev.sh` — it's for code. **Tom's rule (2026-09-21): every harness fix notes
+  whether the decision it touches is a Jev question (typed, from text) or
+  deterministic (a field, a status), and moves regex guesses onto Jev with a
+  fixture.** A headless task's failure reason (`claude-task.sh why`:
+  `terminal_reason` such as `budget_exhausted`) is deterministic — no Jev.
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on Tom's short affirmative (regex, or Jev at ≥0.9) within

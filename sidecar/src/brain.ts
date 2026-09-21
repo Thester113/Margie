@@ -126,7 +126,7 @@ const OUTWARD: RegExp[] = [
   /\bjira\.sh\s+(create|comment)\b/,
   /\bnotion\.sh\s+(create|append)\b/,
   /\bnotion\.sh\s+(ticket\s+(create|status|comment|append)|testcase\s+(add|status)|page\s+(create|append))\b/,
-  /\bdispatch\.sh\s+(file|go|close)\b/,
+  /\bdispatch\.sh\s+(file|go|close|spike)\b/,   // spike: writes the answer onto a team ticket and closes it
   /\bagent-messages\.sh\s+(send|reply|ack)\b/,
   /\bmr\.sh\s+(create|update)\b/,
   /\bstandup\.sh\s+post\b/,

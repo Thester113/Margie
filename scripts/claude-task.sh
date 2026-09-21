@@ -73,8 +73,8 @@ launch() { # launch <id> <dir> <prompt> [extra claude flags...]  (honors PERM/TA
   local pid="" i; for i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TASKS/$id.pid" ] && { pid="$(cat "$TASKS/$id.pid")"; break; }; sleep 0.3; done
   rm -f "$TASKS/$id.pid"; [ -z "$pid" ] && pid=0
   jq -n --arg id "$id" --arg dir "$dir" --arg task "$prompt" --arg tag "${TAG:-}" --arg out "${OUT:-}" \
-     --argjson pid "$pid" --argjson started "$(date +%s)" \
-    '{id:$id, dir:$dir, task:$task, tag:$tag, out:$out, pid:$pid, started:$started}' > "$TASKS/$id.meta"
+     --arg budget "${BUDGET:-}" --argjson pid "$pid" --argjson started "$(date +%s)" \
+    '{id:$id, dir:$dir, task:$task, tag:$tag, out:$out, budget:$budget, pid:$pid, started:$started}' > "$TASKS/$id.meta"
 }
 # Copy structured output to its --out destination for any finished task that has one.
 # NEWEST task per --out wins: a re-run (same --out, e.g. a re-review) must overwrite the
@@ -207,6 +207,28 @@ case "$cmd" in
     if running "$id"; then echo "RUNNING"
     elif [ -s "$TASKS/$id.json" ] && jq -e 'if .is_error then false else true end' "$TASKS/$id.json" >/dev/null 2>&1; then harvest; echo "DONE"
     else echo "FAILED"; fi
+    ;;
+  why)
+    # One line on why a finished task failed — the money cap, a crash, or an error the
+    # model reported — so callers can say "budget exhausted at $4.04 (cap $4)" instead of
+    # "see the log". Prints nothing for a task that is still running or succeeded.
+    x="${1:-}"; [ -z "$x" ] && { echo "usage: claude-task.sh why <tag|id>" >&2; exit 1; }
+    id="$x"; [ -f "$TASKS/$id.meta" ] || id="$(by_tag "$x" || by_tag "$x (superseded)" || true)"
+    [ -z "$id" ] && exit 0
+    running "$id" && exit 0
+    j="$TASKS/$id.json"
+    if [ -s "$j" ] && jq -e . "$j" >/dev/null 2>&1; then
+      reason="$(jq -r '.terminal_reason // empty' "$j")"
+      cost="$(jq -r '.total_cost_usd // empty' "$j")"
+      cap="$(jq -r '.budget // empty' "$TASKS/$id.meta" 2>/dev/null)"
+      case "$reason" in
+        budget_exhausted) printf 'budget exhausted at $%.2f (cap $%s) before it finished — raise the cap or narrow the request\n' "${cost:-0}" "${cap:-?}" ;;
+        "") jq -r 'if .is_error then ("error: " + ((.result // .error // "") | tostring | .[0:200])) else empty end' "$j" ;;
+        *) printf '%s at $%.2f\n' "$reason" "${cost:-0}" ;;
+      esac
+    else
+      tail -n 3 "$TASKS/$id.log" 2>/dev/null | tr '\n' ' ' | cut -c1-200; echo
+    fi
     ;;
   detach)
     # Forget a task's --out (and tag) so a superseded run can't re-deposit its output.

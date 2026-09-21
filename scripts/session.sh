@@ -213,12 +213,23 @@ case "$cmd" in
         # the prompt itself — so a risky command phrased in a way the list never saw is still
         # Tom's call. Jev unavailable → the regex alone, as before.
         # Once per screen (the prompt sits there for every 45 s cycle until it is answered).
-        JDANGER="$(cat "$ST/$S.danger" 2>/dev/null | grep "^$H:" | cut -d: -f2)"
-        if [ -z "$JDANGER" ]; then
-          JDANGER="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|esc to interrupt' | tail -12 | "$(dirname "$0")/jev.sh" danger 2>/dev/null | cut -f1)"
-          [ -n "$JDANGER" ] && echo "$H:$JDANGER" > "$ST/$S.danger"
+        JD="$(cat "$ST/$S.danger" 2>/dev/null | grep "^$H:" | cut -d: -f2-)"
+        if [ -z "$JD" ]; then
+          JD="$(printf '%s' "$TAIL" | grep -vE '^[│>❯ ]*$|esc to interrupt' | tail -12 | "$(dirname "$0")/jev.sh" danger 2>/dev/null | tr '\t' ':')"
+          [ -n "$JD" ] && echo "$H:$JD" > "$ST/$S.danger"
         fi
-        if printf '%s' "$TAIL" | grep -qiE 'push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|deploy|production|secrets?|credential|\.env\b|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -rf /' \
+        JDANGER="${JD%%:*}"; JPROB="${JD#*:}"; [ "$JPROB" = "$JD" ] && JPROB=""
+        # HARD words always escalate (irreversible, privileged, or Margie's own credentials —
+        # a session has no business in ~/.margie). SOFT words ("deploy", ".env", "secrets")
+        # used to escalate on their own, which parked routine local steps (grep the db keys
+        # in .env, ls .env.secrets) on Tom for hours; now Jev clears a SOFT match when it is
+        # confident the prompt is safe (risky < 0.35), and anything else still escalates —
+        # Jev unavailable or unsure means the old behaviour.
+        HARD='push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -rf /|terraform (apply|destroy)|\.margie/config\.json|>>? *[^ ]*\.env'
+        SOFT='deploy|production|secrets?|credential|\.env\b'
+        SAFE=0; [ "$JDANGER" = "no" ] && [ -n "$JPROB" ] && [ "$(awk -v p="$JPROB" 'BEGIN{print (p<0.35)}')" = 1 ] && SAFE=1
+        if printf '%s' "$TAIL" | grep -qiE "$HARD" \
+           || { printf '%s' "$TAIL" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } \
            || [ "$JDANGER" = "yes" ]; then
           WHY="waiting on a prompt I will NOT answer for you (it looks dangerous)"
         elif printf '%s' "$TAIL" | grep -qE 'Yes, I trust'; then

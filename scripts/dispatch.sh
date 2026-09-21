@@ -201,6 +201,11 @@ need_d() {
   D="$(resolve_d "${1:-latest}")"
   [ -n "$D" ] && [ -d "$D" ] || { echo "No such dispatch${1:+ '$1'}, dearie." >&2; exit 1; }
 }
+# Spikes answered with `dispatch.sh spike` leave a marker; every "on Tom" line filters them
+# out, so an answered spike never keeps showing as pending (Tom's accuracy rule).
+resolved_spikes() { # resolved_spikes <dispatch dir> -> JSON array of ticket keys
+  local d="$1" f; printf '['; for f in "$d"/spike-resolved-*; do [ -f "$f" ] && printf '"%s",' "${f##*/spike-resolved-}"; done; printf '""]'
+}
 announce() { # announce "<spoken sentence>"  (file drop only with --announce / MARGIE_ANNOUNCE=1)
   echo "$1"
   if [ "${MARGIE_ANNOUNCE:-0}" = "1" ]; then
@@ -424,9 +429,21 @@ case "$cmd" in
     printf '%s' "$REQ" > "$D/request.txt"
     jq -n --arg repo "$REPO" --arg subdir "$SUBDIR" --arg id "$ID" '{id:$id, repo:$repo, subdir:$subdir}' > "$D/d.json"
     # If the request names an EXISTING ticket to work ("Fix PT-1004: …"), remember it so we
-    # move that ticket through the lifecycle instead of filing a duplicate. Only trust a PT
-    # near the very start of the request (the "fix PT-###" subject), not one cited as context.
-    EXPT="$(printf '%s' "$REQ" | head -c 64 | grep -oiE '\bPT-[0-9]+\b' | head -1 | tr 'a-z' 'A-Z')"
+    # move that ticket through the lifecycle instead of filing a duplicate. Jev decides
+    # whether the first PT mentioned is the SUBJECT of the request or only cited (in-flight
+    # work, "don't duplicate PT-1412", a related ticket); it must be sure (≥0.9) either
+    # way. Fails closed to the old rule: a PT in the first 64 chars is the subject.
+    EXPT=""
+    FIRSTPT="$(printf '%s' "$REQ" | head -c 400 | grep -oiE '\bPT-[0-9]+\b' | head -1 | tr 'a-z' 'A-Z')"
+    if [ -n "$FIRSTPT" ]; then
+      JV="$(printf '%s' "$REQ" | "$DIR/jev.sh" ticket "$FIRSTPT" 2>/dev/null)" || JV=""
+      case "$(printf '%s' "$JV" | cut -f1)" in
+        work_existing) [ "$(printf '%s' "$JV" | cut -f2 | awk '{print ($1>=0.9)}')" = 1 ] && EXPT="$FIRSTPT" ;;
+        context_only)  [ "$(printf '%s' "$JV" | cut -f2 | awk '{print ($1>=0.9)}')" = 1 ] && EXPT="-" ;;
+      esac
+      [ -z "$EXPT" ] && EXPT="$(printf '%s' "$REQ" | head -c 64 | grep -oiE '\bPT-[0-9]+\b' | head -1 | tr 'a-z' 'A-Z')"
+      [ "$EXPT" = "-" ] && EXPT=""
+    fi
     [ -n "$EXPT" ] && echo "$EXPT" > "$D/existing-pt.txt"
 
     # Context for the planner: recent tickets/use cases/decision refs + repo shape.
@@ -496,7 +513,7 @@ case "$cmd" in
     if ! spec_ready "$D"; then
       case "$(st "$D")" in
         spec-running) echo "The spec is still being drafted, dearie." ;;
-        spec-failed)  echo "The spec run failed, dearie — see claude-task.sh log." ;;
+        spec-failed)  WHY="$("$DIR/claude-task.sh" why "spec:$(basename "$D")" 2>/dev/null)"; echo "The spec run failed, dearie${WHY:+ — $WHY}. dispatch.sh replan $(basename "$D") runs it again." ;;
         *) echo "No spec on this dispatch yet, dearie." ;;
       esac
       exit 0
@@ -670,7 +687,7 @@ case "$cmd" in
       # Only a spike that genuinely needs Tom's input (needs_from_owner) is "on Tom". A pure
       # code-investigation spike ("locate the entry point", "does X already do Y") is session
       # work — its answer emerges from the dependent implementation, so never frame it as a hold.
-      OWNER_SP="$(jq -r '[.tickets[] | select((.spike // false) and (((.needs_from_owner // []) | length) > 0)) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
+      OWNER_SP="$(jq -r --argjson done "$(resolved_spikes "$D")" '[.tickets[] | select((.spike // false) and (((.needs_from_owner // []) | length) > 0) and ((.key as $k | $done | index($k)) == null)) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
       SESS_SP="$(jq -r '[.tickets[] | select((.spike // false) and (((.needs_from_owner // []) | length) == 0)) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
       [ -n "$OWNER_SP" ] && echo "On you, dearie (spike needs YOUR input, not automated): $OWNER_SP."
       [ -n "$SESS_SP" ] && echo "Code-investigation spike(s) — the sessions resolve these, not you: $SESS_SP."
@@ -736,7 +753,9 @@ case "$cmd" in
     # ONLY a spike that explicitly needs owner input is "on Tom". A code-investigation spike
     # (no needs_from_owner) is session work the coding sessions resolve — never on Tom, and a
     # closed epic with no owner-needs has nothing pending.
-    ONTOM="$(jq -r '[.tickets[]? | select((.spike // false) and (((.needs_from_owner // []) | length) > 0)) | .title + " (needs: " + (.needs_from_owner | join("; ")) + ")"] | join(" | ")' "$D/breakdown.json" 2>/dev/null)"
+    ONTOM="$(jq -r --argjson done "$(resolved_spikes "$D")" '[.tickets[]? | select((.spike // false) and (((.needs_from_owner // []) | length) > 0) and ((.key as $k | $done | index($k)) == null)) | .title + " (needs: " + (.needs_from_owner | join("; ")) + ")"] | join(" | ")' "$D/breakdown.json" 2>/dev/null)"
+    ANSWERED="$(jq -r --argjson done "$(resolved_spikes "$D")" '[.tickets[]? | select((.spike // false) and ((.key as $k | $done | index($k)) != null)) | .title] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
+    [ -n "$ANSWERED" ] && echo "Spikes answered (see the ticket notes): $ANSWERED"
     [ -n "$ONTOM" ] && [ "$S" != closed ] && echo "On Tom: $ONTOM"
     [ -n "$ONTOM" ] && [ "$S" = closed ] && echo "Still on Tom after the merge: $ONTOM"
     [ -z "$ONTOM" ] && [ "$S" = closed ] && echo "On Tom: nothing — this epic is closed, all tickets merged, no owner action needed (any spikes were code-investigation, resolved in-session)."
@@ -821,8 +840,8 @@ case "$cmd" in
         [ -n "$REM" ] && LINE="$LINE; remaining${REM}" || LINE="$LINE; none remaining"
       fi
       if has_breakdown "$D" && [ -s "$D/tickets.json" ] && [ "$S" != closed ]; then
-        SPK="$(jq -r --slurpfile t "$D/tickets.json" '[.tickets[] | select(.spike // false) | .key as $k | (($t[0][] | select(.key==$k) | .pt) // $k) + " " + .title] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
-        SPKNEEDS="$(jq -r '[.tickets[] | select(.spike // false) | .needs_from_owner[]?] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
+        SPK="$(jq -r --slurpfile t "$D/tickets.json" --argjson done "$(resolved_spikes "$D")" '[.tickets[] | select((.spike // false) and ((.key as $k | $done | index($k)) == null)) | .key as $k | (($t[0][] | select(.key==$k) | .pt) // $k) + " " + .title] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
+        SPKNEEDS="$(jq -r --argjson done "$(resolved_spikes "$D")" '[.tickets[] | select((.spike // false) and ((.key as $k | $done | index($k)) == null)) | .needs_from_owner[]?] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
         if [ -n "$SPK" ]; then
           # A spike is engineering investigation the coding session resolves itself —
           # only "on Tom" when it explicitly lists needs_from_owner (a real human decision).
@@ -896,7 +915,8 @@ case "$cmd" in
             esac
           elif [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" = "FAILED" ]; then
             st "$D" spec-failed
-            announce "The spec run for $(basename "$D") failed, dearie."
+            WHY="$("$DIR/claude-task.sh" why "spec:$(basename "$D")" 2>/dev/null)"
+            announce "The spec run for $(basename "$D") failed, dearie${WHY:+ — $WHY}. Say \"replan\" to run it again."
           fi ;;
         qa-running)
           if [ -s "$D/qa.json" ] && jq -e .verdict "$D/qa.json" >/dev/null 2>&1; then
@@ -958,9 +978,26 @@ case "$cmd" in
             if [ "$S" = implementing ] && [ ! -s "$D/qa.json" ] && [ ! -f "$D/qa-auto" ] && [ -n "$SCREEN" ]; then
               # MARGIE_READY_FOR_QA must be Claude's OWN output on its own line — NOT the
               # echoed instruction in the input box ("...print MARGIE_READY_FOR_QA...again").
-              if { printf '%s' "$SCREEN" | grep -qE '^[[:space:]]*MARGIE_READY_FOR_QA[[:space:]]*$' && ! printf '%s' "$SCREEN" | grep -q "esc to interrupt"; } \
-                 || { printf '%s' "$SCREEN" | grep -qE "· done [0-9]" && ! printf '%s' "$SCREEN" | grep -q "esc to interrupt" \
-                      && printf '%s' "$SCREEN" | grep -qiE "tests? (are|is) (complete|green|passing)|(work|implementation) (is|and tests are) complete"; }; then
+              # The marker can scroll off: Claude Code keeps no scrollback (24 lines on
+              # PT-1400 after its own monitors fired every 30 min for 17 h), so a session
+              # that committed and said "waiting on Margie's QA" sat unseen. Second signal:
+              # the session is idle, its worktree is clean and ahead of main, and its
+              # screen says it handed off — by regex, or by Jev's session triage
+              # (checkpoint/handoff, never question/working) when the wording is new.
+              IDLE=0; printf '%s' "$SCREEN" | grep -q "esc to interrupt" || IDLE=1
+              HANDED=0
+              if [ "$IDLE" = 1 ] && [ -z "$(git -C "$WT" status --porcelain 2>/dev/null)" ] \
+                 && [ "$(git -C "$WT" rev-list --count "origin/$(cfgd mr_target_branch main)..HEAD" 2>/dev/null || echo 0)" -gt 0 ]; then
+                if printf '%s' "$SCREEN" | grep -qiE "waiting (on|for) (margie'?s )?qa|ready for qa|hand(ed)? (off|over) to qa|over to (margie|qa)"; then HANDED=1
+                elif printf '%s' "$SCREEN" | grep -qE "· done [0-9]"; then
+                  JK="$(printf '%s' "$SCREEN" | "$DIR/jev.sh" session 2>/dev/null | cut -f1)"
+                  case "$JK" in checkpoint|handoff) HANDED=1 ;; esac
+                fi
+              fi
+              if { printf '%s' "$SCREEN" | grep -qE '^[[:space:]]*MARGIE_READY_FOR_QA[[:space:]]*$' && [ "$IDLE" = 1 ]; } \
+                 || { printf '%s' "$SCREEN" | grep -qE "· done [0-9]" && [ "$IDLE" = 1 ] \
+                      && printf '%s' "$SCREEN" | grep -qiE "tests? (are|is) (complete|green|passing)|(work|implementation) (is|and tests are) complete"; } \
+                 || [ "$HANDED" = 1 ]; then
                 touch "$D/qa-auto"; rm -f "$D/qa-fail-sent"
                 "$0" qa "$(basename "$D")" >/dev/null 2>&1 && announce "Coding on $PT reports done — running QA now, dearie." && S=qa-running
               fi
@@ -1357,6 +1394,29 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     echo "Dispatch closed, dearie."
     ;;
 
+  spike)
+    # Answer a spike that was "on Tom": notes onto its ticket, ticket Done, marker so no
+    # status line lists it as pending again. The next child session reads the ticket page,
+    # so the answer reaches the coder without a follow-up.
+    #   dispatch.sh spike <epic id|PT> <ticket key|PT> --md <file> | "<answer>"
+    need_d "${1:?usage: dispatch.sh spike <epic id|PT> <T-key|PT> --md <file> | \"<answer>\"}"; shift
+    has_breakdown "$D" || { echo "That dispatch has no ticket breakdown, dearie." >&2; exit 1; }
+    WHICH="${1:?ticket key or PT}"; shift
+    KEY="$(jq -r --arg w "$WHICH" '.[] | select(.key==$w or .pt==$w) | .key' "$D/tickets.json" | head -1)"
+    PT="$(jq -r --arg w "$WHICH" '.[] | select(.key==$w or .pt==$w) | .pt' "$D/tickets.json" | head -1)"
+    [ -n "$KEY" ] && [ -n "$PT" ] || { echo "No ticket $WHICH on this epic, dearie." >&2; exit 1; }
+    jq -e --arg k "$KEY" '.tickets[] | select(.key==$k) | .spike // false' "$D/breakdown.json" >/dev/null 2>&1 || { echo "$PT is not a spike, dearie — its answer goes into its session." >&2; exit 1; }
+    MD=""; ANS=""
+    while [ $# -gt 0 ]; do case "$1" in --md) MD="${2:-}"; shift 2 ;; *) ANS="${ANS:+$ANS }$1"; shift ;; esac; done
+    if [ -z "$MD" ]; then
+      [ -n "$ANS" ] || { echo "Give the answer: --md <file> or \"<text>\"." >&2; exit 1; }
+      MD="$(mktemp)"; printf '## Spike answer (%s)\n%s\n' "$(date -u +%F)" "$ANS" > "$MD"
+    fi
+    desc "would append the spike answer to $PT, set it Done, and stop listing it as on Tom"
+    "$DIR/notion.sh" ticket append "$PT" --md "$MD" >/dev/null || exit 1
+    "$DIR/notion.sh" ticket status "$PT" Done >/dev/null || exit 1
+    touch "$D/spike-resolved-$KEY"
+    echo "$PT answered and Done, dearie — it is off your plate; the child sessions read it from the ticket." ;;
   replan)
     # Re-run the planner on the current request (no new context) — e.g. after a launch failure.
     need_d "${1:-latest}"
@@ -1390,7 +1450,7 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     ;;
 
   *)
-    echo "usage: dispatch.sh spec <repo> \"<request>\" [--subdir p] | show [id] | brief [id] | breakdown [id] | file <id> | merge <id> | implement <id> | go <id> | qa <id> [--watch] | status [id] | tick [--announce] | open <id> [spec|qa|mr] | close <id> | describe <id> <stage>" >&2
+    echo "usage: dispatch.sh spec <repo> \"<request>\" [--subdir p] | show [id] | brief [id] | breakdown [id] | file <id> | merge <id> | implement <id> | go <id> | qa <id> [--watch] | status [id] | tick [--announce] | open <id> [spec|qa|mr] | close <id> | spike <id> <T|PT> --md f|\"answer\" | describe <id> <stage>" >&2
     exit 1
     ;;
 esac

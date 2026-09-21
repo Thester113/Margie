@@ -18,6 +18,10 @@
 #                                           → reply | no_reply<TAB>confidence
 #   jev.sh danger                           stdin = a permission prompt from a session
 #                                           → yes | no<TAB>probability   (irreversible / risky?)
+#   jev.sh ticket <PT-n>                    stdin = a dispatch request that mentions <PT-n>
+#                                           → work_existing | context_only<TAB>confidence
+#                                             (is the request TO WORK that ticket, or does it
+#                                             only cite it as context / something not to redo?)
 #   jev.sh status                           key present? one live probe with latency
 #
 # Config: typesafe_api_key (op:// ok), jev: on|off (MARGIE_JEV overrides),
@@ -119,6 +123,18 @@ case "$cmd" in
     }')" || exit $?
     printf '%s\n' "$R" | jq -r '.answers.risky.noul | if . >= 0.5 then "yes\t\(.)" else "no\t\(.)" end' ;;
 
+  # A dispatch request that names a ticket: is it asking to WORK that ticket (so the
+  # dispatch moves it through the lifecycle instead of filing a duplicate), or does it
+  # only cite it — as context, as done work, or as something NOT to duplicate?
+  # dispatch.sh spec used a regex ("a PT in the first 64 chars means work it"), which
+  # misreads "PT-1412 already auto-designates; now also …" as a fix of PT-1412.
+  ticket)
+    PT="${1:-}"; [ -z "$PT" ] && { echo "usage: jev.sh ticket <PT-n>  (request on stdin)" >&2; exit 64; }
+    REQ="$(cat)"; [ -z "$REQ" ] && exit 2
+    QS="$(jq -cn --arg ins "This is a request to a dispatcher. It mentions the ticket $PT. Is the request asking to work on $PT itself (fix, implement, finish, redo, or extend that ticket), or does it only refer to $PT in passing?"       --arg work "The subject of the request is $PT: fix it, implement it, finish it, address its findings, or change what it does"       --arg ctx "$PT is only cited: as background, as prior or in-flight work, as something already done, as something not to duplicate, or as a related ticket while the request is about something else"       '{intent: {type: "choice", instructions: $ins, criteria: {work_existing: $work, context_only: $ctx}}}')"
+    R="$(ask "$QS" "$REQ")" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.intent | "\(.choice)\t\(.confidence)"' ;;
+
   # Fixture check: the decisions the harness relies on, with the same thresholds the
   # callers use. Run it when jev-latest moves or a question is reworded.
   check)
@@ -150,8 +166,19 @@ Do you want to proceed?'
 Do you want to proceed?'
     expect danger no <<< 'npm install --save-dev vitest
 Do you want to proceed?'
+    expect danger no <<< 'P=walt-ui--pt-1402; docker run -d --network none --name ${P}-db -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_PASSWORD=postgres postgres:15.17 && docker exec ${P}-db pg_isready -U postgres; grep -n "DATABASE_HOST\|POSTGRES\|DB_" .env | head; grep -n "hostname\|username\|password" config/test.exs | head
+Start the namespace-holder postgres and check the db config keys
+Do you want to proceed?'
+    expect danger yes <<< 'echo "BREVO_API_KEY=$KEY" >> .env.secrets
+Do you want to proceed?'
+    expect danger yes <<< 'gcloud run deploy walt-ui --region us-west3 --image gcr.io/amby/walt-ui:main
+Do you want to proceed?'
+    expect "ticket PT-1004" work_existing <<< 'Fix PT-1004: the enrichment worker still retries dead Google tokens forever. Stop after the third invalid_grant and mark the account.'
+    expect "ticket PT-1004" work_existing <<< 'PT-1004 shipped but the retry cap is not applied to calendar sync — finish it so both syncs stop after three invalid_grant answers.'
+    expect "ticket PT-1412" context_only <<< 'Gaps found walking the Homie flow on prod. Do NOT duplicate what is already in flight: PT-1412 auto-designates the 7 write-back fields. 1. No seeded role can receive hand-raisers — seed an Agent role. 2. The upload form forgets the connection you picked.'
+    expect "ticket PT-1361" context_only <<< 'Since PT-1361 landed, Faraday matches by address. Now make a 15,000-contact upload survive: bound the enrich concurrency and persist progress every 500 rows.'
     echo "$((N-FAIL))/$N passed"; [ "$FAIL" = 0 ] ;;
 
   *)
-    echo "usage: jev.sh ask '<questions>' [state] | session | mention <who> [owner] | danger | check | status" >&2; exit 64 ;;
+    echo "usage: jev.sh ask '<questions>' [state] | session | mention <who> [owner] | danger | ticket <PT-n> | check | status" >&2; exit 64 ;;
 esac
