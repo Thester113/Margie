@@ -1188,7 +1188,18 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   fi
                   cp "$D/review.json" "$D/review-$(date +%H%M).json"
                 elif [ -f "$D/review-running" ] && [ "$("$DIR/claude-task.sh" state "review:$(basename "$D")")" = FAILED ]; then
-                  rm -f "$D/review-running"; announce "My review run on MR !$IID failed to complete, dearie — I'll retry on the next commit."
+                  # "Retry on the next commit" parked a backend MR for good when the review died on
+                  # a DNS blip (!1204, api_error at $0.00, 2026-09-21): nothing changes on a green
+                  # backend MR, so no next commit ever came. Clear review-sha too so the next tick
+                  # relaunches the same commit — bounded by review_max_rounds like any round.
+                  RWHY="$("$DIR/claude-task.sh" why "review:$(basename "$D")" 2>/dev/null)"
+                  rm -f "$D/review-running"
+                  if [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -lt "$(cfgd review_max_rounds 4)" ]; then
+                    rm -f "$D/review-sha"
+                    announce "My review run on MR !$IID failed to complete (${RWHY:-no reason recorded}), dearie — starting it again on the same commit."
+                  else
+                    announce "My review run on MR !$IID failed to complete (${RWHY:-no reason recorded}) and the rounds are used up, dearie — it needs a look."
+                  fi
                 fi
                 # The repo's review bots auto-run on the MR's first pipeline. One fallback: the MR
                 # settled, the review jobs are present (reviews_seen) yet the bots posted NOTHING at
