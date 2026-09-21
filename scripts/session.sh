@@ -235,10 +235,30 @@ case "$cmd" in
         HARD='push[^|]*--force|force-?push|reset --hard|--no-verify|DROP (TABLE|DATABASE)|sudo|chmod 777|curl[^|]*\| *(ba)?sh|rm -r[a-z]* +(/|~|\$HOME|\.\.|(lib|apps|src|test|config|priv|scripts)/)|git clean|git checkout (-- )?\.( |$)|terraform (apply|destroy)|\.margie/config\.json|>>? *[^ ]*\.env|(cat|less|more|head|tail|bat) +[^|;&]*\.env(\.secrets)?\b|(printenv|^ *env|set) *\|[^|]*(secret|token|api.?key)'
         SOFT='deploy|production|secrets?|credential|\.env\b'
         SAFE=0; [ "$JDANGER" = "no" ] && [ -n "$JPROB" ] && [ "$(awk -v p="$JPROB" 'BEGIN{print (p<0.35)}')" = 1 ] && SAFE=1
+        # Third opinion before Tom (his call, 2026-09-21): a HARD hit goes straight to him,
+        # but a Jev/SOFT escalation is judged once by Margie's brain (Claude) with the
+        # prompt in front of it — every parked session today (grep .env, ls .env.secrets,
+        # rm -rf tmp/x, prep-commit --only secrets, a dev seed file) was a routine step a
+        # reasoning model clears in one look. The brain answers SAFE or ESCALATE: <why>;
+        # anything else (error, timeout) still escalates to Tom. Asked once per prompt.
+        BRAIN_SAFE=0; BRAIN_WHY=""
+        if ! printf '%s' "$MENU" | grep -qiE "$HARD" \
+           && { { printf '%s' "$MENU" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } || [ "$JDANGER" = "yes" ]; } \
+           && [ -x "$MARGIE_CLI" ] && [ "$(cat "$ST/$S.brainask" 2>/dev/null)" != "$H" ]; then
+          echo "$H" > "$ST/$S.brainask"
+          BQ="PERMISSION PROMPT from coding session $S (a Claude Code session in its own git worktree). It asks to run what follows. Tom's rule: routine local development steps are answered yes for him — running or writing tests, scripts, seeds and fixtures; the project's own bin/ and mix commands and pre-commit gates (including a secrets SCAN); local docker containers and test databases with throwaway credentials; clearing tmp/_build/deps; grepping .env, .envrc or config/*.exs for key NAMES (those files hold non-secret dev settings; only .env.secrets holds real values). ESCALATE only if saying yes would be irreversible (force-push, history rewrite, discarding uncommitted work, deleting source), touch production or a deployment, print or copy secret VALUES (cat/head of .env.secrets, printenv of keys/tokens) or write credentials, spend money, message people, or reach outside the worktree (absolute paths, ~, ..). Reply with exactly one line: SAFE or ESCALATE: <one-line reason>. Nothing else.
+---
+$(printf '%s' "$MENU" | grep -vE '^[│>❯ ]*$|esc to interrupt' | tail -24)"
+          BA="$(MARGIE_SOURCE=session "$MARGIE_CLI" -q "$BQ" 2>/dev/null | tr -d '\r' | grep -E '^(SAFE|ESCALATE)' | head -1)"
+          case "$BA" in
+            SAFE*) BRAIN_SAFE=1; "$(dirname "$0")/jev.sh" outcome danger "clear(brain) after jev=${JDANGER:-unavailable}${JPROB:+@$JPROB} $S" >/dev/null 2>&1 ;;
+            ESCALATE*) BRAIN_WHY="${BA#ESCALATE:}"; "$(dirname "$0")/jev.sh" outcome danger "escalate(brain:${BRAIN_WHY:0:80}) $S" >/dev/null 2>&1 ;;
+            *) "$(dirname "$0")/jev.sh" outcome danger "escalate(brain-unavailable) $S" >/dev/null 2>&1 ;;
+          esac
+        fi
         if printf '%s' "$MENU" | grep -qiE "$HARD" \
-           || { printf '%s' "$MENU" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } \
-           || [ "$JDANGER" = "yes" ]; then
-          WHY="waiting on a prompt I will NOT answer for you (it looks dangerous)"
+           || { [ "$BRAIN_SAFE" = 0 ] && { { printf '%s' "$MENU" | grep -qiE "$SOFT" && [ "$SAFE" = 0 ]; } || [ "$JDANGER" = "yes" ]; }; }; then
+          WHY="waiting on a prompt I will NOT answer for you (it looks dangerous${BRAIN_WHY:+:$BRAIN_WHY})"
           if [ "$(cat "$ST/$S.dlogged" 2>/dev/null)" != "$H" ]; then echo "$H" > "$ST/$S.dlogged"
             if printf '%s' "$MENU" | grep -qiE "$HARD"; then DW="escalate(hard)"; elif [ "$JDANGER" = "yes" ]; then DW="escalate(jev=$JPROB)"; else DW="escalate(soft,jev=${JDANGER:-unavailable}${JPROB:+@$JPROB})"; fi
             "$(dirname "$0")/jev.sh" outcome danger "$DW $S" >/dev/null 2>&1
