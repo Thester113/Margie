@@ -127,9 +127,9 @@ notify_domain_owners() {
       printf '%s\n' "$files" | grep -q "^$p" && hit=1 && break
     done
     [ "$hit" = 1 ] || continue
-    "$DIR/slack.sh" send "$slack: ${who:-there} — $pt touches $dom: $(head -1 "$d/mr.md" 2>/dev/null). MR !$iid $url. Tom asked that you're looped in on $dom changes; this is an FYI, not a gate — it'll go through review and merge on its own, so say so here if you want it done differently." >/dev/null 2>&1 &&
-      touch "$d/owner-notified-$dom" &&
-      announce "I let ${who:-the $dom owner} know on Slack that $pt touches $dom, dearie."
+    touch "$d/owner-notified-$dom"
+    slack_bg send "$slack: ${who:-there} — $pt touches $dom: $(head -1 "$d/mr.md" 2>/dev/null). MR !$iid $url. Tom asked that you're looped in on $dom changes; this is an FYI, not a gate — it'll go through review and merge on its own, so say so here if you want it done differently."
+    announce "I let ${who:-the $dom owner} know on Slack that $pt touches $dom, dearie."
   done
   return 0
 }
@@ -205,6 +205,14 @@ need_d() {
 # out, so an answered spike never keeps showing as pending (Tom's accuracy rule).
 resolved_spikes() { # resolved_spikes <dispatch dir> -> JSON array of ticket keys
   local d="$1" f; printf '['; for f in "$d"/spike-resolved-*; do [ -f "$f" ] && printf '"%s",' "${f##*/spike-resolved-}"; done; printf '""]'
+}
+# Slack from inside tick, detached: `slack_bg <primary args…> [-- <fallback args…>]` runs
+# slack.sh <primary> in its own session and, if that fails, slack.sh <fallback>. The tick
+# (a 60 s poller) must never block on the connector's claude -p round trip.
+slack_bg() {
+  local primary=() fallback=() seen=0 a
+  for a in "$@"; do if [ "$a" = "--" ]; then seen=1; continue; fi; if [ "$seen" = 0 ]; then primary+=("$a"); else fallback+=("$a"); fi; done
+  ( { "$DIR/slack.sh" "${primary[@]}" >/dev/null 2>&1 || { [ "${#fallback[@]}" -gt 0 ] && "$DIR/slack.sh" "${fallback[@]}" >/dev/null 2>&1; }; } < /dev/null > /dev/null 2>&1 & ) 
 }
 announce() { # announce "<spoken sentence>"  (file drop only with --announce / MARGIE_ANNOUNCE=1)
   echo "$1"
@@ -1026,7 +1034,7 @@ case "$cmd" in
                 announce "The MR for $PT never opened, dearie — trying again (attempt $((N + 1)))."
               elif [ ! -f "$D/mr-open-gaveup" ]; then
                 touch "$D/mr-open-gaveup"
-                "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): $PT passed QA but its MR won't open after $N tries — the branch is pushed; it needs a look (mr.sh create $PT)." >/dev/null 2>&1 || true
+                slack_bg send "@$(cfgd owner_first_name Tom): $PT passed QA but its MR won't open after $N tries — the branch is pushed; it needs a look (mr.sh create $PT)."
                 announce "$PT passed QA but I couldn't open its MR after $N tries, dearie — I've pinged you on Slack."
               fi
             fi
@@ -1174,7 +1182,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     RJ=$(( $(cat "$D/review-rejects" 2>/dev/null || echo 0) + 1 )); echo "$RJ" > "$D/review-rejects"
                     if [ "$RJ" -ge "$(cfgd review_max_rounds 4)" ] && [ "$(cat "$D/review-escalated-sha" 2>/dev/null)" != "$SHA" ]; then
                       echo "$SHA" > "$D/review-escalated-sha"
-                      "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): MR !$IID ($PT) has been through $RJ review rounds and still isn't clean — the local review keeps requesting changes. It may need your eyes. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)" >/dev/null 2>&1 || true
+                      slack_bg send "@$(cfgd owner_first_name Tom): MR !$IID ($PT) has been through $RJ review rounds and still isn't clean — the local review keeps requesting changes. It may need your eyes. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
                       announce "Heads up, dearie: MR !$IID for $PT has had $RJ review rounds and still isn't approved — I keep sending the fixes in, but it may need your eyes. I pinged you on Slack."
                     fi
                   fi
@@ -1259,14 +1267,17 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     :   # already shown for this commit — holding for Tom's word
                   elif [ -s "$D/ui-shot.png" ] && [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" = "$SHA" ] && ui_shot_final "$D" "$SCREEN"; then
                     [ "$(cat "$MDIR/web-review.lock" 2>/dev/null)" = "$(basename "$D")" ] && rm -f "$MDIR/web-review.lock"
+                    # Mark it shown FIRST. The Slack upload runs claude -p against the connector
+                    # (30–90 s); with the marker written after it, a tick killed mid-upload
+                    # re-sent the same screenshot every minute (!1200, 2026-09-21).
+                    echo "$SHA" > "$D/ui-verified-sha"
                     open "$D/ui-shot.png" >/dev/null 2>&1 || true
                     METHOD="in the simulator"; is_web_ui_change "$WT" "$REPO_NAME" && METHOD="in a browser"
                     UIMSG="UI MR !$IID ($PT) is green and ready — I verified it $METHOD (screenshot attached). Review it and say \"merge\" when it looks right. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
                     # Upload the screenshot INTO Slack (files:write) so Tom reviews it there, not only
-                    # on his Mac; fall back to a text ping if the upload fails.
-                    "$DIR/slack.sh" upload "$D/ui-shot.png" --to "@$(cfgd owner_first_name Tom)" --comment "$UIMSG" >/dev/null 2>&1 \
-                      || "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): $UIMSG (screenshot is open on your Mac.)" >/dev/null 2>&1 || true
-                    echo "$SHA" > "$D/ui-verified-sha"
+                    # on his Mac; fall back to a text ping if the upload fails. Detached: the tick
+                    # never waits on Slack.
+                    slack_bg upload "$D/ui-shot.png" --to "@$(cfgd owner_first_name Tom)" --comment "$UIMSG" -- send "@$(cfgd owner_first_name Tom): $UIMSG (screenshot is open on your Mac.)"
                     announce "MR !$IID for $PT is a UI/UX change, dearie — I verified it $METHOD and captured a screenshot (open on your Mac, and I pinged you on Slack). I won't merge a UI/UX change without your eyes: say \"merge\" when it looks right."
                   elif { [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ] || ui_verify_stale "$D"; } && web_review_slot_free "$D" "$WT" "$REPO_NAME"; then
                     if [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" = "$SHA" ]; then
@@ -1317,7 +1328,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   elif ui_verify_exhausted "$D" && [ ! -f "$D/ui-verify-gaveup" ]; then
                     # Retries spent and still no screenshot: tell Tom rather than sit silently.
                     touch "$D/ui-verify-gaveup"
-                    "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): MR !$IID ($PT) is green and mergeable, but I couldn't capture the UI screenshot after $(cat "$D/ui-verify-attempts" 2>/dev/null || echo several) tries — it's holding for your eyes WITHOUT one. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)" >/dev/null 2>&1 || true
+                    slack_bg send "@$(cfgd owner_first_name Tom): MR !$IID ($PT) is green and mergeable, but I couldn't capture the UI screenshot after $(cat "$D/ui-verify-attempts" 2>/dev/null || echo several) tries — it's holding for your eyes WITHOUT one. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
                     announce "I couldn't get a screenshot of MR !$IID for $PT after several tries, dearie — it's green and held for you, and I've said so on Slack."
                   fi
                 elif [ "$GATE_GREEN" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then

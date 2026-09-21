@@ -308,7 +308,7 @@ function honest(text: string): string {
   }
   return text;
 }
-function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise<string> {
+function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}, timeoutMs = CMD_TIMEOUT_MS): Promise<string> {
   return new Promise((resolve) => {
     logBrain(`BASH${extraEnv.MARGIE_DESCRIBE ? " (describe)" : ""}: ${cmd}`);
     if (!extraEnv.MARGIE_DESCRIBE && !extraEnv.MARGIE_POLLER) currentEmit?.("tool", cmd.slice(0, 120));
@@ -331,8 +331,9 @@ function runBashRaw(cmd: string, extraEnv: Record<string, string> = {}): Promise
     child.stderr.on("data", (d) => (out += d.toString()));
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
+      logBrain(`BASH timed out after ${timeoutMs}ms: ${cmd.slice(0, 100)}`);
       resolve((out || "").slice(0, 4000) + "\n[timed out]");
-    }, CMD_TIMEOUT_MS);
+    }, timeoutMs);
     child.on("close", () => {
       clearTimeout(timer);
       let r = out.trim();
@@ -1642,9 +1643,9 @@ async function drain() {
 
 // ── Hooks for the daemon (server.ts) ─────────────────────────────────────────
 /** Run one helper script exactly as the bash tool would (env, PATH, timeout). */
-export function runScript(cmd: string): Promise<string> {
+export function runScript(cmd: string, timeoutMs?: number): Promise<string> {
   // Pollers must not leak progress events into whatever turn is in flight.
-  return runBashRaw(cmd, { MARGIE_POLLER: "1" });
+  return runBashRaw(cmd, { MARGIE_POLLER: "1" }, timeoutMs);
 }
 /** Record an unsolicited notice in history so "what was that?" works. */
 export function noteToHistory(text: string) {

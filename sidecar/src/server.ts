@@ -180,7 +180,7 @@ function handleLine(client: Client, line: string) {
 // Contract: silent when idle; any non-empty stdout becomes a NOTICE — recorded
 // in history, broadcast to every client, and (only while the app is connected)
 // dropped in ~/.margie/announce/ so the voice loop speaks it when idle.
-interface Poller { name: string; cmd: string; everyMs: number; running: boolean; lastRun: number; lastNotice: string; }
+interface Poller { name: string; cmd: string; everyMs: number; running: boolean; lastRun: number; lastNotice: string; timeoutMs?: number; }
 const pollers: Poller[] = [];
 
 function parseEvery(v: unknown, dflt: number): number {
@@ -193,8 +193,8 @@ function parseEvery(v: unknown, dflt: number): number {
 }
 
 function startPollers() {
-  const builtins: Array<[string, string, number]> = [
-    ["dispatch", "dispatch.sh tick", 60000],
+  const builtins: Array<[string, string, number, number?]> = [
+    ["dispatch", "dispatch.sh tick", 60000, 170000],   // a dozen MRs of glab calls; never SIGKILL it mid-step
     ["tasks", "claude-task.sh notify", 60000],
     ["agent-messages", "agent-messages.sh check", 300000],
     ["slack-watch", "slack-watch.sh", 20000],   // mentions of Tom deserve a quick answer
@@ -209,7 +209,7 @@ function startPollers() {
   try {
     extra = JSON.parse(readFileSync(`${HOME}/.margie/config.json`, "utf8")).pollers || [];
   } catch { /* ignore */ }
-  for (const [name, cmd, everyMs] of builtins) pollers.push({ name, cmd, everyMs, running: false, lastRun: 0, lastNotice: "" });
+  for (const [name, cmd, everyMs, timeoutMs] of builtins) pollers.push({ name, cmd, everyMs, running: false, lastRun: 0, lastNotice: "", timeoutMs });
   for (const p of extra) {
     if (p?.cmd) pollers.push({ name: p.name || p.cmd, cmd: p.cmd, everyMs: parseEvery(p.every, 300000), running: false, lastRun: 0, lastNotice: "" });
   }
@@ -226,10 +226,11 @@ async function runPoller(p: Poller) {
   p.running = true;
   p.lastRun = Date.now();
   try {
-    const out = (await runScript(p.cmd)).trim();
+    const out = (await runScript(p.cmd, p.timeoutMs)).trim();
     // Only a script's deliberate one-liner becomes a notice — never tool noise,
     // a timeout marker, or a stack trace.
     const looksLikeError = /^(curl:|jq:|bash:|Traceback|Error|\[exec error\])/m.test(out) || out.includes("[timed out]");
+    if (out.includes("[timed out]")) dlog(`poller ${p.name} timed out (${p.timeoutMs || "default"}ms) — its notices for this cycle were dropped`);
     // Drop only the real status markers, NOT legitimate lines that begin with a
     // bracketed label like "[PT-831 …] running tests" (the session play-by-play).
     const isMarker = /^\[(no output|timed out|exec error|claude exited|done)\b/.test(out);
