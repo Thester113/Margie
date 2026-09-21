@@ -1547,7 +1547,7 @@ async function drain() {
     // A colleague's turn can never confirm: the gate is Tom's.
     const lastMargie = [...history].reverse().find((m) => m.role === "assistant" && !m.conv)?.content || "";
     let verdict: "yes" | "no" | "" = isAffirmative(text) ? "yes" : isNegative(text) ? "no" : "";
-    if (turn.speaker) verdict = "";
+    if (turn.speaker || turn.source === "session") verdict = "";   // only Tom's own words confirm or cancel
     else if (!verdict && (pending.length || PROPOSE_RE.test(lastMargie))) {
       const k = await jevReply(text, pending.map((p) => p.cmd), lastMargie);
       if (k === "approve") verdict = "yes"; else if (k === "decline") verdict = "no";
@@ -1600,7 +1600,10 @@ async function drain() {
     // Anything else FROM TOM drops the held command (he can re-ask or amend). A
     // colleague's turn in another conversation is not his answer — it neither
     // confirms nor drops what he is being asked about.
-    if (pending.length && !turn.speaker) {
+    // A session-sourced turn (session.sh needs relaying a coding session's screen)
+    // is not Tom's answer either — it dropped his held "merge !1195" mid-confirm on
+    // 2026-09-21 and his "yes" six seconds later had nothing to confirm.
+    if (pending.length && !turn.speaker && turn.source !== "session") {
       logBrain(`HELD command(s) dropped: ${pending.map((p) => p.cmd).join(" || ")}`);
       pending = []; savePending();
     }
