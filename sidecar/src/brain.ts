@@ -791,6 +791,11 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   for his explicit "merge". So for a UI MR, never say it merged on its own: relay
   "booted it in the sim, screenshot's on your Mac — say merge when it looks
   right", and only merge on his word. Backend-only MRs still auto-merge as above.
+  BOTH halves are required: dispatch.sh merge REFUSES a UI MR whose screenshot for
+  the current commit hasn't been shown yet, even on his word — relay its message
+  ("the verify is queued") and wait. Only if Tom says "merge anyway" run it with
+  MARGIE_MERGE_UNVERIFIED=1 in front. A bare "merge" from Tom names no MR: if
+  more than one MR is waiting on him, ask which one — never pick for him.
   ${SCRIPTS}/sim.sh boots/runs/screenshots the simulator (sim.sh run <wt> --subdir
   mobile / sim.sh shot); you don't drive it inline — tick and the verify session do.
 - SLACK THREADS: when Tom pastes a Slack link or says "read/answer this",

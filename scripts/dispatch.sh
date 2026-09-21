@@ -1465,6 +1465,15 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     if [ -n "$CHK" ] && [ "${MARGIE_DESCRIBE:-0}" != 1 ]; then
       P="$(jq -r .pipeline <<<"$CHK")"; U="$(jq -r .unresolved <<<"$CHK")"
       { [ "$P" != success ] || [ "$U" != 0 ]; } && { echo "Not merging !$IID yet, dearie — pipeline is $P and $U review thread(s) are open."; exit 1; }
+      # Tom's rule has two halves for a UI MR: Margie's screenshot AND his word. His word
+      # alone used to merge one (!1199, 2026-09-21: a bare "merge" landed on a UI MR whose
+      # browser verify hadn't run yet). Refuse until the shot for THIS commit was shown,
+      # unless he says so explicitly (MARGIE_MERGE_UNVERIFIED=1 / "merge anyway").
+      HSHA="$(jq -r .sha <<<"$CHK")"; REPO_NAME="$(basename "$(dmeta "$D" repo)")"
+      if [ "${MARGIE_MERGE_UNVERIFIED:-0}" != 1 ] && { is_ui_change "$WT" "$REPO_NAME" || is_chat_change "$WT" "$REPO_NAME"; } \
+         && [ "$(cat "$D/ui-verified-sha" 2>/dev/null)" != "$HSHA" ]; then
+        echo "Not merging !$IID yet, dearie — it's a UI change and I haven't shown you a screenshot of this commit (${HSHA:0:8}). The verify is queued; say \"merge anyway\" to skip it."; exit 1
+      fi
     fi
     "$DIR/mr.sh" merge "!$IID" --repo "$WT" ;;
   __make_child)   # internal: build (not start) the child dispatch for a ticket key
