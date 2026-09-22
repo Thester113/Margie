@@ -1273,8 +1273,14 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   fi
                   if [ "$CAUSE" = infrastructure ]; then
                     touch "$D/ci-retried-$PID"
-                    printf '%s\n' "$FAILED_JOBS" | while IFS=$'\t' read -r jid jname; do [ -n "$jid" ] && ( cd "$WT" && glab ci retry "$jid" >/dev/null 2>&1 ); done
-                    "$DIR/jev.sh" outcome ci_failure "retry pipeline=$PID jobs=$(printf '%s' "$FAILED_JOBS" | cut -f2 | tr '\n' ',')" >/dev/null 2>&1
+                    # A job on a merge-ref pipeline is "not retryable" once main has moved on
+                    # (GitLab 403, !1214); a fresh MR pipeline is the retry in that case.
+                    RETRIED=0
+                    printf '%s\n' "$FAILED_JOBS" | while IFS=$'\t' read -r jid jname; do [ -n "$jid" ] && ( cd "$WT" && glab ci retry "$jid" >/dev/null 2>&1 ) && echo ok; done | grep -q ok && RETRIED=1
+                    if [ "$RETRIED" = 0 ]; then
+                      ( cd "$WT" && glab api -X POST "projects/:id/merge_requests/$IID/pipelines" >/dev/null 2>&1 ) && RETRIED=2
+                    fi
+                    "$DIR/jev.sh" outcome ci_failure "retry pipeline=$PID jobs=$(printf '%s' "$FAILED_JOBS" | cut -f2 | tr '\n' ',') via=$([ "$RETRIED" = 2 ] && echo new-mr-pipeline || echo job-retry)" >/dev/null 2>&1
                     announce "Pipeline failed on MR !$IID for $PT but the runner/database gave out, not the code ($(printf '%s' "$FAILED_JOBS" | cut -f2 | tr '\n' ' ')) — I've retried those jobs once, dearie."
                   else
                     "$DIR/jev.sh" outcome ci_failure "session pipeline=$PID $( [ -f "$D/ci-retried-$PID" ] && echo already-retried || echo "jev=$(printf '%s' "${JC:-unavailable}" | tr '\t' '@')")" >/dev/null 2>&1
