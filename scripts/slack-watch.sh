@@ -224,6 +224,12 @@ brain_reply() {
     return 0
   fi
   rm -f "$MARGIE_DIR/slack-tries.$mts"
+  # Nothing to add → nothing posted (her "No action needed here — Tom already answered…"
+  # note went into the channel instead, 2026-09-22).
+  case "$(printf '%s' "$reply" | tr -d '[:space:].')" in NO_REPLY|NOREPLY)
+    [ -n "$ph" ] && sapi chat.delete --get --data-urlencode "channel=$cid" --data-urlencode "ts=$ph" >/dev/null 2>&1
+    logl "brain chose not to reply in $label ts=$mts"; return 0 ;;
+  esac
   # Who is it for? Only a colleague's chat needs asking; Tom's own conversations are his.
   if [ -n "$spk" ]; then
     aud=group
@@ -265,6 +271,22 @@ while IFS=$'\t' read -r kind cid label ts thread user text; do
   # --speaker (conversation-isolated, read-only allowlist enforced in brain.ts); the old
   # stripped `claude -p` composer and its canned "I've flagged this for him" line are gone.
   if { [ "$kind" = "im" ] || [ "$kind" = "ownerask" ]; } && [ -n "$OWNER" ] && [ "$user" = "$OWNER" ]; then
+    # Handled FIRST — without this every cycle re-answered the same message (a flood of
+    # "On it — one moment." in #team-engineering, 2026-09-22).
+    echo "${NOW}|${ts}" >> "$HANDLED"
+    # A thread reply of Tom's that @-mentions someone else and not Margie is addressed to
+    # them, not her (deterministic: the mentions are fields). An untagged reply that merely
+    # follows hers in a thread is Jev's call (jev.sh mention): a confident no_reply → skip.
+    if [ "$kind" = "ownerask" ] && ! printf '%s' "$text" | grep -q "<@$BOTID>"; then
+      if printf '%s' "$text" | grep -qE '<@U[A-Z0-9]+>'; then
+        logl "skip owner thread reply addressed to someone else ($label ts=$ts)"; continue
+      fi
+      OJ="$(printf '%s' "$text" | "$(dirname "$0")/jev.sh" mention "Margie" "$OWNER_NAME" 2>/dev/null)"
+      if [ "$(printf '%s' "$OJ" | cut -f1)" = "no_reply" ] && awk -v c="$(printf '%s' "$OJ" | cut -f2)" 'BEGIN{exit !(c >= 0.7)}'; then
+        "$(dirname "$0")/jev.sh" outcome mention "skip owner-thread $label jev=$(printf '%s' "$OJ" | tr '\t' '@')" >/dev/null 2>&1
+        logl "skip owner thread reply, not addressed to Margie per jev ($label ts=$ts)"; continue
+      fi
+    fi
     ASK="$(printf '%s' "$text" | sed "s/<@$BOTID>//g; s/^ *//;s/ *$//")"
     # The CLI's own commands, answered from the same scripts the terminal uses — instant, exact.
     CMD="$(printf '%s' "$ASK" | tr 'A-Z' 'a-z' | sed 's/^\///; s/[?.!]*$//')"
@@ -293,7 +315,8 @@ while IFS=$'\t' read -r kind cid label ts thread user text; do
 --- thread ---
 $CTX
 --- end thread ---
-Tom's request in that thread: $ASK"
+Tom's request in that thread: $ASK
+If there is nothing for you to say or do here (it's addressed to someone else, or already answered), reply with exactly NO_REPLY and nothing else."
     fi
     # In a channel, answer in the thread; in a DM / group DM, answer inline.
     if [ "$thread" != "$ts" ]; then TT="$thread"; else case "$label" in \#*) TT="$thread" ;; *) TT="" ;; esac; fi
@@ -346,7 +369,7 @@ ${CTX:+--- conversation so far (oldest first; lines from Margie were sent on beh
 $CTX
 --- end ---
 }$who wrote: <<<$clean>>>
-Reply to $who in that chat. If your reply is really a note for $OWNER_NAME rather than for $who (a read-back awaiting his yes, a question only he can answer, a report about $who), start it with \"FOR TOM:\" and it will go to him privately instead."
+Reply to $who in that chat. If there is nothing for you to say (it isn't for you, or it's already answered), reply with exactly NO_REPLY. If your reply is really a note for $OWNER_NAME rather than for $who (a read-back awaiting his yes, a question only he can answer, a report about $who), start it with \"FOR TOM:\" and it will go to him privately instead."
   echo "${NOW}|${ts}" >> "$HANDLED"
   if [ "$thread" != "$ts" ]; then TT="$thread"; else case "$label" in \#*) TT="$thread" ;; *) TT="" ;; esac; fi
   logl "$kind ($who, $label) → brain: $(printf '%s' "$clean" | cut -c1-80)"

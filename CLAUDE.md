@@ -199,7 +199,7 @@
   | `session` kind + needs_operator | `session.sh needs` | kind conf ≥0.5 and needs <0.5 → skip checkpoint / transient / working | wake the brain (old path) |
   | `session` (QA hand-off) | `dispatch.sh tick` | idle + clean + ahead of main and kind ∈ {checkpoint, handoff} | wait for the marker |
   | `danger` risky | `session.sh needs` | HARD regex → Tom, always; SOFT word + Jev <0.35 → answer; otherwise the BRAIN judges once (SAFE → answer, ESCALATE/none → Tom with the reason) | SOFT word → escalate |
-  | `mention` addressed | `slack-watch.sh` | no_reply ≥0.7 → don't compose | reply as before |
+  | `mention` addressed | `slack-watch.sh` (colleague mentions, and Tom's untagged thread replies; Tom tagging someone else is skipped deterministically) | no_reply ≥0.7 → don't compose | reply as before |
   | `ticket` intent | `dispatch.sh spec` | ≥0.9 either way | PT in first 64 chars = work it |
   | `ci_failure` cause | `dispatch.sh tick` | infrastructure ≥0.8 → retry the failed jobs once | send the red pipeline to the session |
   | `review_intent` | brain fast path | mention ≥0.9 → no fast path; session-sourced or colleague text never fast-paths | run `review-pr.sh` (old path) |
