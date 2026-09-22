@@ -21,7 +21,7 @@ export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 cfg() { jq -r ".$1 // empty" "$CFG" 2>/dev/null; }
 cfgd() { local v; v="$(cfg "$1")"; [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"; }
 REPO_ARG="$(cfgd local_dev_repo "$(cfgd regression_repo "$(cfgd default_repo walt_ui)")")"
-REPO="$("$DIR/resolve-repo.sh" "$REPO_ARG" 2>/dev/null)"; [ -z "$REPO" ] && { echo "Can't resolve repo '$REPO_ARG', dearie." >&2; exit 1; }
+REPO="$("$DIR/resolve-repo.sh" "$REPO_ARG" 2>/dev/null)"; [ -z "$REPO" ] && { echo "Can't resolve repo '$REPO_ARG'." >&2; exit 1; }
 SUBDIR="$(jq -r --arg r "$(basename "$REPO")" '.repo_subdirs[$r] // empty' "$CFG" 2>/dev/null)"
 BE="$REPO${SUBDIR:+/$SUBDIR}"
 URL="$(cfgd web_app_url http://localhost:4000)"
@@ -72,7 +72,7 @@ case "${1:-up}" in
         dc run --rm "$SVC" sh -lc "$ASSETS" >/dev/null 2>&1
         dc up -d "$SVC" >/dev/null 2>&1
       else
-        echo "app needs its assets built but local_dev_assets_cmd is not set, dearie — set it in config."
+        echo "app needs its assets built but local_dev_assets_cmd is not set — set it in config."
       fi
     fi
     # apply any pending migrations (a pull usually adds some — the classic 503 cause)
@@ -81,7 +81,7 @@ case "${1:-up}" in
     # poll until it serves
     for i in $(seq 1 24); do
       c="$(serving)"
-      if [ "$c" = 200 ] || [ "$c" = 302 ]; then echo "✓ $URL is up ($c), dearie."; exit 0; fi
+      if [ "$c" = 200 ] || [ "$c" = 302 ]; then echo "✓ $URL is up ($c)."; exit 0; fi
       sleep 5
     done
     echo "still not serving ($URL -> $(serving)). The cause is in the app log:"

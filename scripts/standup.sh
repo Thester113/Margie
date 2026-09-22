@@ -114,7 +114,7 @@ $EV"
   local out
   out="$(cd "$HOME" && "$CLAUDE_BIN" -p "$P" --model "${MARGIE_STANDUP_MODEL:-sonnet}" --output-format json \
         --disallowedTools "Bash,Edit,Write,NotebookEdit,Agent,WebFetch,WebSearch,Read,Glob,Grep" 2>/dev/null | jq -r '.result // empty')"
-  [ -n "$out" ] || { echo "Couldn't compose the standup, dearie (Claude returned nothing)." >&2; return 1; }
+  [ -n "$out" ] || { echo "Couldn't compose the standup (Claude returned nothing)." >&2; return 1; }
   printf '%s\n' "$out" > "$DRAFT"
   cat "$DRAFT"
 }
@@ -164,9 +164,9 @@ dm_owner() { [ -n "$OWNER_ID" ] && sapi chat.postMessage --get --data-urlencode 
 
 case "$cmd" in
   evidence) evidence ;;
-  prompt) find_prompt | cut -f1-2 | sed 's/\t/  /' | cut -c1-200 || echo "No standup prompt for $OWNER today, dearie." ;;
+  prompt) find_prompt | cut -f1-2 | sed 's/\t/  /' | cut -c1-200 || echo "No standup prompt for $OWNER today." ;;
   draft) compose ;;
-  show) [ -s "$DRAFT" ] && cat "$DRAFT" || echo "No standup drafted yet today, dearie — say 'draft my standup'." ;;
+  show) [ -s "$DRAFT" ] && cat "$DRAFT" || echo "No standup drafted yet today — say 'draft my standup'." ;;
   edit)
     INSTR="$*"; [ -z "$INSTR" ] && { echo "usage: standup.sh edit \"<what to change>\"" >&2; exit 1; }
     [ -s "$DRAFT" ] || compose >/dev/null || exit 1
@@ -176,27 +176,27 @@ CURRENT:
 $(cat "$DRAFT")"
     out="$(cd "$HOME" && "$CLAUDE_BIN" -p "$P" --model "${MARGIE_STANDUP_MODEL:-sonnet}" --output-format json \
           --disallowedTools "Bash,Edit,Write,NotebookEdit,Agent,WebFetch,WebSearch,Read,Glob,Grep" 2>/dev/null | jq -r '.result // empty')"
-    [ -n "$out" ] || { echo "Couldn't revise the draft, dearie." >&2; exit 1; }
+    [ -n "$out" ] || { echo "Couldn't revise the draft." >&2; exit 1; }
     printf '%s\n' "$out" > "$DRAFT"; cat "$DRAFT" ;;
   post)
     [ -s "$DRAFT" ] || compose >/dev/null || exit 1
-    [ -f "$POSTED" ] && { echo "Today's standup is already posted, dearie: $(cat "$POSTED")"; exit 0; }
-    CID="$(channel_id)"; [ -z "$CID" ] && { echo "Couldn't find channel $CHAN, dearie." >&2; exit 1; }
+    [ -f "$POSTED" ] && { echo "Today's standup is already posted: $(cat "$POSTED")"; exit 0; }
+    CID="$(channel_id)"; [ -z "$CID" ] && { echo "Couldn't find channel $CHAN." >&2; exit 1; }
     # Resolve the standup-bot prompt ONCE (find_prompt retries internally).
     PTS="$(find_prompt 2>/dev/null | cut -f1)"
     THREADNOTE=""; [ -n "$PTS" ] && THREADNOTE=" — in the thread of today's standup prompt"
     desc "would post ${OWNER}'s standup for $TODAY in $CHAN$THREADNOTE as @Margie: $(head -2 "$DRAFT" | tr '\n' ' ' | cut -c1-90)…"
     # Tom's rule: ALWAYS reply in the standup agent's thread. If we can't find today's
     # prompt, refuse rather than silently posting a stray top-level message.
-    [ -z "$PTS" ] && { echo "Couldn't find today's standup prompt to reply under, dearie — NOT posting a top-level message. Check #standup (the bot may not have prompted yet, or changed its wording)." >&2; exit 1; }
-    if thread_answered "$CID" "$PTS"; then echo "That standup thread already has ${OWNER}'s answer, dearie."; : > "$POSTED"; exit 0; fi
+    [ -z "$PTS" ] && { echo "Couldn't find today's standup prompt to reply under — NOT posting a top-level message. Check #standup (the bot may not have prompted yet, or changed its wording)." >&2; exit 1; }
+    if thread_answered "$CID" "$PTS"; then echo "That standup thread already has ${OWNER}'s answer."; : > "$POSTED"; exit 0; fi
     TEXT="*${OWNER}'s standup* (via Margie)
 $(cat "$DRAFT")"
     R="$(sapi chat.postMessage --get --data-urlencode "channel=$CID" --data-urlencode "text=$TEXT" ${PTS:+--data-urlencode "thread_ts=$PTS"})"
-    printf '%s' "$R" | jq -e '.ok==true' >/dev/null || { echo "Slack refused the post, dearie: $(printf '%s' "$R" | jq -r '.error // "?"')" >&2; exit 1; }
+    printf '%s' "$R" | jq -e '.ok==true' >/dev/null || { echo "Slack refused the post: $(printf '%s' "$R" | jq -r '.error // "?"')" >&2; exit 1; }
     LINK="$(sapi chat.getPermalink --get --data-urlencode "channel=$CID" --data-urlencode "message_ts=$(printf '%s' "$R" | jq -r .ts)" | jq -r '.permalink // empty')"
     printf '%s' "${LINK:-posted}" > "$POSTED"
-    echo "Posted ${OWNER}'s standup to $CHAN, dearie.${LINK:+ $LINK}" ;;
+    echo "Posted ${OWNER}'s standup to $CHAN.${LINK:+ $LINK}" ;;
   auto)
     [ "$MODE" = "off" ] && exit 0
     case "$(date +%u)" in 6|7) exit 0 ;; esac
@@ -215,7 +215,7 @@ $(cat "$DRAFT")"
       if [ -z "$cpid" ] || ! kill -0 "$cpid" 2>/dev/null; then
         nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' -- "$DIR/standup.sh" draft >/dev/null 2>&1 &
         echo $! > "$SDIR/$TODAY.composing"
-        dm_owner "Drafting your standup now, dearie — I'll post it to $CHAN in a minute."
+        dm_owner "Drafting your standup now — I'll post it to $CHAN in a minute."
       fi
       exit 0
     fi
@@ -223,17 +223,17 @@ $(cat "$DRAFT")"
     : > "$SDIR/$TODAY.notified"
     if [ "$MODE" = "post" ]; then
       if "$0" post >/dev/null 2>&1 && [ -f "$POSTED" ]; then
-        echo "Your standup is posted in $CHAN, dearie."
+        echo "Your standup is posted in $CHAN."
         dm_owner "Standup posted to $CHAN: $(cat "$POSTED")"
       else
         # post refuses to drop a stray top-level message when there's no prompt yet
-        echo "Couldn't post your standup in-thread yet, dearie — no standup prompt found."
+        echo "Couldn't post your standup in-thread yet — no standup prompt found."
         dm_owner "Heads up: I couldn't post your standup in-thread yet (no standup prompt in $CHAN). The draft's ready — I'll post once the bot prompts, or say \"post my standup\"."
       fi
     else
       dm_owner "Your standup draft for today — say \"post my standup\" (or \"change …\") to Margie:
 $(cat "$DRAFT")"
-      echo "Your standup draft is ready, dearie — I've DM'd it to you; say \"post my standup\" when it's right."
+      echo "Your standup draft is ready — I've DM'd it to you; say \"post my standup\" when it's right."
     fi ;;
   *) echo "usage: standup.sh evidence|draft [--since d] | show | post | auto" >&2; exit 1 ;;
 esac

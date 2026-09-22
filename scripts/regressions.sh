@@ -35,7 +35,7 @@ REPO_ARG=""; SINCE=""
 while [ $# -gt 0 ]; do case "$1" in --since) SINCE="${2:-}"; shift 2;; *) [ -z "$REPO_ARG" ] && REPO_ARG="$1"; shift;; esac; done
 [ -z "$REPO_ARG" ] && REPO_ARG="$(cfgd regression_repo "$(cfgd default_repo walt_ui)")"
 [ -z "$SINCE" ] && SINCE="$(date -v-"$(cfgd regression_since_days 14)"d +%F 2>/dev/null || date +%F)"
-REPO="$("$DIR/resolve-repo.sh" "$REPO_ARG" 2>/dev/null)"; [ -z "$REPO" ] && { echo "Can't resolve repo '$REPO_ARG', dearie." >&2; exit 1; }
+REPO="$("$DIR/resolve-repo.sh" "$REPO_ARG" 2>/dev/null)"; [ -z "$REPO" ] && { echo "Can't resolve repo '$REPO_ARG'." >&2; exit 1; }
 SUBDIR="$(jq -r --arg r "$(basename "$REPO")" '.repo_subdirs[$r] // empty' "$CFG" 2>/dev/null)"
 WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
 
@@ -50,7 +50,7 @@ owned_paths() {
 start_scan() {
   local OWNED P RAGENTS AG AGF OUT M; local -a MODEL_OPT=()
   OWNED="$(owned_paths | head -80)"
-  [ -z "$OWNED" ] && { echo "No owned files found since $SINCE, dearie."; return 1; }
+  [ -z "$OWNED" ] && { echo "No owned files found since $SINCE."; return 1; }
   P="$(cat "$DIR/prompts/regression-scan.md")"
   P="${P//'{{OWNER}}'/$OWNER}"; P="${P//'{{SINCE}}'/$SINCE}"; P="${P//'{{OWNED}}'/$OWNED}"
   RAGENTS=""
@@ -79,17 +79,17 @@ case "$cmd" in
   owned) owned_paths ;;
 
   scan)
-    if start_scan; then echo "Regression scan running over $OWNER's owned code in $(basename "$REPO")${SUBDIR:+/$SUBDIR}, dearie — results in a few minutes (regressions.sh show)."
-    else echo "Couldn't start the scan, dearie."; fi ;;
+    if start_scan; then echo "Regression scan running over $OWNER's owned code in $(basename "$REPO")${SUBDIR:+/$SUBDIR} — results in a few minutes (regressions.sh show)."
+    else echo "Couldn't start the scan."; fi ;;
 
   show)
     P="$(cat "$STATE/last-scan-path" 2>/dev/null)"
-    [ -s "$P" ] && jq -e '.regressions' "$P" >/dev/null 2>&1 || { echo "No finished scan yet, dearie — run regressions.sh scan and give it a few minutes."; exit 0; }
-    jq -r 'if (.regressions|length)>0 then (.regressions[] | "[\(.severity)/\(.confidence)] \(.file)\(if .line then ":"+(.line|tostring) else "" end) — \(.summary)") else "No regressions found in the owned code, dearie." end' "$P" ;;
+    [ -s "$P" ] && jq -e '.regressions' "$P" >/dev/null 2>&1 || { echo "No finished scan yet — run regressions.sh scan and give it a few minutes."; exit 0; }
+    jq -r 'if (.regressions|length)>0 then (.regressions[] | "[\(.severity)/\(.confidence)] \(.file)\(if .line then ":"+(.line|tostring) else "" end) — \(.summary)") else "No regressions found in the owned code." end' "$P" ;;
 
   hunt)
     P="$(cat "$STATE/last-scan-path" 2>/dev/null)"
-    [ -s "$P" ] && jq -e '.regressions' "$P" >/dev/null 2>&1 || { echo "Run a scan first and let it finish, dearie (regressions.sh scan)." >&2; exit 1; }
+    [ -s "$P" ] && jq -e '.regressions' "$P" >/dev/null 2>&1 || { echo "Run a scan first and let it finish (regressions.sh scan)." >&2; exit 1; }
     # one regression per call (dispatch.sh already serializes: one planner per repo) — highest
     # severity first, confirmed/likely only, skip any already dispatched.
     reg="$(jq -c '[.regressions[] | select(.confidence!="uncertain")]
@@ -97,16 +97,16 @@ case "$cmd" in
                   | .[]' "$P" 2>/dev/null | while IFS= read -r r; do
              id="$(printf '%s' "$r" | jq -r .id)"; [ -f "$STATE/dispatched-$id" ] || { printf '%s' "$r"; break; }
            done)"
-    [ -z "$reg" ] && { echo "No new confirmed/likely regressions to fix, dearie."; exit 0; }
+    [ -z "$reg" ] && { echo "No new confirmed/likely regressions to fix."; exit 0; }
     id="$(printf '%s' "$reg" | jq -r .id)"; sev="$(printf '%s' "$reg" | jq -r .severity)"
     file="$(printf '%s' "$reg" | jq -r .file)"; sum="$(printf '%s' "$reg" | jq -r .summary)"
     repro="$(printf '%s' "$reg" | jq -r .repro)"; fix="$(printf '%s' "$reg" | jq -r .fix)"
     ASK="Regression fix ($sev) in $file: $sum Reproduce first: $repro Then fix: $fix. Add or keep a test that would have caught this regression. Scope the change to THIS regression only — no unrelated refactors."
     if "$DIR/dispatch.sh" spec "$REPO_ARG" "$ASK" ${SUBDIR:+--subdir "$SUBDIR"} >/dev/null 2>&1; then
       touch "$STATE/dispatched-$id"
-      MSG="Found a $sev regression in $file and started a fix, dearie: $sum It'll go through QA + charter review + the merge gate like any change (backend auto-merges; UI holds for you). Review the spec with dispatch.sh show, then say go."
+      MSG="Found a $sev regression in $file and started a fix: $sum It'll go through QA + charter review + the merge gate like any change (backend auto-merges; UI holds for you). Review the spec with dispatch.sh show, then say go."
       echo "$MSG"; announce "$MSG"
-    else echo "Couldn't dispatch the fix for $id, dearie (a planner may already be running in $REPO_ARG)."; fi ;;
+    else echo "Couldn't dispatch the fix for $id (a planner may already be running in $REPO_ARG)."; fi ;;
 
   auto)
     # Honour the global pause (dispatch.sh pause): a paused Margie starts no
@@ -118,7 +118,7 @@ case "$cmd" in
     LAST="$(cat "$STATE/last-scan-day" 2>/dev/null)"
     # kick one scan per weekday at/after the scheduled time
     if [ "$DOW" -le 5 ] && [ "$HH" -ge "$WANT" ] && [ "$LAST" != "$(date +%F)" ]; then
-      start_scan >/dev/null 2>&1 && announce "Starting my daily regression sweep of the owned code, dearie."
+      start_scan >/dev/null 2>&1 && announce "Starting my daily regression sweep of the owned code."
       exit 0
     fi
     # mode=fix: once a scan has finished and has un-dispatched regressions, dispatch one

@@ -54,6 +54,26 @@
   `mrs review|mine|assigned|all`, `mr <n> <repo>`, `pipelines <repo>`) —
   the brain runs those inline; raw `glab api` one-liners in the prompt made
   it hallucinate or spawn Warp sessions.
+- **Slack is an extension of the CLI (Tom, 2026-09-22).** Every Slack reply — Tom's
+  DMs, colleagues' DMs, @Margie and @Tom mentions — is a turn of the same brain the CLI
+  talks to (`slack-watch.sh` → `brain_reply`); the old stripped `claude -p` composer and
+  its canned "flagged for Tom" line are gone. Colleagues run with `--speaker`
+  (conversation-isolated, read-only allowlist). A turn over ~8 s posts "On it — one
+  moment." and edits it into the answer; an empty answer retries, and after 3 tries Tom
+  is told — never a canned reply. Tom's DMs answer `status|usage|held|sessions` directly
+  from the CLI's own scripts. Style lives in `SLACK_STYLE` (brain.ts): answer first,
+  exact ticket/MR/state, plain words (no tick/gate/hold/dispatch), no paths or
+  nicknames; output goes through `forSlack()` (Slack markup, no tables). A
+  colleague-chat reply that is really for Tom ("FOR TOM:" or Jev `audience`) goes to his
+  DM instead. Background notices reach Tom's Slack via `tom-ping.sh` (Jev `notice` →
+  one batched DM). Other agents' messages are answered by `agent-messages.sh auto`
+  (read-only brain turn as that agent; "NEEDS TOM:" flagged; digest to Tom;
+  `agent_autoreply`, `agent_autoreply_per_hour`). `deploy.sh live <PT|!n>` is the only
+  source for "is it in production". No "dearie" in any script output.
+- **Notion is her memory of what the team wrote (Tom, 2026-09-22).** Before each text
+  turn `notionBrief()` reads any PT ticket named in the question, and — when Jev
+  `notion` says the question needs docs — searches Notion and reads the best page into
+  NOTION CONTEXT. Colleagues may `notion.sh search|read` (read-only).
 - **Slack goes through Claude's connector.** No Slack token on this Mac;
   `scripts/slack.sh` runs `claude -p` with `--allowedTools` limited to the
   Slack MCP tools each subcommand needs (verified: headless `claude -p` sees
@@ -158,6 +178,11 @@
   | `review_intent` | brain fast path | mention ≥0.9 → no fast path; session-sourced or colleague text never fast-paths | run `review-pr.sh` (old path) |
   | `reply` kind | brain confirm gate | approve ≥0.9 → run; decline/edit/other ≥0.75 | regex verdict (drop) |
   | `brief` dispatch | brain status pre-brief | ≥0.6 | title-overlap score |
+  | `audience` group/owner | `slack-watch.sh brain_reply` | owner ≥0.6 (or a "FOR TOM:" reply) → Tom's DM, not the chat | post to the chat |
+  | `notice` act/know/skip | `tom-ping.sh consider` | act ≥0.6, know ≥0.75 → queued, one Slack DM a batch | no ping (CLI still shows it) |
+  | `notion` docs/none | brain `notionBrief` | docs ≥0.75 → search + read the best page | no Notion context (a PT number is always read) |
+  | `preamble` | brain, every text reply | narration ≥0.6 → drop the opening self-talk paragraph | reply as written |
+  | `mention` (agents) | `agent-messages.sh auto` | no_reply ≥0.7 → acknowledge only | brain composes a reply |
 
   `jev.sh outcome <decision> <what>` (and `jevOutcome()` in TS) writes what the
   caller DID next to the answer in `~/.margie/jev.log` — grep `outcome` to see

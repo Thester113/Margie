@@ -26,6 +26,16 @@
 #                                           → infrastructure | code<TAB>confidence
 #                                             (runner/db/quota/network flake worth one retry,
 #                                             or a failure the branch's code caused?)
+#   jev.sh audience                         stdin = a reply Margie composed in a colleague's chat
+#                                           → group | owner<TAB>confidence  (post it to the group,
+#                                             or is it really a note / read-back for the owner?)
+#   jev.sh notice                           stdin = one background notice from the harness
+#                                           → act | know | skip<TAB>confidence  (should the owner
+#                                             get it in his Slack DM now, and does he need to act?)
+#   jev.sh preamble                         stdin = a reply's first paragraph
+#                                           → yes | no<TAB>p  (the model narrating its own process?)
+#   jev.sh notion                           stdin = a question to Margie
+#                                           → docs | none<TAB>confidence  (read Amby's Notion first?)
 #   jev.sh outcome <decision> <what>        log what the CALLER did with an answer
 #                                           (escalate(hard) | clear(jev) | retry | brain …) so
 #                                           the log shows decisions, not just answers
@@ -158,6 +168,50 @@ case "$cmd" in
     }')" || exit $?
     printf '%s\n' "$R" | jq -r '.answers.cause | "\(.choice)\t\(.confidence)"' ;;
 
+  # A reply composed for a colleague's Slack chat: meant for that chat, or really a note for
+  # the owner (a read-back awaiting his yes, "I'll tell Tom", an internal status line)? It used
+  # to be a regex on "dearie|held for your yes", which stopped working once the nicknames went.
+  audience)
+    QS="$(jq -cn --arg o "${1:-Tom}" '{audience:{type:"choice",
+      instructions:("This is a reply Margie, \($o)'"'"'s assistant, wrote to post in a Slack chat with one of \($o)'"'"'s colleagues. Who is it actually addressed to?"),
+      criteria:{
+        group:("Written TO the colleague(s) in that chat: it answers them, informs them, or tells them what happens next. Mentioning \($o) in the third person (\"Tom will review it\") is still written to the colleague."),
+        owner:("Written TO \($o), not to the colleague: it asks for confirmation (\"Confirm and I will send it\", \"Want me to…?\"), reads back an action waiting for a yes, or refers to the colleague in the third person as someone else (\"Mike is asking…\", \"I told him…\")")}}}')"
+    R="$(ask "$QS")" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.audience | "\(.choice)\t\(.confidence)"' ;;
+
+  # One background notice (the lines the CLI shows with ✿): should the owner get it in his
+  # Slack DM while he's away from the terminal? act = he must do something; know = a real
+  # milestone or failure he'd want to hear about; skip = progress, routine, or already sent.
+  notice)
+    R="$(ask '{"ping":{"type":"choice",
+      "instructions":"This is a status notice from an automated engineering pipeline, written for its owner. Should it be sent to the owner'"'"'s phone as a Slack message right now?",
+      "criteria":{
+        "act":"Yes, and he must do something: a merge request waiting for his merge or his look at a screenshot, a question for him, a decision only he can make, or anything stuck until he acts, including a coding session blocked on a permission prompt Margie will not answer for him",
+        "know":"Yes, as information: a finished milestone (a merge request opened, QA passed or failed, merged, a production deploy verdict whether healthy or not) or a failure that did not fix itself",
+        "skip":"No: step-by-step progress, something started or retried automatically, a routine or duplicate status, or a notice that says he has already been messaged about it"}}}')" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.ping | "\(.choice)\t\(.confidence)"' ;;
+
+  # A question to Margie: would a good answer need the team's written docs in Notion (how a
+  # feature works, setup steps, a spec, a decision, a runbook) — or is it about live work
+  # status / chit-chat that Notion can't add to? Drives the brain's Notion pre-brief.
+  notion)
+    R="$(ask '{"need":{"type":"choice",
+      "instructions":"Someone asked an engineering assistant this. Would a good answer need the team'"'"'s written documentation in Notion: how a product feature works, setup or usage steps, a spec or requirements, a past decision, or a runbook?",
+      "criteria":{
+        "docs":"Yes: it asks how something works or is set up, what was decided or specified, what the steps or rules are, or for a guide or explanation of a feature",
+        "none":"No: it asks about the live state of work in progress (is it merged, what is running, what is next, status), gives an instruction to do something, or is small talk or a reply to a question"}}}')" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.need | "\(.choice)\t\(.confidence)"' ;;
+
+  # The first paragraph of a reply: part of the answer, or the model talking to itself about
+  # its own process ("I have exactly what's needed — that's enough to answer.")? Such a line
+  # reads as a bot thinking aloud; the brain drops it when Jev is sure.
+  preamble)
+    R="$(ask '{"narration":{"type":"noul",
+      "instructions":"This is the first paragraph of a reply an assistant sent to a person. Is it the assistant narrating its own process to itself (what it found, that it now has enough, what it will do next) rather than telling the person something?",
+      "criteria":{"true":"Self-narration about its own work or readiness, with no information the reader needs","false":"Part of the answer: it tells the reader a fact, a result, a status, a question, or a next step for them"}}}')" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.narration.noul | if . >= 0.5 then "yes\t\(.)" else "no\t\(.)" end' ;;
+
   # What the caller DID with an answer — the half of the record the log was missing.
   outcome)
     [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: jev.sh outcome <decision> <what>" >&2; exit 64; }
@@ -263,6 +317,25 @@ Please report incorrect results: https://github.com/rrrene/credo/issues
 Analysis took 3.2 seconds (0.1s to load, 3.1s running 56 checks on 412 files)
 1 warning, 0 refactoring opportunities, 0 design issues, 0 consistency issues
 ERROR: Job failed: exit code 1'
+    expect audience group <<< 'PT-1461 is in QA right now — the MR should open within the hour, and Tom will review it after that.'
+    expect audience group <<< 'Yes — the Brevo webhook is registered (id 2191367). If clicks stop showing up, check Settings → Webhooks in Brevo first.'
+    expect audience owner <<< 'This will send Mike: "The export is ready." Confirm and I will send it.'
+    expect audience owner <<< 'Mike is asking about the Faraday cost again; I told him you would follow up. Want me to draft a reply?'
+    expect notice act <<< 'UI MR !1227 (PT-1483) is green and ready — I verified it in a browser. Say "merge" when it looks right.'
+    expect notice act <<< 'Session margie-PT-1402 is waiting on a prompt I will NOT answer for you (it looks dangerous): rm -rf ~/Amby'
+    expect notice know <<< 'QA on PT-1415: fail — the owner-key refusal is not shown on the Set up Homie page.'
+    expect notice know <<< 'DEPLOY VERDICT: healthy — f30a614 came up, took over cleanly and served 200s.'
+    expect notice skip <<< '[PT-1461 Hand-raiser count] Running the LiveView tests'
+    expect notice skip <<< 'Coding on PT-1461 reports done — running QA now.'
+    expect notice skip <<< 'Heads up: MR !1214 for PT-1458 was pinged to you on Slack with the screenshot.'
+    expect notion docs <<< 'how does the Homie hand-raiser write-back to Follow Up Boss work? which fields does it touch?'
+    expect notion docs <<< 'what did we decide about Broker of Record for the Homie launch?'
+    expect notion none <<< 'whats margie working on now?'
+    expect notion none <<< 'merge 1214'
+    expect preamble yes <<< "I have exactly what's needed — the moduledoc's field mapping table is authoritative. That's enough to answer."
+    expect preamble yes <<< 'Now I have the full picture. Let me put it together.'
+    expect preamble no <<< 'PT-1461 is in QA — the MR should open within the hour.'
+    expect preamble no <<< 'Yes — !1227 merged at 16:39 and deployed at 16:58.'
     expect "ticket PT-1004" work_existing <<< 'Fix PT-1004: the enrichment worker still retries dead Google tokens forever. Stop after the third invalid_grant and mark the account.'
     expect "ticket PT-1004" work_existing <<< 'PT-1004 shipped but the retry cap is not applied to calendar sync — finish it so both syncs stop after three invalid_grant answers.'
     expect "ticket PT-1412" context_only <<< 'Gaps found walking the Homie flow on prod. Do NOT duplicate what is already in flight: PT-1412 auto-designates the 7 write-back fields. 1. No seeded role can receive hand-raisers — seed an Agent role. 2. The upload form forgets the connection you picked.'
@@ -270,5 +343,5 @@ ERROR: Job failed: exit code 1'
     echo "$((N-FAIL))/$N passed"; [ "$FAIL" = 0 ] ;;
 
   *)
-    echo "usage: jev.sh ask '<questions>' [state] | session | mention <who> [owner] | danger | ticket <PT-n> | ci_failure | outcome <decision> <what> | check | status" >&2; exit 64 ;;
+    echo "usage: jev.sh ask '<questions>' [state] | session | mention <who> [owner] | danger | ticket <PT-n> | ci_failure | audience [owner] | notice | notion | preamble | outcome <decision> <what> | check | auto | status" >&2; exit 64 ;;
 esac

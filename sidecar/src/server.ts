@@ -14,7 +14,7 @@ import {
   unlinkSync, watchFile, writeFileSync, writeSync, chmodSync, appendFileSync,
 } from "node:fs";
 import { spawn } from "node:child_process";
-import { enqueue, logBrain, runScript, noteToHistory, brainStatus } from "./brain.js";
+import { enqueue, logBrain, runScript, noteToHistory, brainStatus, SCRIPTS } from "./brain.js";
 import { SOCK, LOCK, MARGIE_DIR, DAEMON_LOG, WireIn, WireOut } from "./protocol.js";
 
 const HOME = process.env.HOME || "/";
@@ -196,13 +196,14 @@ function startPollers() {
   const builtins: Array<[string, string, number, number?]> = [
     ["dispatch", "dispatch.sh tick", 60000, 170000],   // a dozen MRs of glab calls; never SIGKILL it mid-step
     ["tasks", "claude-task.sh notify", 60000],
-    ["agent-messages", "agent-messages.sh check", 300000],
+    ["agent-messages", "agent-messages.sh auto", 120000],   // answer other agents herself (read-only; NEEDS TOM flagged); off → check
     ["slack-watch", "slack-watch.sh", 20000],   // mentions of Tom deserve a quick answer
     ["standup", "standup.sh auto", 60000],
     ["sessions", "session.sh needs", 45000],
     ["deploy", "deploy.sh check", 60000],
     ["regressions", "regressions.sh auto", 300000],   // proactive regression sweep of owned code (config regression_scan)
-    ["jev-check", "jev.sh auto", 300000],             // Jev fixture self-test: nightly and when jev-latest moves; Slacks Tom only on FAIL
+    ["jev-check", "jev.sh auto", 300000],
+    ["tom-ping", "tom-ping.sh flush", 60000],       // notices worth Tom's attention → one Slack DM (Jev decides which)             // Jev fixture self-test: nightly and when jev-latest moves; Slacks Tom only on FAIL
     ["status-sync", "status-sync.sh push", 600000],   // back Margie's state up to Notion every 10 min        // watch a production deploy Tom triggers     // a coding session waiting on a human
   ];
   let extra: Array<{ name?: string; cmd?: string; every?: unknown }> = [];
@@ -244,6 +245,12 @@ async function runPoller(p: Poller) {
       if (text !== p.lastNotice) {
         p.lastNotice = text;
         notice(text);
+        // Slack as an extension of the CLI: each notice line is offered to tom-ping.sh, where
+        // Jev decides whether it's worth a ping on Tom's phone. Detached — never slows a poller.
+        for (const line of out.split("\n").map((l) => l.trim()).filter(Boolean)) {
+          if (line.startsWith("[") || p.name === "tom-ping") continue;
+          try { spawn(`${SCRIPTS}/tom-ping.sh`, ["consider", line.slice(0, 600)], { detached: true, stdio: "ignore" }).unref(); } catch { /* best effort */ }
+        }
       }
     } else if (!out || out === "[no output]") {
       // Backlog cleared (nothing to report) → let an identical notice fire

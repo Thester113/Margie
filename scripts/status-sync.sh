@@ -16,10 +16,10 @@ ensure_parent() {
   local pp; pp="$(cfg notion_status_parent)"
   if [ -z "$pp" ]; then
     local under; under="$(cfg notion_parent_page)"; [ -z "$under" ] && under="$(cfg notion_drafts_parent)"
-    [ -z "$under" ] && { echo "No Notion parent to create the status area under, dearie (set notion_parent_page)." >&2; return 1; }
+    [ -z "$under" ] && { echo "No Notion parent to create the status area under (set notion_parent_page)." >&2; return 1; }
     printf '# Margie — Status\nLive project state, kept current by Margie. Newest facts are at the top of each page.\n' > /tmp/margie-status-root.md
     local url; url="$("$DIR/notion.sh" page create "Margie — Status" --md /tmp/margie-status-root.md --parent "$under" 2>/dev/null | grep -oE '[0-9a-f]{32}' | tail -1)"
-    [ -z "$url" ] && { echo "Couldn't create the status area, dearie." >&2; return 1; }
+    [ -z "$url" ] && { echo "Couldn't create the status area." >&2; return 1; }
     setcfg notion_status_parent "$url"; pp="$url"
   fi
   echo "$pp"

@@ -136,7 +136,7 @@ notify_domain_owners() {
     [ "$hit" = 1 ] || continue
     touch "$d/owner-notified-$dom"
     slack_bg send "$slack: ${who:-there} — $pt touches $dom: $(head -1 "$d/mr.md" 2>/dev/null). MR !$iid $url. Tom asked that you're looped in on $dom changes; this is an FYI, not a gate — it'll go through review and merge on its own, so say so here if you want it done differently."
-    announce "I let ${who:-the $dom owner} know on Slack that $pt touches $dom, dearie."
+    announce "I let ${who:-the $dom owner} know on Slack that $pt touches $dom."
   done
   return 0
 }
@@ -206,7 +206,7 @@ resolve_d() { # id | PT-### | latest | fuzzy word -> dispatch dir (follows the P
 }
 need_d() {
   D="$(resolve_d "${1:-latest}")"
-  [ -n "$D" ] && [ -d "$D" ] || { echo "No such dispatch${1:+ '$1'}, dearie." >&2; exit 1; }
+  [ -n "$D" ] && [ -d "$D" ] || { echo "No such dispatch${1:+ '$1'}." >&2; exit 1; }
 }
 # Spikes answered with `dispatch.sh spike` leave a marker; every "on Tom" line filters them
 # out, so an answered spike never keeps showing as pending (Tom's accuracy rule).
@@ -432,11 +432,11 @@ case "$cmd" in
     REPO="$("$DIR/resolve-repo.sh" "$REPO_ARG")" || exit 1
     [ -z "$SUBDIR" ] && SUBDIR="$(jq -r --arg r "$(basename "$REPO")" '.repo_subdirs[$r] // empty' "$CFG" 2>/dev/null)"
     WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
-    [ -d "$WORKDIR" ] || { echo "No such directory $WORKDIR, dearie." >&2; exit 1; }
+    [ -d "$WORKDIR" ] || { echo "No such directory $WORKDIR." >&2; exit 1; }
     # One planner per repo at a time: a refinement is `amend`, not a new dispatch.
     for other in "$MDIR"/d-*; do
       [ -d "$other" ] && [ "$(st "$other")" = "spec-running" ] && [ "$(dmeta "$other" repo)" = "$REPO" ] && {
-        echo "A spec is already being drafted for $(basename "$REPO") ($(basename "$other")), dearie. To add context: dispatch.sh amend $(basename "$other") \"…\"; to replace it: dispatch.sh close $(basename "$other") first."
+        echo "A spec is already being drafted for $(basename "$REPO") ($(basename "$other")). To add context: dispatch.sh amend $(basename "$other") \"…\"; to replace it: dispatch.sh close $(basename "$other") first."
         exit 1; }
     done
     ID="d-$(date +%s)-$(slug "$REQ")"
@@ -480,14 +480,14 @@ case "$cmd" in
 
     launch_planner "$D" "$WORKDIR" "$REQ"
     st "$D" spec-running
-    echo "Drafting the spec for '$ID' in $(basename "$REPO")${SUBDIR:+/$SUBDIR}, dearie — product, architecture and QA. A few minutes; check with: dispatch.sh show"
+    echo "Drafting the spec for '$ID' in $(basename "$REPO")${SUBDIR:+/$SUBDIR} — product, architecture and QA. A few minutes; check with: dispatch.sh show"
     ;;
   amend)
     need_d "${1:-latest}"; shift || true
     EXTRA="$*"; [ -z "$EXTRA" ] && { echo "usage: dispatch.sh amend <id|latest> \"<more context>\"" >&2; exit 1; }
     case "$(st "$D")" in
       spec-running|spec-ready|spec-failed) ;;
-      *) echo "That dispatch is already past planning ($(st "$D")), dearie — amendments go to the session or the ticket." >&2; exit 1 ;;
+      *) echo "That dispatch is already past planning ($(st "$D")) — amendments go to the session or the ticket." >&2; exit 1 ;;
     esac
     # Supersede any previous planner run for this dispatch: stop it if running and
     # detach its --out so a finished one can't re-deposit the old spec.
@@ -502,7 +502,7 @@ case "$cmd" in
       else
         printf '\n\nADDENDUM (%s): %s' "$(date -u +%FT%TZ)" "$EXTRA" >> "$D/request.txt"
         touch "$D/replan-pending"
-        echo "Noted, dearie — the current planning run is well along, so I've added that to the request and will re-plan in one go once it finishes."
+        echo "Noted — the current planning run is well along, so I've added that to the request and will re-plan in one go once it finishes."
         exit 0
       fi
     fi
@@ -514,7 +514,7 @@ case "$cmd" in
     # last 20 minutes (and we didn't just replace it), queue the context — tick re-plans once things go quiet.
     if [ "$RESTART" = 0 ] && [ $(( $(date +%s) - LAST )) -lt 1200 ]; then
       touch "$D/replan-pending"
-      echo "Noted, dearie — I've added that to the spec's request; I'll re-plan in one go shortly rather than start another run right now."
+      echo "Noted — I've added that to the spec's request; I'll re-plan in one go shortly rather than start another run right now."
       exit 0
     fi
     [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md" "$D/breakdown.json" "$D/breakdown.md" "$D/breakdown-running"  # a re-plan invalidates the ticket breakdown
@@ -522,15 +522,15 @@ case "$cmd" in
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
     st "$D" spec-running
-    echo "Amended and re-planning '$(basename "$D")' with the extra context, dearie — a few minutes; check with: dispatch.sh show"
+    echo "Amended and re-planning '$(basename "$D")' with the extra context — a few minutes; check with: dispatch.sh show"
     ;;
   show)
     need_d "${1:-latest}"
     if ! spec_ready "$D"; then
       case "$(st "$D")" in
-        spec-running) echo "The spec is still being drafted, dearie." ;;
-        spec-failed)  WHY="$("$DIR/claude-task.sh" why "spec:$(basename "$D")" 2>/dev/null)"; echo "The spec run failed, dearie${WHY:+ — $WHY}. dispatch.sh replan $(basename "$D") runs it again." ;;
-        *) echo "No spec on this dispatch yet, dearie." ;;
+        spec-running) echo "The spec is still being drafted." ;;
+        spec-failed)  WHY="$("$DIR/claude-task.sh" why "spec:$(basename "$D")" 2>/dev/null)"; echo "The spec run failed${WHY:+ — $WHY}. dispatch.sh replan $(basename "$D") runs it again." ;;
+        *) echo "No spec on this dispatch yet." ;;
       esac
       exit 0
     fi
@@ -544,17 +544,17 @@ case "$cmd" in
     ' "$D/spec.json"
     if has_breakdown "$D"; then
       jq -r '"Tickets (" + (.tickets|length|tostring) + "): " + (.tickets | map(.key + " " + .title + " (" + .size + (if .spike then ", spike" else "" end) + (if (.depends_on|length)>0 then ", after " + (.depends_on|join("/")) else "" end) + ")") | join("; "))' "$D/breakdown.json"
-      echo "Say \"go\" to file the umbrella ticket plus those tickets and start Claude, dearie."
-    elif [ -f "$D/breakdown-running" ]; then echo "The ticket breakdown is still being drafted, dearie."
+      echo "Say \"go\" to file the umbrella ticket plus those tickets and start Claude."
+    elif [ -f "$D/breakdown-running" ]; then echo "The ticket breakdown is still being drafted."
     else
-      echo "Say \"go\" to file the ticket and start Claude, dearie$( [ "$(jq -r .estimate "$D/spec.json")" = L ] || [ "$(jq -r .estimate "$D/spec.json")" = XL ] && echo " — or \"break it into tickets\" first (dispatch.sh breakdown), it's a big one")."
+      echo "Say \"go\" to file the ticket and start Claude$( [ "$(jq -r .estimate "$D/spec.json")" = L ] || [ "$(jq -r .estimate "$D/spec.json")" = XL ] && echo " — or \"break it into tickets\" first (dispatch.sh breakdown), it's a big one")."
     fi
     [ -s "$D/draft-page.url" ] && echo "Read the full draft in Notion: $(cat "$D/draft-page.url")"
     ;;
   breakdown)
     need_d "${1:-latest}"
-    spec_ready "$D" || { echo "The spec isn't ready yet, dearie — break it down once it is." >&2; exit 1; }
-    case "$(st "$D")" in spec-ready|spec-failed|spec-running) ;; *) echo "Already past planning ($(st "$D")), dearie — split the work in the ticket instead." >&2; exit 1 ;; esac
+    spec_ready "$D" || { echo "The spec isn't ready yet — break it down once it is." >&2; exit 1; }
+    case "$(st "$D")" in spec-ready|spec-failed|spec-running) ;; *) echo "Already past planning ($(st "$D")) — split the work in the ticket instead." >&2; exit 1 ;; esac
     [ -s "$D/spec.md" ] || render_md "$D"
     P="$(cat "$DIR/prompts/breakdown-planner.md")"
     P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"
@@ -566,11 +566,11 @@ case "$cmd" in
     "$DIR/claude-task.sh" start "$WORKDIR" "$P" --plan --no-subagents --schema "$DIR/schemas/breakdown.schema.json" \
       --effort "$(cfgd planner_effort medium)" --budget "$(cfgd dispatch_budget_usd 4)" \
       --tag "breakdown:$(basename "$D")" --out "$D/breakdown.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null || { rm -f "$D/breakdown-running"; exit 1; }
-    echo "Splitting \"$(jq -r .title "$D/spec.json")\" into tickets, dearie — a few minutes; I'll say when the list is ready." ;;
+    echo "Splitting \"$(jq -r .title "$D/spec.json")\" into tickets — a few minutes; I'll say when the list is ready." ;;
 
   file)
     need_d "${1:-latest}"
-    spec_ready "$D" || { echo "The spec isn't ready yet, dearie." >&2; exit 1; }
+    spec_ready "$D" || { echo "The spec isn't ready yet." >&2; exit 1; }
     TITLE="$(jq -r .title "$D/spec.json")"
     NTC="$(jq '.test_cases | length' "$D/spec.json")"
     RISK="$(jq -r .security.risk_label "$D/spec.json")"
@@ -596,7 +596,7 @@ case "$cmd" in
       EXID="$(printf '%s' "$EXROW" | grep -oiE '\[[0-9a-f]{32}\]' | tr -d '[]')"
       EXURL="$(printf '%s' "$EXROW" | grep -oiE 'https://[^ ]+' | head -1)"
       jq -cn --arg pt "$EXPT" --arg id "$EXID" --arg url "$EXURL" '{pt:$pt, id:$id, url:$url}' > "$D/ticket.json"
-      echo "Reusing existing ticket $EXPT (no duplicate created), dearie: $EXURL"
+      echo "Reusing existing ticket $EXPT (no duplicate created): $EXURL"
     else
       OUT="$("$DIR/notion.sh" ticket create "$TITLE" --md "$D/body.md" --priority "$PRIO" --labels "$LBLS" ${UCOPT[@]+"${UCOPT[@]}"})" || exit 1
       echo "$OUT" | head -1
@@ -662,12 +662,12 @@ case "$cmd" in
     printf '%s' "$DOCS" | grep -oE 'https://[^ ]+' | head -1 > "$D/docs-page.url" || true
     ln -sfn "$D" "$MDIR/$PT"
     st "$D" filed
-    echo "Filed $PT, dearie: $TURL"
+    echo "Filed $PT: $TURL"
     ;;
 
   implement)
     need_d "${1:-latest}"
-    [ -s "$D/ticket.json" ] || { echo "File the ticket first, dearie (dispatch.sh file)." >&2; exit 1; }
+    [ -s "$D/ticket.json" ] || { echo "File the ticket first (dispatch.sh file)." >&2; exit 1; }
     PT="$(jq -r .pt "$D/ticket.json")"; TURL="$(jq -r .url "$D/ticket.json")"
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"
     BRANCH="$(cfg branch_prefix)"; BRANCH="${BRANCH:-margie}/$PT-$(jq -r .slug "$D/spec.json")"
@@ -687,12 +687,12 @@ case "$cmd" in
 
   go)
     need_d "${1:-latest}"
-    spec_ready "$D" || { echo "The spec isn't ready yet, dearie." >&2; exit 1; }
+    spec_ready "$D" || { echo "The spec isn't ready yet." >&2; exit 1; }
     TITLE="$(jq -r .title "$D/spec.json")"
     case "$(jq -r '.estimate // ""' "$D/spec.json")" in L|XL)
       if ! has_breakdown "$D"; then
         [ -f "$D/breakdown-running" ] || "$0" breakdown "$(basename "$D")" >/dev/null 2>&1
-        echo "That spec is $(jq -r .estimate "$D/spec.json") — I'm splitting it into tickets first so the MRs stay small, dearie. Say \"go\" again once the ticket list is up (a few minutes)."; exit 1
+        echo "That spec is $(jq -r .estimate "$D/spec.json") — I'm splitting it into tickets first so the MRs stay small. Say \"go\" again once the ticket list is up (a few minutes)."; exit 1
       fi ;;
     esac
     if has_breakdown "$D"; then desc "would file the umbrella ticket \"$TITLE\" plus $(jq '.tickets|length' "$D/breakdown.json") child tickets in Blocked-By order ($(jq -r '.tickets|map(.key + " " + .title)|join("; ")' "$D/breakdown.json")), $(jq '.test_cases|length' "$D/spec.json") test cases spread across them, a spec page, then start ONE Claude Code session on branch $(cfg branch_prefix | grep . || echo margie)/PT-…-$(jq -r .slug "$D/spec.json") in a worktree that works the tickets in order, one MR each"
@@ -705,7 +705,7 @@ case "$cmd" in
       # work — its answer emerges from the dependent implementation, so never frame it as a hold.
       OWNER_SP="$(jq -r --argjson done "$(resolved_spikes "$D")" '[.tickets[] | select((.spike // false) and (((.needs_from_owner // []) | length) > 0) and ((.key as $k | $done | index($k)) == null)) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
       SESS_SP="$(jq -r '[.tickets[] | select((.spike // false) and (((.needs_from_owner // []) | length) == 0)) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
-      [ -n "$OWNER_SP" ] && echo "On you, dearie (spike needs YOUR input, not automated): $OWNER_SP."
+      [ -n "$OWNER_SP" ] && echo "On you (spike needs YOUR input, not automated): $OWNER_SP."
       [ -n "$SESS_SP" ] && echo "Code-investigation spike(s) — the sessions resolve these, not you: $SESS_SP."
       K="$(next_child "$D")"; [ -n "$K" ] && start_child "$D" "$K"
     else
@@ -717,15 +717,15 @@ case "$cmd" in
     WATCH=0; ARGS=()
     for a in "$@"; do case "$a" in --watch) WATCH=1 ;; *) ARGS+=("$a") ;; esac; done
     need_d "${ARGS[0]:-latest}"
-    [ -s "$D/impl.json" ] || { echo "Nothing implemented to verify on this dispatch, dearie." >&2; exit 1; }
+    [ -s "$D/impl.json" ] || { echo "Nothing implemented to verify on this dispatch." >&2; exit 1; }
     PT="$(jq -r .pt "$D/ticket.json")"; TURL="$(jq -r .url "$D/ticket.json")"
     WT="$(jq -r .worktree "$D/impl.json")"; SUBDIR="$(dmeta "$D" subdir)"
-    [ -d "$WT" ] || { echo "The worktree is gone, dearie ($WT)." >&2; exit 1; }
+    [ -d "$WT" ] || { echo "The worktree is gone ($WT)." >&2; exit 1; }
     # Nothing to verify if the branch has no commits yet — running QA here yields a
     # misleading "nothing implemented" verdict that jams the pipeline. Wait for code.
     AHEAD="$(cd "$WT" && git rev-list --count "$(cfgd mr_target_branch main)"..HEAD 2>/dev/null || echo 0)"
     if [ "${AHEAD:-0}" = 0 ]; then
-      echo "No commits on $PT's branch yet, dearie — nothing to QA. The session hasn't committed the work; I'll wait for it." >&2
+      echo "No commits on $PT's branch yet — nothing to QA. The session hasn't committed the work; I'll wait for it." >&2
       st "$D" implementing; exit 0
     fi
     P="$(cat "$DIR/prompts/qa-verifier.md")"
@@ -741,7 +741,7 @@ case "$cmd" in
         --effort "$(cfgd qa_effort medium)" --budget "$(cfgd dispatch_budget_usd 4)" \
         --tag "qa:$(basename "$D")" --out "$D/qa.json" ${MODEL_OPT[@]+"${MODEL_OPT[@]}"} > /dev/null
       st "$D" qa-running
-      echo "QA verification is running on $PT, dearie — I'll report the verdict."
+      echo "QA verification is running on $PT — I'll report the verdict."
     fi
     ;;
 
@@ -795,9 +795,9 @@ case "$cmd" in
     # dispatch.sh review <id|PT> — force a fresh local review round on the MR's current
     # commit, for when a verdict is stale (the fix wasn't a commit, or context changed).
     need_d "${1:?usage: dispatch.sh review <id|PT>}"
-    [ -s "$D/mr.json" ] || { echo "No MR tracked for that dispatch yet, dearie." >&2; exit 1; }
+    [ -s "$D/mr.json" ] || { echo "No MR tracked for that dispatch yet." >&2; exit 1; }
     rm -f "$D/review-sha" "$D/review-running"
-    echo "Fresh review queued for MR !$(jq -r .iid "$D/mr.json"), dearie — it runs on the next tick."
+    echo "Fresh review queued for MR !$(jq -r .iid "$D/mr.json") — it runs on the next tick."
     ;;
   child)
     # dispatch.sh child <epic id|PT> <key…>  — start specific tickets of a broken-down
@@ -805,26 +805,26 @@ case "$cmd" in
     # when a few tickets decide whether something is demoable (2026-09-18). Conflicts
     # between siblings touching the same files are the price; they rebase like any MR.
     need_d "${1:?usage: dispatch.sh child <epic id|PT> <ticket key…>}"; shift
-    [ -s "$D/breakdown.json" ] || { echo "That dispatch has no ticket breakdown, dearie." >&2; exit 1; }
+    [ -s "$D/breakdown.json" ] || { echo "That dispatch has no ticket breakdown." >&2; exit 1; }
     for KEY in "$@"; do
       jq -e --arg k "$KEY" '.tickets[] | select(.key == $k)' "$D/breakdown.json" >/dev/null 2>&1 \
-        || { echo "No ticket '$KEY' in $(basename "$D"), dearie." >&2; continue; }
-      if [ -d "$(child_dir "$D" "$KEY")" ]; then echo "$KEY is already started, dearie."; continue; fi
+        || { echo "No ticket '$KEY' in $(basename "$D")." >&2; continue; }
+      if [ -d "$(child_dir "$D" "$KEY")" ]; then echo "$KEY is already started."; continue; fi
       start_child "$D" "$KEY"
     done
     ;;
   pause)
     printf '%s\n' "${1:-paused by Tom $(date -u +%FT%TZ)}" > "$HOME/.margie/paused"
-    echo "Paused, dearie — tick advances nothing until you say resume."
+    echo "Paused — tick advances nothing until you say resume."
     ;;
   resume)
     rm -f "$HOME/.margie/paused"
-    echo "Resumed, dearie — the pipeline picks up on the next tick."
+    echo "Resumed — the pipeline picks up on the next tick."
     ;;
   status)
     [ -f "$HOME/.margie/paused" ] && echo "PAUSED: $(head -1 "$HOME/.margie/paused")"
     if [ -n "${1:-}" ]; then DIRS="$(resolve_d "$1")"; else DIRS="$(ls -td "$MDIR"/d-* 2>/dev/null)"; fi
-    [ -z "$DIRS" ] && { echo "No dispatches, dearie."; exit 0; }
+    [ -z "$DIRS" ] && { echo "No dispatches."; exit 0; }
     FOUND=0
     for D in $DIRS; do
       [ -d "$D" ] || continue
@@ -845,15 +845,22 @@ case "$cmd" in
         LINE="$LINE, tickets $DONE/$TOT merged"
         # Enumerate the REMAINING (not-yet-merged) impl tickets with their state, so the
         # brain can never call an in-flight ticket "the last one" or assume the epic is done.
-        REM=""
-        while IFS=$'\t' read -r k pt; do
+        # The MERGED ones are named too: with only a count, "the count fix" had no name to
+        # match once PT-1461 merged, and the brain answered about the neighbouring open
+        # ticket instead (2026-09-22). Each carries its title and MR.
+        REM=""; MRG=""
+        while IFS=$'\t' read -r k pt title; do
           [ -z "$k" ] && continue
           cdir="$MDIR/$(basename "$D")--$k"
           if [ -d "$cdir" ]; then cst="$(st "$cdir")"; else cst="not started"; fi
-          [ "$cst" = closed ] && continue
+          if [ "$cst" = closed ]; then
+            MRG="$MRG; $pt ${title:0:60}$( [ -s "$cdir/mr.json" ] && echo " (!$(jq -r .iid "$cdir/mr.json"))")"
+            continue
+          fi
           REM="$REM, $pt $k=$cst"
-        done < <(jq -r --slurpfile t "$D/tickets.json" '.tickets[] | select((.spike // false)|not) | .key as $k | ($k + "\t" + (($t[0][]|select(.key==$k)|.pt)//$k))' "$D/breakdown.json" 2>/dev/null)
+        done < <(jq -r --slurpfile t "$D/tickets.json" '.tickets[] | select((.spike // false)|not) | .key as $k | ($k + "\t" + (($t[0][]|select(.key==$k)|.pt)//$k) + "\t" + (.title // ""))' "$D/breakdown.json" 2>/dev/null)
         [ -n "$REM" ] && LINE="$LINE; remaining${REM}" || LINE="$LINE; none remaining"
+        [ -n "$MRG" ] && LINE="$LINE; merged: ${MRG#; }"
       fi
       if has_breakdown "$D" && [ -s "$D/tickets.json" ] && [ "$S" != closed ]; then
         SPK="$(jq -r --slurpfile t "$D/tickets.json" --argjson done "$(resolved_spikes "$D")" '[.tickets[] | select((.spike // false) and ((.key as $k | $done | index($k)) == null)) | .key as $k | (($t[0][] | select(.key==$k) | .pt) // $k) + " " + .title] | join("; ")' "$D/breakdown.json" 2>/dev/null)"
@@ -884,7 +891,7 @@ case "$cmd" in
       spec_ready "$D" && LINE="$LINE — $(jq -r .title "$D/spec.json" | cut -c1-60)"
       echo "$LINE"
     done
-    [ "$FOUND" = 0 ] && echo "No active dispatches, dearie."
+    [ "$FOUND" = 0 ] && echo "No active dispatches."
     exit 0
     ;;
 
@@ -903,7 +910,7 @@ case "$cmd" in
         [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md" "$D/breakdown.json" "$D/breakdown.md" "$D/breakdown-running"  # a re-plan invalidates the ticket breakdown
         launch_planner "$D" "$(dmeta "$D" repo)${SUBDIR:+/$SUBDIR}" "$(cat "$D/request.txt")" 2>/dev/null || true
         st "$D" spec-running; S="spec-running"
-        announce "Re-planning \"$(head -c 60 "$D/request.txt")…\" with the queued context, dearie."
+        announce "Re-planning \"$(head -c 60 "$D/request.txt")…\" with the queued context."
       fi
       SUBDIR="$(dmeta "$D" subdir)"
       case "$S" in
@@ -912,19 +919,19 @@ case "$cmd" in
             if has_breakdown "$D"; then
               rm -f "$D/breakdown-running"; render_breakdown "$D"
               [ -s "$D/draft-page.id" ] && "$DIR/notion.sh" page append "$(cat "$D/draft-page.id")" --md "$D/breakdown.md" >/dev/null 2>&1
-              announce "Ticket breakdown ready for \"$(jq -r .title "$D/spec.json")\", dearie — $(jq -r '.tickets|length' "$D/breakdown.json") tickets: $(jq -r '.tickets|map(.key + " " + .title)|join("; ")' "$D/breakdown.json"). $(jq -r .summary_spoken "$D/breakdown.json") It's on the draft page too."
+              announce "Ticket breakdown ready for \"$(jq -r .title "$D/spec.json")\" — $(jq -r '.tickets|length' "$D/breakdown.json") tickets: $(jq -r '.tickets|map(.key + " " + .title)|join("; ")' "$D/breakdown.json"). $(jq -r .summary_spoken "$D/breakdown.json") It's on the draft page too."
             elif [ "$("$DIR/claude-task.sh" state "breakdown:$(basename "$D")")" = "FAILED" ]; then
               rm -f "$D/breakdown-running"
               if [ ! -f "$D/breakdown-retried" ]; then   # planners occasionally miss the schema; one retry is cheap
-                touch "$D/breakdown-retried"; "$0" breakdown "$(basename "$D")" >/dev/null 2>&1 && announce "The ticket breakdown for \"$(jq -r .title "$D/spec.json")\" stumbled once — retrying it, dearie."
-              else announce "The ticket breakdown for \"$(jq -r .title "$D/spec.json")\" failed twice, dearie — say \"break it down\" to try again."; fi
+                touch "$D/breakdown-retried"; "$0" breakdown "$(basename "$D")" >/dev/null 2>&1 && announce "The ticket breakdown for \"$(jq -r .title "$D/spec.json")\" stumbled once — retrying it."
+              else announce "The ticket breakdown for \"$(jq -r .title "$D/spec.json")\" failed twice — say \"break it down\" to try again."; fi
             fi
           fi
           [ "$(st "$D")" = spec-ready ] && continue
           if spec_ready "$D"; then
             st "$D" spec-ready
             publish_draft "$D"
-            announce "The spec for \"$(jq -r .title "$D/spec.json")\" is ready, dearie — $(jq '.acceptance_criteria|length' "$D/spec.json") criteria, $(jq '.test_cases|length' "$D/spec.json") tests, $(jq -r .security.risk_label "$D/spec.json").$( [ -s "$D/draft-page.url" ] && echo " The draft is in Notion." )"
+            announce "The spec for \"$(jq -r .title "$D/spec.json")\" is ready — $(jq '.acceptance_criteria|length' "$D/spec.json") criteria, $(jq '.test_cases|length' "$D/spec.json") tests, $(jq -r .security.risk_label "$D/spec.json").$( [ -s "$D/draft-page.url" ] && echo " The draft is in Notion." )"
             # Small MRs by default: a Large/XL spec is split into tickets right away.
             case "$(jq -r '.estimate // ""' "$D/spec.json")" in L|XL)
               "$0" breakdown "$(basename "$D")" >/dev/null 2>&1 && announce "It's a big one ($(jq -r .estimate "$D/spec.json")), so I'm splitting it into tickets for smaller MRs — the list follows in a few minutes." ;;
@@ -932,7 +939,7 @@ case "$cmd" in
           elif [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" = "FAILED" ]; then
             st "$D" spec-failed
             WHY="$("$DIR/claude-task.sh" why "spec:$(basename "$D")" 2>/dev/null)"
-            announce "The spec run for $(basename "$D") failed, dearie${WHY:+ — $WHY}. Say \"replan\" to run it again."
+            announce "The spec run for $(basename "$D") failed${WHY:+ — $WHY}. Say \"replan\" to run it again."
           fi ;;
         qa-running)
           if [ -s "$D/qa.json" ] && jq -e .verdict "$D/qa.json" >/dev/null 2>&1; then
@@ -965,7 +972,7 @@ case "$cmd" in
             announce "QA on $PT: $(jq -r .summary_spoken "$D/qa.json")"
           elif [ "$("$DIR/claude-task.sh" state "qa:$(basename "$D")")" = "FAILED" ]; then
             st "$D" qa-failed-to-run
-            announce "The QA run on $(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null) failed to complete, dearie."
+            announce "The QA run on $(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null) failed to complete."
           fi ;;
         qa-fail)
           # Hand the findings back to the coding session; it fixes and re-signals. Archive
@@ -978,11 +985,11 @@ case "$cmd" in
             SESS="margie-$(printf '%s' "$BR" | tr '/ ' '--')"; SUBDIR="$(dmeta "$D" subdir)"
             if tmux has-session -t "$SESS" 2>/dev/null; then
               "$DIR/session.sh" send "QA FAILED for $PT. Findings: $FND. Fix these, keep the tests green, commit, then print MARGIE_READY_FOR_QA on its own line again and stop." --branch "$BR" >/dev/null 2>&1
-              announce "QA failed on $PT — I've sent the findings back into the session to fix, dearie."
+              announce "QA failed on $PT — I've sent the findings back into the session to fix."
             else
               P="You are back on branch $BR (ticket $PT). QA verification FAILED with these findings: $FND. Fix them, keep the tests green, commit to the branch, then print MARGIE_READY_FOR_QA on its own line and stop — Margie re-runs QA."
               "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$P" >/dev/null 2>&1
-              announce "QA failed on $PT and its session had ended — I restarted a session to fix the findings, dearie."
+              announce "QA failed on $PT and its session had ended — I restarted a session to fix the findings."
             fi
           fi ;;
         implementing|qa-pass)
@@ -1015,7 +1022,7 @@ case "$cmd" in
                       && printf '%s' "$SCREEN" | grep -qiE "tests? (are|is) (complete|green|passing)|(work|implementation) (is|and tests are) complete"; } \
                  || [ "$HANDED" = 1 ]; then
                 touch "$D/qa-auto"; rm -f "$D/qa-fail-sent"
-                "$0" qa "$(basename "$D")" >/dev/null 2>&1 && announce "Coding on $PT reports done — running QA now, dearie." && S=qa-running
+                "$0" qa "$(basename "$D")" >/dev/null 2>&1 && announce "Coding on $PT reports done — running QA now." && S=qa-running
               fi
             fi
             # A session that opened its OWN MR out-of-band (didn't print MARGIE_READY_FOR_QA)
@@ -1025,7 +1032,7 @@ case "$cmd" in
               OPENMR="$(cd "$WT" 2>/dev/null && glab mr list --source-branch "$BR" -F json 2>/dev/null | jq -r '[.[] | select(.state=="opened")][0].iid // empty')"
               if [ -n "$OPENMR" ]; then
                 touch "$D/qa-auto"; rm -f "$D/qa-fail-sent"
-                "$0" qa "$(basename "$D")" >/dev/null 2>&1 && announce "$PT has MR !$OPENMR open (the session opened it) — running QA now so it gets reviewed, dearie." && S=qa-running
+                "$0" qa "$(basename "$D")" >/dev/null 2>&1 && announce "$PT has MR !$OPENMR open (the session opened it) — running QA now so it gets reviewed." && S=qa-running
               fi
             fi
             # QA passed -> tell the session to open the MR (once); the merge closes it.
@@ -1038,18 +1045,18 @@ case "$cmd" in
               N="$(cat "$D/mr-open-attempts" 2>/dev/null || echo 1)"
               if [ "$N" -lt "$(cfgd mr_open_max_attempts 3)" ]; then
                 echo $((N + 1)) > "$D/mr-open-attempts"; rm -f "$D/mr-nudged"
-                announce "The MR for $PT never opened, dearie — trying again (attempt $((N + 1)))."
+                announce "The MR for $PT never opened — trying again (attempt $((N + 1)))."
               elif [ ! -f "$D/mr-open-gaveup" ]; then
                 touch "$D/mr-open-gaveup"
                 slack_bg send "@$(cfgd owner_first_name Tom): $PT passed QA but its MR won't open after $N tries — the branch is pushed; it needs a look (mr.sh create $PT)."
-                announce "$PT passed QA but I couldn't open its MR after $N tries, dearie — I've pinged you on Slack."
+                announce "$PT passed QA but I couldn't open its MR after $N tries — I've pinged you on Slack."
               fi
             fi
             if [ "$S" = qa-pass ] && [ ! -f "$D/mr-nudged" ]; then
               touch "$D/mr-nudged"
               [ -f "$D/mr-open-attempts" ] || echo 1 > "$D/mr-open-attempts"
               if printf '%s' "$SCREEN" | grep -qE "^[[:space:]]*MARGIE_MR_OPEN|/-/merge_requests/[0-9]+|![0-9]{2,} (opened|created)"; then
-                announce "QA passed on $PT and the session already has an MR open — MR text at $D/mr.md if it needs updating (mr.sh update), dearie."
+                announce "QA passed on $PT and the session already has an MR open — MR text at $D/mr.md if it needs updating (mr.sh update)."
               else
                 # Open the MR DETERMINISTICALLY with mr.sh (push + create from the prepared
                 # mr.md) — never by queuing an instruction into a session, which used to stall.
@@ -1060,10 +1067,10 @@ case "$cmd" in
                 if [ -n "$MRURL" ]; then
                   IID="$(printf '%s' "$MRURL" | grep -oE '[0-9]+$')"
                   ( cd "$WT" && glab mr view "$IID" -F json 2>/dev/null | jq -c '{iid, url: .web_url, title}' ) > "$D/mr.json"
-                  announce "QA passed on $PT — I opened MR !$IID ($MRURL), dearie. It'll go through review and merge on its own."
+                  announce "QA passed on $PT — I opened MR !$IID ($MRURL). It'll go through review and merge on its own."
                   notify_domain_owners "$WT" "$(basename "$(dmeta "$D" repo)")" "$D" "$PT" "$IID" "$MRURL"
                 else
-                  announce "QA passed on $PT but I couldn't open the MR automatically, dearie — the branch may need a manual push. mr.sh create $PT."
+                  announce "QA passed on $PT but I couldn't open the MR automatically — the branch may need a manual push. mr.sh create $PT."
                 fi
               fi
             fi
@@ -1074,7 +1081,7 @@ case "$cmd" in
                 IID="$(cd "$WT" 2>/dev/null && glab mr list --source-branch "$BR" -F json 2>/dev/null | jq -r '.[0].iid // empty')"
                 if [ -n "$IID" ]; then
                   (cd "$WT" && glab mr view "$IID" -F json 2>/dev/null | jq -c '{iid, url: .web_url, title}') > "$D/mr.json"
-                  announce "MR !$IID is open for $PT ($(jq -r .url "$D/mr.json")). I'll review it and watch the pipeline, dearie."
+                  announce "MR !$IID is open for $PT ($(jq -r .url "$D/mr.json")). I'll review it and watch the pipeline."
                   notify_domain_owners "$WT" "$(basename "$(dmeta "$D" repo)")" "$D" "$PT" "$IID" "$(jq -r .url "$D/mr.json")"
                 fi
               fi
@@ -1099,7 +1106,7 @@ case "$cmd" in
                   else
                     "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "You are back on branch $BR (ticket $PT). $CMSG" >/dev/null 2>&1
                   fi
-                  announce "MR !$IID for $PT conflicts with $(cfgd mr_target_branch main) now — I've sent the session to rebase and resolve it, dearie."
+                  announce "MR !$IID for $PT conflicts with $(cfgd mr_target_branch main) now — I've sent the session to rebase and resolve it."
                 fi
                 # A rebase whose UI diff is byte-identical keeps Tom's screenshot approval: the
                 # shot verifies the UI paths, so if the diff restricted to ui_review_paths has the
@@ -1109,7 +1116,7 @@ case "$cmd" in
                   NEWPATCH="$(ui_patch_id "$WT" "$(basename "$(dmeta "$D" repo)")")"
                   if [ -n "$NEWPATCH" ] && [ "$NEWPATCH" = "$(cat "$D/ui-verified-patch")" ]; then
                     echo "$SHA" > "$D/ui-verified-sha"
-                    announce "MR !$IID for $PT was rebased with the UI unchanged — keeping your screenshot approval for the new commit, dearie."
+                    announce "MR !$IID for $PT was rebased with the UI unchanged — keeping your screenshot approval for the new commit."
                   fi
                 fi
                 # A fix that isn't a commit (replying to and resolving review threads, editing the
@@ -1121,7 +1128,7 @@ case "$cmd" in
                    && [ "$(jq -r '.verdict // ""' "$D/review.json" 2>/dev/null)" = request_changes ] \
                    && [ ! -f "$D/rereviewed-$SHA" ] && printf '%s' "$SCREEN" | grep -q "MARGIE_MR_UPDATED"; then
                   touch "$D/rereviewed-$SHA"; rm -f "$D/review-sha"
-                  announce "The session says it addressed the review on MR !$(jq -r .iid "$D/mr.json") without a new commit — re-reviewing it, dearie."
+                  announce "The session says it addressed the review on MR !$(jq -r .iid "$D/mr.json") without a new commit — re-reviewing it."
                 fi
                 # Review cadence: a round runs when the MR first settles, then again only after the
                 # session has cleared every open thread — never per commit (that looped the bots).
@@ -1176,7 +1183,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                 if [ -f "$D/review-running" ] && [ ! -s "$D/review.json" ] \
                    && [ $(( ( $(date +%s) - $(stat -f %m "$D/review-running") ) / 60 )) -ge "$(cfgd review_stale_minutes 45)" ]; then
                   rm -f "$D/review-running" "$D/review-sha"
-                  announce "A review round on MR !$(jq -r .iid "$D/mr.json") for $PT never came back — starting a fresh one, dearie."
+                  announce "A review round on MR !$(jq -r .iid "$D/mr.json") for $PT never came back — starting a fresh one."
                 fi
                 # Harvest a verdict whenever review.json is NEWER than the last one we recorded —
                 # not only while the running-marker is present. A forced re-review (dispatch.sh
@@ -1206,10 +1213,10 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     # dead tmux session used to vanish, leaving the MR stuck at request_changes forever).
                     if tmux has-session -t "$SESS" 2>/dev/null; then
                       "$DIR/session.sh" send "$MSG" --branch "$BR" >/dev/null 2>&1
-                      announce "Review of MR !$IID for $PT asked for changes — I've sent them into the session to fix, dearie: $(jq -r .summary_spoken "$D/review.json")"
+                      announce "Review of MR !$IID for $PT asked for changes — I've sent them into the session to fix: $(jq -r .summary_spoken "$D/review.json")"
                     else
                       "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "You are back on branch $BR (ticket $PT). $MSG" >/dev/null 2>&1
-                      announce "Review of MR !$IID for $PT asked for changes and its session had ended — I restarted a session to fix them, dearie: $(jq -r .summary_spoken "$D/review.json")"
+                      announce "Review of MR !$IID for $PT asked for changes and its session had ended — I restarted a session to fix them: $(jq -r .summary_spoken "$D/review.json")"
                     fi
                     # Loop safety: after enough rejects on this MR, ping Tom once (per commit) — the
                     # fix loop keeps going, but a review that never clears may need his eyes.
@@ -1217,7 +1224,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     if [ "$RJ" -ge "$(cfgd review_max_rounds 4)" ] && [ "$(cat "$D/review-escalated-sha" 2>/dev/null)" != "$SHA" ]; then
                       echo "$SHA" > "$D/review-escalated-sha"
                       slack_bg send "@$(cfgd owner_first_name Tom): MR !$IID ($PT) has been through $RJ review rounds and still isn't clean — the local review keeps requesting changes. It may need your eyes. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
-                      announce "Heads up, dearie: MR !$IID for $PT has had $RJ review rounds and still isn't approved — I keep sending the fixes in, but it may need your eyes. I pinged you on Slack."
+                      announce "Heads up: MR !$IID for $PT has had $RJ review rounds and still isn't approved — I keep sending the fixes in, but it may need your eyes. I pinged you on Slack."
                     fi
                   fi
                   cp "$D/review.json" "$D/review-$(date +%H%M).json"
@@ -1230,9 +1237,9 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                   rm -f "$D/review-running"
                   if [ "$(cat "$D/review-rounds" 2>/dev/null || echo 0)" -lt "$(cfgd review_max_rounds 4)" ]; then
                     rm -f "$D/review-sha"
-                    announce "My review run on MR !$IID failed to complete (${RWHY:-no reason recorded}), dearie — starting it again on the same commit."
+                    announce "My review run on MR !$IID failed to complete (${RWHY:-no reason recorded}) — starting it again on the same commit."
                   else
-                    announce "My review run on MR !$IID failed to complete (${RWHY:-no reason recorded}) and the rounds are used up, dearie — it needs a look."
+                    announce "My review run on MR !$IID failed to complete (${RWHY:-no reason recorded}) and the rounds are used up — it needs a look."
                   fi
                 fi
                 # The repo's review bots auto-run on the MR's first pipeline. One fallback: the MR
@@ -1246,7 +1253,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                    && [ $(( $(date +%s) - $(stat -f %m "$D/mr.json") )) -gt 900 ]; then
                   touch "$D/bots-fallback"
                   RR="$("$DIR/mr.sh" request-review "!$IID" --repo "$WT" 2>/dev/null || true)"
-                  case "$RR" in Requested*) announce "The repo's review bots hadn't posted on MR !$IID for $PT, so I asked them once, dearie." ;; esac
+                  case "$RR" in Requested*) announce "The repo's review bots hadn't posted on MR !$IID for $PT, so I asked them once." ;; esac
                 fi
                 # The review bots ERRORED (their CI jobs failed, not just slow) — re-running won't
                 # help (e.g. the walt_ui CI's Anthropic "credit balance is too low"). Tell Tom once
@@ -1257,7 +1264,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                 if [ -z "$(jq -r '.review_agents[]? // empty' "$CFG" 2>/dev/null | head -1)" ] \
                    && [ "$(jq -r '.reviews_failed // 0' "$D/mr-check.json")" -gt 0 ] && [ "$(cat "$D/reviews-failed-pid" 2>/dev/null)" != "${PID:-x}" ]; then
                   echo "${PID:-x}" > "$D/reviews-failed-pid"
-                  announce "Heads up, dearie: the review bots FAILED on MR !$IID for $PT — their CI jobs errored (not just slow), so no real review happened. This usually means the walt_ui CI's Anthropic credit balance ran out; it needs a CI fix, not a re-run. Merge is held until they pass. $(jq -r '.pipeline_url // empty' "$D/mr-check.json")"
+                  announce "Heads up: the review bots FAILED on MR !$IID for $PT — their CI jobs errored (not just slow), so no real review happened. This usually means the walt_ui CI's Anthropic credit balance ran out; it needs a CI fix, not a re-run. Merge is held until they pass. $(jq -r '.pipeline_url // empty' "$D/mr-check.json")"
                 fi
                 # pipeline failed -> once per pipeline: was it the runner/db/quota (retry the
                 # failed jobs once, same commit) or the code (send it back to the session)?
@@ -1281,11 +1288,11 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                       ( cd "$WT" && glab api -X POST "projects/:id/merge_requests/$IID/pipelines" >/dev/null 2>&1 ) && RETRIED=2
                     fi
                     "$DIR/jev.sh" outcome ci_failure "retry pipeline=$PID jobs=$(printf '%s' "$FAILED_JOBS" | cut -f2 | tr '\n' ',') via=$([ "$RETRIED" = 2 ] && echo new-mr-pipeline || echo job-retry)" >/dev/null 2>&1
-                    announce "Pipeline failed on MR !$IID for $PT but the runner/database gave out, not the code ($(printf '%s' "$FAILED_JOBS" | cut -f2 | tr '\n' ' ')) — I've retried those jobs once, dearie."
+                    announce "Pipeline failed on MR !$IID for $PT but the runner/database gave out, not the code ($(printf '%s' "$FAILED_JOBS" | cut -f2 | tr '\n' ' ')) — I've retried those jobs once."
                   else
                     "$DIR/jev.sh" outcome ci_failure "session pipeline=$PID $( [ -f "$D/ci-retried-$PID" ] && echo already-retried || echo "jev=$(printf '%s' "${JC:-unavailable}" | tr '\t' '@')")" >/dev/null 2>&1
                     "$DIR/session.sh" send "The MR pipeline failed: $(jq -r .pipeline_url "$D/mr-check.json"). Read the failing job logs (glab ci view / glab api), fix the cause, commit and push, then print MARGIE_MR_UPDATED and STOP — Margie watches the pipeline." --branch "$BR" >/dev/null 2>&1
-                    announce "Pipeline failed on MR !$IID for $PT — I've sent it back to the session to fix, dearie."
+                    announce "Pipeline failed on MR !$IID for $PT — I've sent it back to the session to fix."
                   fi
                 fi
                 # ready to merge -> tell Tom once per commit; merging is his word (dispatch.sh merge)
@@ -1329,7 +1336,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     # on his Mac; fall back to a text ping if the upload fails. Detached: the tick
                     # never waits on Slack.
                     slack_bg upload "$D/ui-shot.png" --to "@$(cfgd owner_first_name Tom)" --comment "$UIMSG" -- send "@$(cfgd owner_first_name Tom): $UIMSG (screenshot is open on your Mac.)"
-                    announce "MR !$IID for $PT is a UI/UX change, dearie — I verified it $METHOD and captured a screenshot (open on your Mac, and I pinged you on Slack). I won't merge a UI/UX change without your eyes: say \"merge\" when it looks right."
+                    announce "MR !$IID for $PT is a UI/UX change — I verified it $METHOD and captured a screenshot (open on your Mac, and I pinged you on Slack). I won't merge a UI/UX change without your eyes: say \"merge\" when it looks right."
                   elif { [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ] || ui_verify_stale "$D"; } && web_review_slot_free "$D" "$WT" "$REPO_NAME"; then
                     if [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" = "$SHA" ]; then
                       echo $(( $(cat "$D/ui-verify-attempts" 2>/dev/null || echo 0) + 1 )) > "$D/ui-verify-attempts"
@@ -1372,15 +1379,15 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     if tmux has-session -t "$SESS" 2>/dev/null; then "$DIR/session.sh" send "$VPMSG" --branch "$BR" >/dev/null 2>&1
                     else "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$VPMSG" >/dev/null 2>&1; fi
                     if is_web_ui_change "$WT" "$REPO_NAME"; then
-                      announce "MR !$IID for $PT is a web UI/UX change - verifying it in a browser before any merge, dearie (it won't auto-merge; it holds for your approval)."
+                      announce "MR !$IID for $PT is a web UI/UX change - verifying it in a browser before any merge (it won't auto-merge; it holds for your approval)."
                     else
-                      announce "MR !$IID for $PT touches the UI - booting it in the simulator to verify visually before any merge, dearie."
+                      announce "MR !$IID for $PT touches the UI - booting it in the simulator to verify visually before any merge."
                     fi
                   elif ui_verify_exhausted "$D" && [ ! -f "$D/ui-verify-gaveup" ]; then
                     # Retries spent and still no screenshot: tell Tom rather than sit silently.
                     touch "$D/ui-verify-gaveup"
                     slack_bg send "@$(cfgd owner_first_name Tom): MR !$IID ($PT) is green and mergeable, but I couldn't capture the UI screenshot after $(cat "$D/ui-verify-attempts" 2>/dev/null || echo several) tries — it's holding for your eyes WITHOUT one. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
-                    announce "I couldn't get a screenshot of MR !$IID for $PT after several tries, dearie — it's green and held for you, and I've said so on Slack."
+                    announce "I couldn't get a screenshot of MR !$IID for $PT after several tries — it's green and held for you, and I've said so on Slack."
                   fi
                 elif [ "$GATE_GREEN" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
                   echo "$SHA" > "$D/merge-ready"
@@ -1396,11 +1403,11 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                           *"NOT auto-deploying"*) DEP=" It's High Risk, so it won't auto-deploy — say the word to ship it." ;;
                           *"won't auto-deploy"*) DEP=" Heads up: it merged but I couldn't add the deploy label, so it won't ship on its own." ;;
                         esac
-                        announce "MR !$IID for $PT was green with every thread resolved, so I merged it, dearie.$DEP$(printf '%s' "$MOUT" | grep -q 'Auto-merge enabled' && echo ' The merge train will land it.')" ;;
-                      *) announce "MR !$IID for $PT is ready but the merge didn't go through, dearie: $MOUT" ;;
+                        announce "MR !$IID for $PT was green with every thread resolved, so I merged it.$DEP$(printf '%s' "$MOUT" | grep -q 'Auto-merge enabled' && echo ' The merge train will land it.')" ;;
+                      *) announce "MR !$IID for $PT is ready but the merge didn't go through: $MOUT" ;;
                     esac
                   else
-                    announce "MR !$IID for $PT is ready to merge, dearie — pipeline green, every review thread resolved, my review clean.$( [ -f "$D/hold-merge" ] && echo " It's held: $(cat "$D/hold-merge")." ) Say \"merge\" and I'll merge it."
+                    announce "MR !$IID for $PT is ready to merge — pipeline green, every review thread resolved, my review clean.$( [ -f "$D/hold-merge" ] && echo " It's held: $(cat "$D/hold-merge")." ) Say \"merge\" and I'll merge it."
                   fi
                 elif [ "$UNRES" != 0 ]; then
                   # See the MR through to approval: keep a coding session working on the open
@@ -1416,12 +1423,12 @@ Cover BOTH code review and ADR compliance.$RAGENTS
 $THREADS
 Address every one with the repo's /address-mr-reviews skill: fix the code, keep the tests green, commit, push to the MR, and RESOLVE each thread you fixed. When all threads are resolved print MARGIE_MR_UPDATED and stop — Margie watches the pipeline."
                       "$DIR/kickoff-claude.sh" "$WT" ${SUBDIR:+--subdir "$SUBDIR"} --worktree "$BR" "$P" >/dev/null 2>&1
-                      announce "MR !$IID for $PT has $UNRES open review thread(s) and its session had ended — I restarted a session to address them, dearie."
+                      announce "MR !$IID for $PT has $UNRES open review thread(s) and its session had ended — I restarted a session to address them."
                     fi
                   elif [ $(( $(date +%s) - $(cat "$D/threads-told-at" 2>/dev/null || echo 0) )) -gt 900 ]; then
                     date +%s > "$D/threads-told-at"
                     "$DIR/session.sh" send "MR !$IID still has $UNRES unresolved review thread(s): $THREADS  Address each with /address-mr-reviews, push, resolve the threads you fixed, then print MARGIE_MR_UPDATED and stop." --branch "$BR" >/dev/null 2>&1
-                    announce "MR !$IID for $PT has $UNRES review thread(s) — the session is addressing them, dearie."
+                    announce "MR !$IID for $PT has $UNRES review thread(s) — the session is addressing them."
                   fi
                 fi
                 fi  # mr-check.json
@@ -1436,16 +1443,16 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
                 st "$D" closed
                 # Retire the coding session — its ticket is merged, nothing left to do.
                 tmux kill-session -t "margie-$(printf '%s' "$BR" | tr '/ ' '--')" 2>/dev/null || true
-                announce "$PT merged and closed, dearie."
+                announce "$PT merged and closed."
                 # a child finished → start the next ticket, or close the umbrella after the last
                 if [ -s "$D/parent" ]; then
                   PD="$MDIR/$(cat "$D/parent")"
                   if [ -d "$PD" ]; then
                     K="$(next_child "$PD")"
-                    if [ -n "$K" ]; then announce "Next ticket for $(jq -r .pt "$PD/ticket.json"): $K — starting it now, dearie."; start_child "$PD" "$K" >/dev/null 2>&1
+                    if [ -n "$K" ]; then announce "Next ticket for $(jq -r .pt "$PD/ticket.json"): $K — starting it now."; start_child "$PD" "$K" >/dev/null 2>&1
                     else
                       "$DIR/notion.sh" ticket status "$(jq -r .pt "$PD/ticket.json")" "Done" >/dev/null 2>&1; st "$PD" closed
-                      announce "All tickets under $(jq -r .pt "$PD/ticket.json") are merged — umbrella closed, dearie.$( SP="$(jq -r '[.tickets[] | select(.spike // false) | .key] | join(", ")' "$PD/breakdown.json")"; [ -n "$SP" ] && echo " Still on you: $SP.")"
+                      announce "All tickets under $(jq -r .pt "$PD/ticket.json") are merged — umbrella closed.$( SP="$(jq -r '[.tickets[] | select(.spike // false) | .key] | join(", ")' "$PD/breakdown.json")"; [ -n "$SP" ] && echo " Still on you: $SP.")"
                     fi
                   fi
                 fi
@@ -1461,7 +1468,7 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     need_d "${1:-latest}"
     WHAT="${2:-spec}"
     F="$D/$WHAT.md"; [ -f "$F" ] || F="$D/spec.md"
-    [ -f "$F" ] || { echo "Nothing to open yet, dearie." >&2; exit 1; }
+    [ -f "$F" ] || { echo "Nothing to open yet." >&2; exit 1; }
     "$DIR/warp-run.sh" "$D" "less -R '$F'" | tail -1
     ;;
 
@@ -1471,7 +1478,7 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     desc "would cancel ${PT:-this dispatch}'s ticket and close the dispatch"
     [ -n "$PT" ] && { status_all "$D" "Canceled"; echo "$PT canceled$( [ -s "$D/tickets.json" ] && echo " with its child tickets")."; }
     st "$D" closed
-    echo "Dispatch closed, dearie."
+    echo "Dispatch closed."
     ;;
 
   spike)
@@ -1480,12 +1487,12 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     # so the answer reaches the coder without a follow-up.
     #   dispatch.sh spike <epic id|PT> <ticket key|PT> --md <file> | "<answer>"
     need_d "${1:?usage: dispatch.sh spike <epic id|PT> <T-key|PT> --md <file> | \"<answer>\"}"; shift
-    has_breakdown "$D" || { echo "That dispatch has no ticket breakdown, dearie." >&2; exit 1; }
+    has_breakdown "$D" || { echo "That dispatch has no ticket breakdown." >&2; exit 1; }
     WHICH="${1:?ticket key or PT}"; shift
     KEY="$(jq -r --arg w "$WHICH" '.[] | select(.key==$w or .pt==$w) | .key' "$D/tickets.json" | head -1)"
     PT="$(jq -r --arg w "$WHICH" '.[] | select(.key==$w or .pt==$w) | .pt' "$D/tickets.json" | head -1)"
-    [ -n "$KEY" ] && [ -n "$PT" ] || { echo "No ticket $WHICH on this epic, dearie." >&2; exit 1; }
-    jq -e --arg k "$KEY" '.tickets[] | select(.key==$k) | .spike // false' "$D/breakdown.json" >/dev/null 2>&1 || { echo "$PT is not a spike, dearie — its answer goes into its session." >&2; exit 1; }
+    [ -n "$KEY" ] && [ -n "$PT" ] || { echo "No ticket $WHICH on this epic." >&2; exit 1; }
+    jq -e --arg k "$KEY" '.tickets[] | select(.key==$k) | .spike // false' "$D/breakdown.json" >/dev/null 2>&1 || { echo "$PT is not a spike — its answer goes into its session." >&2; exit 1; }
     MD=""; ANS=""
     while [ $# -gt 0 ]; do case "$1" in --md) MD="${2:-}"; shift 2 ;; *) ANS="${ANS:+$ANS }$1"; shift ;; esac; done
     if [ -z "$MD" ]; then
@@ -1496,7 +1503,7 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     "$DIR/notion.sh" ticket append "$PT" --md "$MD" >/dev/null || exit 1
     "$DIR/notion.sh" ticket status "$PT" Done >/dev/null || exit 1
     touch "$D/spike-resolved-$KEY"
-    echo "$PT answered and Done, dearie — it is off your plate; the child sessions read it from the ticket." ;;
+    echo "$PT answered and Done — it is off your plate; the child sessions read it from the ticket." ;;
   replan)
     # Re-run the planner on the current request (no new context) — e.g. after a launch failure.
     need_d "${1:-latest}"
@@ -1507,15 +1514,15 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     REPO="$(dmeta "$D" repo)"; SUBDIR="$(dmeta "$D" subdir)"; WORKDIR="$REPO${SUBDIR:+/$SUBDIR}"
     launch_planner "$D" "$WORKDIR" "$(cat "$D/request.txt")"
     st "$D" spec-running
-    echo "Re-planning '$(basename "$D")' from the current request, dearie — a few minutes." ;;
+    echo "Re-planning '$(basename "$D")' from the current request — a few minutes." ;;
   merge)
     need_d "${1:-latest}"
-    [ -s "$D/mr.json" ] || { echo "No MR on this dispatch yet, dearie." >&2; exit 1; }
+    [ -s "$D/mr.json" ] || { echo "No MR on this dispatch yet." >&2; exit 1; }
     IID="$(jq -r .iid "$D/mr.json")"; WT="$(jq -r .worktree "$D/impl.json")"; PT="$(jq -r .pt "$D/ticket.json")"
     CHK="$("$DIR/mr.sh" check "!$IID" --repo "$WT" 2>/dev/null || true)"
     if [ -n "$CHK" ] && [ "${MARGIE_DESCRIBE:-0}" != 1 ]; then
       P="$(jq -r .pipeline <<<"$CHK")"; U="$(jq -r .unresolved <<<"$CHK")"
-      { [ "$P" != success ] || [ "$U" != 0 ]; } && { echo "Not merging !$IID yet, dearie — pipeline is $P and $U review thread(s) are open."; exit 1; }
+      { [ "$P" != success ] || [ "$U" != 0 ]; } && { echo "Not merging !$IID yet — pipeline is $P and $U review thread(s) are open."; exit 1; }
       # Tom's rule has two halves for a UI MR: Margie's screenshot AND his word. His word
       # alone used to merge one (!1199, 2026-09-21: a bare "merge" landed on a UI MR whose
       # browser verify hadn't run yet). Refuse until the shot for THIS commit was shown,
@@ -1523,7 +1530,7 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
       HSHA="$(jq -r .sha <<<"$CHK")"; REPO_NAME="$(basename "$(dmeta "$D" repo)")"
       if [ "${MARGIE_MERGE_UNVERIFIED:-0}" != 1 ] && { is_ui_change "$WT" "$REPO_NAME" || is_chat_change "$WT" "$REPO_NAME"; } \
          && [ "$(cat "$D/ui-verified-sha" 2>/dev/null)" != "$HSHA" ]; then
-        echo "Not merging !$IID yet, dearie — it's a UI change and I haven't shown you a screenshot of this commit (${HSHA:0:8}). The verify is queued; say \"merge anyway\" to skip it."; exit 1
+        echo "Not merging !$IID yet — it's a UI change and I haven't shown you a screenshot of this commit (${HSHA:0:8}). The verify is queued; say \"merge anyway\" to skip it."; exit 1
       fi
     fi
     "$DIR/mr.sh" merge "!$IID" --repo "$WT" ;;

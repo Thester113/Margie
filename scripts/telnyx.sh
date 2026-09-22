@@ -16,7 +16,7 @@ CFG="$HOME/.margie/config.json"
 cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }
 desc() { if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then echo "$*"; exit 0; fi; }
 KEY="$(cfg telnyx_api_key)"
-[ -z "$KEY" ] && { echo "No Telnyx key yet, dearie — add telnyx_api_key to ~/.margie/config.json (Telnyx portal → API Keys)." >&2; exit 1; }
+[ -z "$KEY" ] && { echo "No Telnyx key yet — add telnyx_api_key to ~/.margie/config.json (Telnyx portal → API Keys)." >&2; exit 1; }
 api() { local m="$1" p="$2"; shift 2; curl -sSg -X "$m" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" "https://api.telnyx.com/v2$p" "$@"; }
 err() { printf '%s' "$1" | jq -e '.errors' >/dev/null 2>&1 && { echo "Telnyx said: $(printf '%s' "$1" | jq -r '.errors[0].detail // .errors[0].title')" >&2; return 0; }; return 1; }
 FROM="$(cfg telnyx_number)"
@@ -25,7 +25,7 @@ ARGS=(); while [ $# -gt 0 ]; do case "$1" in --from) FROM="${2:-}"; shift 2 ;; *
 case "$cmd" in
   numbers)
     R="$(api GET "/phone_numbers?page[size]=50")"; err "$R" && exit 1
-    printf '%s' "$R" | jq -r '.data[]? | "\(.phone_number)  \(.status)  profile=\(.messaging_profile_id // "-")"'; [ "$(printf '%s' "$R" | jq '.data|length')" = 0 ] && echo "No numbers yet, dearie — telnyx.sh search <area code>, then buy." ;;
+    printf '%s' "$R" | jq -r '.data[]? | "\(.phone_number)  \(.status)  profile=\(.messaging_profile_id // "-")"'; [ "$(printf '%s' "$R" | jq '.data|length')" = 0 ] && echo "No numbers yet — telnyx.sh search <area code>, then buy." ;;
   search)
     AC="${1:?area code}"; N="${2:-5}"
     R="$(api GET "/available_phone_numbers?filter[country_code]=US&filter[national_destination_code]=$AC&filter[features][]=mms&filter[features][]=sms&filter[phone_number_type]=local&filter[limit]=$N")"; err "$R" && exit 1
@@ -49,13 +49,13 @@ case "$cmd" in
     R="$(api PATCH "/phone_numbers/$NUM/messaging" -d "$(jq -nc --arg p "$PID" '{messaging_profile_id:$p}')")"; err "$R" && exit 1
     echo "$NUM is on messaging profile $PID." ;;
   send-group)
-    TO="${1:?comma-separated +1 numbers}"; TEXT="${2:?text}"; [ -z "$FROM" ] && { echo "Which number do I send from, dearie? --from +1… or telnyx_number in config." >&2; exit 1; }
+    TO="${1:?comma-separated +1 numbers}"; TEXT="${2:?text}"; [ -z "$FROM" ] && { echo "Which number do I send from? --from +1… or telnyx_number in config." >&2; exit 1; }
     desc "would send a Telnyx GROUP MMS from $FROM to $TO: \"$TEXT\""
     R="$(api POST /messages/group_mms -d "$(jq -nc --arg f "$FROM" --arg t "$TEXT" --argjson to "$(printf '%s' "$TO" | jq -Rc 'split(",") | map(gsub(" ";""))')" '{from:$f, to:$to, text:$t}')")"; err "$R" && exit 1
     MID="$(printf '%s' "$R" | jq -r .data.id)"; GID="$(printf '%s' "$R" | jq -r '.data.group_message_id // "-"')"
     echo "Sent group MMS $MID from $FROM to $TO — group_message_id $GID. Check delivery: telnyx.sh message $MID" ;;
   send)
-    TO="${1:?+1 number}"; TEXT="${2:?text}"; [ -z "$FROM" ] && { echo "Which number do I send from, dearie? --from +1… or telnyx_number in config." >&2; exit 1; }
+    TO="${1:?+1 number}"; TEXT="${2:?text}"; [ -z "$FROM" ] && { echo "Which number do I send from? --from +1… or telnyx_number in config." >&2; exit 1; }
     desc "would send a Telnyx SMS from $FROM to $TO: \"$TEXT\""
     R="$(api POST /messages -d "$(jq -nc --arg f "$FROM" --arg to "$TO" --arg t "$TEXT" '{from:$f, to:$to, text:$t}')")"; err "$R" && exit 1
     echo "Sent $(printf '%s' "$R" | jq -r .data.id) to $TO." ;;
@@ -94,7 +94,7 @@ case "$cmd" in
     exit 0 ;;
   spike)
     TO="${1:?<agent +1>,<client +1>}"
-    [ -z "$FROM" ] && { echo "Buy and assign a number first, dearie (telnyx.sh search/buy/assign)." >&2; exit 1; }
+    [ -z "$FROM" ] && { echo "Buy and assign a number first (telnyx.sh search/buy/assign)." >&2; exit 1; }
     echo "T1 spike — steps:"
     CLIENT="${TO#*,}"
     echo "1. From the AGENT phone, start a NEW group text to $CLIENT AND $FROM together; send 'hi both'."
@@ -103,7 +103,7 @@ case "$cmd" in
     "$0" send-group "$TO" "Hi both — this is Amby's test reply. If you can read this inside the thread you started, the group MMS check passes." ;;
   campaign)
     CF="$HOME/.margie/telnyx-campaign.json"
-    [ -s "$CF" ] || { echo "No filled campaign yet, dearie — $CF is missing." >&2; exit 1; }
+    [ -s "$CF" ] || { echo "No filled campaign yet — $CF is missing." >&2; exit 1; }
     sub="${1:-fill}"
     case "$sub" in
       fill|show)
@@ -120,21 +120,21 @@ case "$cmd" in
         # which returns a taskId and then fails silently while the campaign is still in
         # carrier (MNO) review.
         CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"
-        [ -z "$CID" ] && { echo "No campaign id saved yet, dearie (~/.margie/telnyx-campaign-id.txt)." >&2; exit 1; }
-        [ -z "$FROM" ] && { echo "No number to assign, dearie — set telnyx_number in config or pass --from +1…." >&2; exit 1; }
+        [ -z "$CID" ] && { echo "No campaign id saved yet (~/.margie/telnyx-campaign-id.txt)." >&2; exit 1; }
+        [ -z "$FROM" ] && { echo "No number to assign — set telnyx_number in config or pass --from +1…." >&2; exit 1; }
         desc "would assign number $FROM to 10DLC campaign $CID"
         R="$(api POST /10dlc/phoneNumberCampaign -d "$(jq -nc --arg p "$FROM" --arg c "$CID" '{phoneNumber:$p, campaignId:$c}')")"
         if printf '%s' "$R" | jq -e '.errors' >/dev/null 2>&1; then
           CODE="$(printf '%s' "$R" | jq -r '.errors[0].code // ""')"
           if [ "$CODE" = "10036" ]; then
-            echo "Not yet, dearie — Telnyx is still finishing carrier (MNO) review of the campaign, so it won't accept the number assignment. Nothing's wrong: re-run 'telnyx.sh campaign assign' once 'telnyx.sh ready' shows the campaign fully approved (T-Mobile registered: yes)."
+            echo "Not yet — Telnyx is still finishing carrier (MNO) review of the campaign, so it won't accept the number assignment. Nothing's wrong: re-run 'telnyx.sh campaign assign' once 'telnyx.sh ready' shows the campaign fully approved (T-Mobile registered: yes)."
             exit 2
           fi
           echo "Telnyx refused the assignment: $(printf '%s' "$R" | jq -r '.errors[0].detail // .errors[0].title')" >&2; exit 1
         fi
         echo "Assigned $FROM to campaign $CID — A2P to US should deliver shortly. Verify: telnyx.sh ready" ;;
       status)
-        CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"; [ -z "$CID" ] && { echo "No campaign id saved yet, dearie." >&2; exit 1; }
+        CID="$(cat "$HOME/.margie/telnyx-campaign-id.txt" 2>/dev/null)"; [ -z "$CID" ] && { echo "No campaign id saved yet." >&2; exit 1; }
         R="$(api GET "/10dlc/campaign/$CID")"; err "$R" && exit 1
         printf '%s' "$R" | jq -r '"campaign \(.campaignId // "?") (\(.tcrCampaignId // "?")) — status \(.status // .campaignStatus // "?"), usecase \(.usecase // "-"), carriers registered (T-Mobile): \(if .isTMobileRegistered then "yes" else "no — assignment blocked until this flips" end)"' ;;
       *) echo "usage: telnyx.sh campaign fill | submit | assign | status" >&2; exit 1 ;;

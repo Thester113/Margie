@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
     --target) TARGET="${2:-main}"; shift 2 ;;
     --title) TITLE_OPT="${2:-}"; shift 2 ;;
     --description-file) DESC_FILE="${2:-}"; shift 2 ;;
-    --*) echo "Unknown option '$1', dearie. Usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f]" >&2; exit 1 ;;
+    --*) echo "Unknown option '$1'. Usage: mr.sh draft|create <PT|dispatch|--branch b [--repo r]> [--draft] [--target b] | update <PT|!n> [--title t] [--description-file f]" >&2; exit 1 ;;
     *) [ -z "$REF" ] && REF="$1" || REF="$REF $1"; shift ;;
   esac
 done
@@ -60,7 +60,7 @@ elif [ -n "$REF" ] && [ "$cmd" != "view" ] && ! printf '%s' "$REF" | grep -qE '^
   D="$("$DIR/dispatch.sh" __resolve "$REF" 2>/dev/null || true)"
   [ -n "$D" ] && BRANCH_OF_D="$(jq -r '.branch // empty' "$D/impl.json" 2>/dev/null)"
   [ -z "$D" ] && { p="$MDIR/$REF"; [ -e "$p" ] && D="$(cd "$p" && pwd -P)"; }
-  [ -n "$D" ] && [ -s "$D/impl.json" ] || { echo "No implemented dispatch matches '$REF', dearie — give me a PT id or --branch <b>." >&2; exit 1; }
+  [ -n "$D" ] && [ -s "$D/impl.json" ] || { echo "No implemented dispatch matches '$REF' — give me a PT id or --branch <b>." >&2; exit 1; }
   WT="$(jq -r .worktree "$D/impl.json")"; BRANCH="$(jq -r .branch "$D/impl.json")"
   PT="$(jq -r '.pt // empty' "$D/ticket.json" 2>/dev/null)"; TURL="$(jq -r '.url // empty' "$D/ticket.json" 2>/dev/null)"
   STATE="$D"
@@ -87,7 +87,7 @@ ensure_description() { # sets TITLE, DESCF (file), RISK; returns 1 if still draf
     # Kick a detached draft if one isn't already running.
     TAG="mr:$(basename "$STATE")"
     case "$("$DIR/claude-task.sh" state "$TAG")" in
-      RUNNING) echo "I'm still drafting the MR description for $BRANCH, dearie — ask again in a minute."; return 1 ;;
+      RUNNING) echo "I'm still drafting the MR description for $BRANCH — ask again in a minute."; return 1 ;;
     esac
     TPL="$(template_path)"
     P="$(cat "$DIR/prompts/mr-draft.md")"
@@ -95,7 +95,7 @@ ensure_description() { # sets TITLE, DESCF (file), RISK; returns 1 if still draf
     P="${P//'{{TICKET}}'/${PT:-none}${TURL:+ — $TURL}}"
     P="${P//'{{TEMPLATE_PATH}}'/${TPL:-none}}"
     "$DIR/claude-task.sh" start "$WT" "$P" --plan --schema "$DIR/schemas/mr.schema.json" --tag "$TAG" --out "$STATE/mr-draft.json" >/dev/null
-    echo "Drafting the MR description for $BRANCH from the repo template, dearie — about a minute; then say 'open the MR' again."
+    echo "Drafting the MR description for $BRANCH from the repo template — about a minute; then say 'open the MR' again."
     return 1
   fi
   DESCF="$STATE/mr-description.md"
@@ -115,11 +115,11 @@ case "$cmd" in
     echo "Title: $TITLE"; echo "Risk: ${RISK:-?}"; echo "Branch: $BRANCH → $TARGET"; echo "---"; cat "$DESCF" ;;
   create)
     [ -n "$WT" ] || { echo "usage: mr.sh create <PT|dispatch> | --branch <b> [--repo <r>] [--draft] [--target <b>]" >&2; exit 1; }
-    [ -d "$WT" ] || { echo "The worktree for $BRANCH is gone, dearie ($WT)." >&2; exit 1; }
+    [ -d "$WT" ] || { echo "The worktree for $BRANCH is gone ($WT)." >&2; exit 1; }
     # Already open?
     if [ "$FORGE" = "gitlab" ]; then EXISTING="$(cd "$WT" && glab mr view "$BRANCH" -F json 2>/dev/null | jq -r 'select(.state=="opened") | .web_url // empty')"
     else EXISTING="$(cd "$WT" && gh pr view "$BRANCH" --json url,state --jq 'select(.state=="OPEN") | .url' 2>/dev/null)"; fi
-    [ -n "$EXISTING" ] && { echo "There's already an open MR for $BRANCH, dearie: $EXISTING"; exit 0; }
+    [ -n "$EXISTING" ] && { echo "There's already an open MR for $BRANCH: $EXISTING"; exit 0; }
     if [ "${MARGIE_DESCRIBE:-0}" = "1" ]; then
       # Describe without kicking a draft: say what's known.
       if [ -s "$STATE/qa.json" ] || [ -s "$STATE/mr-draft.json" ] || [ -n "$DESC_FILE" ]; then ensure_description >/dev/null 2>&1; fi
@@ -127,13 +127,13 @@ case "$cmd" in
     fi
     ensure_description || exit 0
     N="$(git -C "$WT" rev-list --count "origin/$TARGET..HEAD" 2>/dev/null || echo "?")"
-    [ "$N" = "0" ] && { echo "Branch $BRANCH has no commits beyond $TARGET yet, dearie — nothing to open."; exit 1; }
+    [ "$N" = "0" ] && { echo "Branch $BRANCH has no commits beyond $TARGET yet — nothing to open."; exit 1; }
     if [ "${DRY_RUN:-0}" = "1" ]; then
       echo "DRY RUN — would run in $WT:"; echo "  git push -u origin $BRANCH"
       echo "  glab mr create --source-branch $BRANCH --target-branch $TARGET --title \"$TITLE\" --description @$DESCF --yes$([ "$DRAFT" = 1 ] && echo " --draft")"
       exit 0
     fi
-    git -C "$WT" push -u origin "$BRANCH" >/dev/null 2>&1 || { echo "Couldn't push $BRANCH, dearie — check the remote/auth." >&2; exit 1; }
+    git -C "$WT" push -u origin "$BRANCH" >/dev/null 2>&1 || { echo "Couldn't push $BRANCH — check the remote/auth." >&2; exit 1; }
     if [ "$FORGE" = "gitlab" ]; then
       OUT="$(cd "$WT" && glab mr create --source-branch "$BRANCH" --target-branch "$TARGET" --title "$TITLE" --description "$(cat "$DESCF")" --yes $([ "$DRAFT" = 1 ] && echo --draft) 2>&1)"
       URL="$(printf '%s' "$OUT" | grep -oE 'https://[^ ]+/-/merge_requests/[0-9]+' | tail -1)"
@@ -141,7 +141,7 @@ case "$cmd" in
       OUT="$(cd "$WT" && gh pr create --head "$BRANCH" --base "$TARGET" --title "$TITLE" --body-file "$DESCF" $([ "$DRAFT" = 1 ] && echo --draft) 2>&1)"
       URL="$(printf '%s' "$OUT" | grep -oE 'https://github.com/[^ ]+/pull/[0-9]+' | tail -1)"
     fi
-    [ -z "$URL" ] && { echo "Opening the MR failed, dearie: $(printf '%s' "$OUT" | tail -1 | cut -c1-160)" >&2; exit 1; }
+    [ -z "$URL" ] && { echo "Opening the MR failed: $(printf '%s' "$OUT" | tail -1 | cut -c1-160)" >&2; exit 1; }
     # `iid` is what dispatch.sh's tick reads to track the MR; without it the
     # status line says "MR !null" and the MR lifecycle never runs (PT-1362).
     jq -n --arg url "$URL" --arg branch "$BRANCH" --arg title "$TITLE" --arg at "$(date -u +%FT%TZ)" \
@@ -158,14 +158,14 @@ case "$cmd" in
     desc "would update MR $REF${TITLE_OPT:+ title → \"$TITLE_OPT\"}${DESC_FILE:+ and replace its description}"
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"
     [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.url // empty' "$D/mr.json" 2>/dev/null | grep -oE '[0-9]+$')"
-    [ -z "$NUM" ] && { echo "Which MR, dearie? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
+    [ -z "$NUM" ] && { echo "Which MR? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
     R="$(cd "${WT:-$PWD}" && glab mr update "$NUM" ${TITLE_OPT:+--title "$TITLE_OPT"} ${DESC_FILE:+--description "$(cat "$DESC_FILE")"} 2>&1 | tail -1)"
-    echo "Updated MR !$NUM, dearie. $R" ;;
+    echo "Updated MR !$NUM. $R" ;;
   threads)
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"; [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // empty' "$D/mr.json" 2>/dev/null)"
     [ -z "$NUM" ] && { echo "usage: mr.sh threads <PT|!n>" >&2; exit 1; }
     [ -z "$WT" ] && [ -n "$REPO_ARG" ] && WT="$("$DIR/resolve-repo.sh" "$REPO_ARG" 2>/dev/null)"
-    cd "${WT:-$PWD}" || { echo "Couldn't resolve a checkout for !$NUM, dearie — pass --repo <name>." >&2; exit 1; }
+    cd "${WT:-$PWD}" || { echo "Couldn't resolve a checkout for !$NUM — pass --repo <name>." >&2; exit 1; }
     DISC="$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null)"
     NOTES="$(glab api "projects/:id/merge_requests/$NUM/notes?per_page=100" 2>/dev/null)"
     FOUND=0
@@ -194,20 +194,20 @@ case "$cmd" in
     if [ -n "$TID" ]; then IDS="$TID"; else
       IDS="$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq -r '.[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false)) | .id')"
     fi
-    [ -z "$IDS" ] && { echo "No open review threads on !$NUM, dearie."; exit 0; }
+    [ -z "$IDS" ] && { echo "No open review threads on !$NUM."; exit 0; }
     CNT="$(printf '%s\n' "$IDS" | grep -c .)"
     desc "would resolve $CNT open review thread(s) on MR !$NUM"
     N=0; for id in $IDS; do
       glab api "projects/:id/merge_requests/$NUM/discussions/$id" -X PUT -f resolved=true >/dev/null 2>&1 && N=$((N+1))
     done
-    echo "Resolved $N of $CNT review thread(s) on !$NUM, dearie." ;;
+    echo "Resolved $N of $CNT review thread(s) on !$NUM." ;;
   request-review)
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"
     [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // empty' "$D/mr.json" 2>/dev/null)"
-    [ -z "$NUM" ] && { echo "Which MR, dearie? Give me !<number>." >&2; exit 1; }
+    [ -z "$NUM" ] && { echo "Which MR? Give me !<number>." >&2; exit 1; }
     cd "${WT:-${REPO_ARG:-$PWD}}" || exit 1
     P="$(glab api "projects/:id/merge_requests/$NUM/pipelines" 2>/dev/null | jq -r '.[0].id // empty')"
-    [ -z "$P" ] && { echo "No pipeline on !$NUM yet, dearie." >&2; exit 1; }
+    [ -z "$P" ] && { echo "No pipeline on !$NUM yet." >&2; exit 1; }
     PLAYED=""; SKIPPED=""
     for DS in $(glab api "projects/:id/pipelines/$P/bridges" 2>/dev/null | jq -r '.[] | select(.name|test("review")) | .downstream_pipeline.id // empty'); do
       for J in $(glab api "projects/:id/pipelines/$DS/jobs?per_page=50" 2>/dev/null | jq -r '.[] | select(.name|test(":request$")) | "\(.id)|\(.name)|\(.status)"'); do
@@ -215,20 +215,20 @@ case "$cmd" in
         if [ "$jst" = manual ]; then glab api -X POST "projects/:id/jobs/$jid/play" >/dev/null 2>&1 && PLAYED="$PLAYED $jname"; else SKIPPED="$SKIPPED $jname($jst)"; fi
       done
     done
-    [ -n "$PLAYED" ] && echo "Requested the review bots on !$NUM (pipeline $P):$PLAYED — their comments land as review threads in a few minutes, dearie."
-    [ -z "$PLAYED" ] && echo "Nothing to play on !$NUM, dearie —${SKIPPED:- no review jobs found}." ;;
+    [ -n "$PLAYED" ] && echo "Requested the review bots on !$NUM (pipeline $P):$PLAYED — their comments land as review threads in a few minutes."
+    [ -z "$PLAYED" ] && echo "Nothing to play on !$NUM —${SKIPPED:- no review jobs found}." ;;
   check|merge)
     NUM="$(printf '%s' "$REF" | grep -oE '[0-9]+$')"
     [ -z "$NUM" ] && [ -n "$D" ] && NUM="$(jq -r '.iid // (.url // "" | capture("(?<n>[0-9]+)$").n) // empty' "$D/mr.json" 2>/dev/null)"
     if [ -z "$NUM" ] && [ -n "${BRANCH_OF_D:-}" ]; then NUM="$(cd "${WT:-$PWD}" && glab mr list --source-branch "$BRANCH_OF_D" -F json 2>/dev/null | jq -r '.[0].iid // empty')"; fi
-    [ -z "$NUM" ] && { echo "Which MR, dearie? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
+    [ -z "$NUM" ] && { echo "Which MR? Give me !<number> or a PT with an opened MR." >&2; exit 1; }
     # For a bare MR number the dispatch/worktree isn't resolved, so --repo is just a
     # NAME — turn it into the checkout path (glab infers the project from that git remote).
     # Without this, `cd walt_ui` failed and every glab call returned null.
     [ -z "$WT" ] && [ -n "$REPO_ARG" ] && WT="$("$DIR/resolve-repo.sh" "$REPO_ARG" 2>/dev/null)"
-    cd "${WT:-$PWD}" || { echo "Couldn't resolve a checkout for !$NUM, dearie — pass --repo <name>." >&2; exit 1; }
+    cd "${WT:-$PWD}" || { echo "Couldn't resolve a checkout for !$NUM — pass --repo <name>." >&2; exit 1; }
     if [ "$cmd" = check ]; then
-      V="$(glab mr view "$NUM" -F json 2>/dev/null)"; [ -z "$V" ] && { echo "Couldn't read MR !$NUM, dearie." >&2; exit 1; }
+      V="$(glab mr view "$NUM" -F json 2>/dev/null)"; [ -z "$V" ] && { echo "Couldn't read MR !$NUM." >&2; exit 1; }
       UNRES="$(glab api "projects/:id/merge_requests/$NUM/discussions?per_page=100" 2>/dev/null | jq '[.[] | select(.notes[0].resolvable==true and (.notes[0].resolved==false))] | length' 2>/dev/null || echo 0)"
       APPR="$(glab api "projects/:id/merge_requests/$NUM/approvals" 2>/dev/null | jq -c '{approved, approvals_left}' 2>/dev/null || echo '{}')"
       PIPE="$(glab api "projects/:id/merge_requests/$NUM/pipelines" 2>/dev/null | jq -c '.[0] // {}' 2>/dev/null || echo '{}')"
@@ -276,7 +276,7 @@ case "$cmd" in
           fi
         fi
         if [ "${RNOTE:-0}" -lt 1 ]; then
-          echo "Not merging !$NUM, dearie: no local-review 'approve' verdict posted for its current commit ${HEAD_SHA:0:8}. Run the charter review first (dispatch.sh review <PT>, or the hotfix review), and merge once it approves."
+          echo "Not merging !$NUM: no local-review 'approve' verdict posted for its current commit ${HEAD_SHA:0:8}. Run the charter review first (dispatch.sh review <PT>, or the hotfix review), and merge once it approves."
           exit 1
         fi
       fi
@@ -291,13 +291,13 @@ case "$cmd" in
       if [ -n "$ADLABEL" ]; then
         LBLS="$(printf '%s' "$MV" | jq -r '.labels[]? // empty' 2>/dev/null)"
         if printf '%s\n' "$LBLS" | grep -qx "High Risk"; then
-          AD_MSG=" (High Risk — NOT auto-deploying; add ~\"$ADLABEL\" yourself to ship it)"
+          AD_MSG=" It's High Risk, so it will not deploy on its own — add the $ADLABEL label to ship it."
         elif printf '%s\n' "$LBLS" | grep -qx "$ADLABEL"; then
-          AD_MSG=" ($ADLABEL already set — it'll deploy to prod)"
+          AD_MSG=" It deploys to production when it lands."
         elif glab mr update "$NUM" --label "$ADLABEL" >/dev/null 2>&1; then
-          AD_MSG=" (added $ADLABEL — it'll deploy to prod on merge)"
+          AD_MSG=" It deploys to production when it lands."
         else
-          AD_MSG=" (couldn't add $ADLABEL — it merged but won't auto-deploy)"
+          AD_MSG=" I couldn't add the $ADLABEL label, so it won't deploy on its own."
         fi
       fi
       OUT="$(glab mr merge "$NUM" --yes --remove-source-branch 2>&1 | tail -2 | tr '\n' ' ')"
@@ -309,11 +309,11 @@ case "$cmd" in
       MST="$(printf '%s' "$AFTER" | jq -r '.state // empty' 2>/dev/null)"
       MWPS="$(printf '%s' "$AFTER" | jq -r '.merge_when_pipeline_succeeds // false' 2>/dev/null)"
       if [ "$MST" = merged ]; then
-        echo "Merged MR !$NUM (\"$T\") into $TARGET, dearie.$AD_MSG"
+        echo "Merged !$NUM — $T.$AD_MSG"
       elif [ "$MWPS" = true ]; then
-        echo "MR !$NUM (\"$T\") is set to merge into $TARGET when its pipeline passes, dearie — not merged yet.$AD_MSG"
+        echo "Merging !$NUM ($T) as soon as its pipeline passes.$AD_MSG"
       else
-        echo "Merge of !$NUM didn't go through, dearie (state: ${MST:-unknown}): $OUT"; exit 1
+        echo "Merge of !$NUM didn't go through (state: ${MST:-unknown}): $OUT"; exit 1
       fi
     fi ;;
   view)

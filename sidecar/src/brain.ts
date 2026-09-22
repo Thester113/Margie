@@ -36,7 +36,7 @@ const MARGIE_DIR = `${HOME}/.margie`;
 const MARGIE_HOME =
   process.env.MARGIE_HOME || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TMUX = process.env.MARGIE_TMUX || "/opt/homebrew/bin/tmux";
-const SCRIPTS = `${MARGIE_HOME}/scripts`;
+export const SCRIPTS = `${MARGIE_HOME}/scripts`;
 const TASK_LOG_DIR = `${HOME}/.margie/tasks`;
 
 function cfg(key: string): string | undefined {
@@ -253,7 +253,7 @@ function solicitedGo(cmd: string): boolean {
 /** In a colleague's conversation Margie may only touch shared project artefacts —
  *  never read other Slack chats, mail, messages, or private files. Deterministic,
  *  because a prompt rule alone let a colleague pump her for another group's chat. */
-const COLLEAGUE_ALLOW = /^(?:\S*\/)?(?:dispatch\.sh\s+(?:spec|show|status|amend|replan|describe|qa|tick)\b|research\.sh\s+(?:start|show|list)\b|notion\.sh\s+(?:ticket\s+read|find|rows|mine|schema)\b|forge\.sh\b|appsignal\.sh\b|claude-task\.sh\s+(?:status|result|state)\b)/;
+const COLLEAGUE_ALLOW = /^(?:\S*\/)?(?:dispatch\.sh\s+(?:spec|show|status|amend|replan|describe|qa|tick)\b|research\.sh\s+(?:start|show|list)\b|notion\.sh\s+(?:ticket\s+read|find|rows|mine|schema|search|read)\b|forge\.sh\b|appsignal\.sh\b|deploy\.sh\s+(?:live|status)\b|claude-task\.sh\s+(?:status|result|state)\b)/;
 function colleagueDenied(cmd: string): boolean {
   if (!currentTurn.speaker) return false;
   const first = cmd.trim().split(/\s*(?:\|\||&&|;|\|)\s*/)[0].trim();
@@ -376,10 +376,41 @@ async function callModel(messages: ChatMsg[], withTools = true): Promise<any> {
   return resp.json();
 }
 
+/** How Margie writes in Slack (Tom, 2026-09-22): like a sharp colleague typing, not a bot —
+ *  specific, informational, plain words. Injected as the channel line of CONTEXT NOW. */
+const SLACK_STYLE = `SLACK. Write the way a sharp colleague types in Slack, not like an assistant:
+  - Lead with the answer in the first line. Then the specifics that make it useful: the
+    ticket (PT-1461) and MR (!1227) by number, the real state ("in QA", "pipeline green,
+    waiting on your merge", "deployed 16:58"), a number or time when there is one, and
+    what happens next and when. Usually 2–6 lines; one line when one line answers it.
+  - Look things up before answering (dispatch status, the ticket, the MR, Notion) rather
+    than answering from memory; never guess a status. Match the question to the EXACT
+    ticket: a ticket that already merged no longer shows as in flight, so check the
+    epic's merged tickets (dispatch.sh status <epic>) before saying something isn't done.
+    If you can't pin down which ticket they mean, name the one you checked and ask —
+    never answer about a neighbouring ticket instead.
+  - Code tells you what is built, not what is switched on in production. For "is it
+    live / deployed / in prod", run deploy.sh live <PT-n or !n> — it answers from what
+    production actually runs. Never infer it from the newest pipeline, and never present
+    a code default as a production fact.
+  - Plain words only. Never say tick, gate, hold, dispatch, describe, poller, verify step,
+    worktree, harness, or "no output back" — say what actually happens ("I'll re-run the
+    pipeline", "waiting on your merge", "the check didn't come back yet").
+  - Start with the answer itself — never with a line about your own process ("I have what
+    I need", "Let me put this together").
+  - Never paste a file path, script name or shell command. No nicknames or endearments,
+    no "Great question", no "I hope this helps", no sign-offs, no emoji.
+  - Asking for a go-ahead is one plain question with the facts that matter:
+    "!1227 is green and reviewed — merge it? It deploys when it lands." After it runs,
+    one line: "Merging !1227 once the pipeline passes — I'll tell you when it's live."
+  - Slack formatting only: *bold*, \`code\` for IDs, • bullets for 3+ parallel items.
+    No markdown headings or tables.`;
+
 const MARGIE_SYSTEM_PROMPT = `You are Margie: Tom's fully autonomous local development harness, living as a
 heads-up overlay on his Mac, in his terminal, and in Slack. You work the way a
 senior engineer's trusted operator works — calm, direct, warm, precise. You may
-keep one old habit: a rare "dearie" as a light touch, never as filler.
+keep one old habit: a rare "dearie" as a light touch with Tom in the terminal or by
+voice — never in Slack, never as filler.
 
 HOW YOU WORK (this is the standard, in every channel):
 - Say in one line what you're about to do, do it, then report. Brief updates
@@ -452,7 +483,7 @@ BUILDING A FEATURE — PRODUCT, ARCHITECTURE AND QA FIRST. When Tom asks you to
 BUILD, ADD, or IMPLEMENT something non-trivial in a repo, do NOT kick off a
 session directly. Run the dispatch pipeline (one command per turn):
     ${SCRIPTS}/dispatch.sh spec "<repo>" "<Tom's request, his words>"
-    → say: "I'm drafting the product spec, architecture notes and QA plan, dearie —
+    → say: "I'm drafting the product spec, architecture notes and QA plan —
        a few minutes." (Add --subdir <dir> only if Tom names a sub-project.)
 "Is the spec ready / what's the plan?" → dispatch.sh show — read its lines aloud
    (they're written to be spoken), especially any open questions.
@@ -593,7 +624,7 @@ this — pick the mode by weight:
   launch a watchable session that builds AND runs it:
     ${SCRIPTS}/simulate.sh "<the hypothesis / what to model>"
   It sets up a sandbox, writes and runs the simulation, and reports whether the
-  theory holds — Tom watches in Warp. Report "Simulation's running in Warp, dearie."
+  theory holds — Tom watches in Warp. Report "Simulation's running in Warp."
 Always give the key number and a plain verdict (supports / doesn't). When unsure
 which mode, a quick inline calc first is fine; offer the full sim if he wants depth.
 
@@ -607,7 +638,7 @@ script opens in Warp — which Tom supervises. Your only job is to launch it:
   e.g. review-pr.sh 1836 backend   (a bare name resolves to the matching local
        clone under ${REPOS_DIR}, or is cloned from ${SITE} on first use)
 Run that one line, then report: "${ENGINE[0].toUpperCase() + ENGINE.slice(1)}'s reviewing ${NOUN} ${REF}<n> in <repo> — up in
-Warp, dearie." That is the whole task. If the script errors, report the error in one
+Warp." That is the whole task. If the script errors, report the error in one
 sentence — do NOT fall back to reviewing it yourself.
 
 RUN ANYTHING IN A VISIBLE WARP TAB (dev servers, tests, log tails, git):
@@ -883,6 +914,11 @@ ${SCRIPTS}/) for the common actions; they're tested and deterministic:
   perf | ask "<question>". "Any errors in prod?" → appsignal.sh errors; "check the
   logs for X" → appsignal.sh logs "X". Each call takes ~15s; report the summary
   line. If it says OAuth isn't done, tell Tom to run /mcp in a claude session.
+- NOTION IS YOUR MEMORY OF WHAT THE TEAM WROTE DOWN. A NOTION CONTEXT block, when present,
+  was fetched for this question — use it and name the page. When it isn't there and the
+  question is about how something works, a spec, a decision, a guide or a ticket's details,
+  search before answering (notion.sh search "<a few words>", then notion.sh read <id>) —
+  never answer those from memory. Colleagues may use search/read too (read-only).
 - Notion (the team's workspace): notion.sh search "<q>" | recent | read <id|url> | dbs |
   query <db> ["<text>"] | create "<title>: <body>" [--parent <id>] | append <id|url> "<text>".
   "What's in Notion about X" → search, then read the top hit and summarize in a sentence.
@@ -1052,16 +1088,16 @@ function runReviewScript(pr: string, repo: string): Promise<string> {
     child.stdout.on("data", (d) => (out += d.toString()));
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      resolve(`I've kicked off the review of ${NOUN} ${REF}${pr}, dearie — it's opening in Warp.`);
+      resolve(`I've started the review of ${NOUN} ${REF}${pr} — it's opening in Warp.`);
     }, 45000);
     child.on("close", () => {
       clearTimeout(timer);
       const line = (out.trim().split("\n").pop() || "").trim();
-      resolve(line || `${ENGINE[0].toUpperCase() + ENGINE.slice(1)}'s reviewing ${NOUN} ${REF}${pr} in ${repo}, dearie — up in Warp.`);
+      resolve(line || `${ENGINE[0].toUpperCase() + ENGINE.slice(1)}'s reviewing ${NOUN} ${REF}${pr} in ${repo} — it's up in Warp.`);
     });
     child.on("error", () => {
       clearTimeout(timer);
-      resolve(`I couldn't start the review of ${NOUN} ${REF}${pr}, dearie.`);
+      resolve(`I couldn't start the review of ${NOUN} ${REF}${pr}.`);
     });
   });
 }
@@ -1102,7 +1138,34 @@ function forText(s: string): string {
   t = t.replace(/^\s*[-*]\s+/gm, "• ");               // uniform bullets
   t = t.replace(/\*\*([^*]+)\*\*/g, "$1");           // bold markers
   t = t.replace(/\n{3,}/g, "\n\n").trim();
-  return t || "Done, dearie.";
+  return t || "Done.";
+}
+
+/** Slack's own markup, not Markdown (Slack renders neither tables nor # headings nor **):
+ *  table rows become "• a — b — c" lines, **bold** → *bold*, headings → bold lines.
+ *  Pure syntax conversion — no judgment involved. */
+function forSlack(s: string): string {
+  let t = String(s || "").trim();
+  t = t.replace(/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/gm, "");                  // table separator rows
+  t = t.replace(/^\s*\|(.+)\|\s*$/gm, (_m, row: string) =>
+    "• " + row.split("|").map((c) => c.trim()).filter(Boolean).join(" — "));             // table rows
+  t = t.replace(/^\s*#{1,6}\s*(.+)$/gm, "*$1*");                                        // headings
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, "*$1*");                                        // bold
+  t = t.replace(/^\s*[-*]\s+/gm, "• ");                                                // bullets
+  t = t.replace(/\n{3,}/g, "\n\n").trim();
+  return t || "Done.";
+}
+
+/** Drop an opening paragraph in which the model narrates its own process to itself
+ *  ("I have exactly what's needed — that's enough to answer."). Jev (jev.sh preamble)
+ *  decides, at ≥0.6 (fixtures: narration 0.69–0.79, answers ≤0.14); unsure or unavailable → the reply is left as written. */
+async function dropPreamble(t: string): Promise<string> {
+  const paras = t.split(/\n\s*\n/);
+  if (paras.length < 2 || paras[0].length > 400) return t;
+  const first = paras[0].replace(/[\u0000-\u001f"`$\\]/g, " ");
+  const j = (await runBashRaw(`printf '%s' "${first}" | ${SCRIPTS}/jev.sh preamble`, { MARGIE_POLLER: "1" }, 6000)).trim().split("\t");
+  if (j[0] === "yes" && Number(j[1] || 0) >= 0.6) { jevOutcome("preamble", `drop@${j[1]}: ${paras[0].slice(0, 60)}`); return paras.slice(1).join("\n\n").trim(); }
+  return t;
 }
 
 /** What's in flight right now — injected into every turn so "the spec" or
@@ -1151,7 +1214,8 @@ function liveContext(source: string): string {
     }
   } catch { /* no tmux */ }
   const where = source === "app" ? "VOICE (spoken aloud: no lists, no line breaks, one or two sentences)"
-              : source === "slack" ? "SLACK DM (short; line breaks and • bullets fine; no markdown headings)"
+              : source === "slack" ? SLACK_STYLE
+              : source === "agent" ? "AGENT MESSAGE — a written reply to another team's AI harness; its owner reads it too. Lead with the answer; be exact (ticket and MR numbers, states, dates, links); plain text, short paragraphs or • bullets; no pleasantries, no sign-off, no file paths or shell commands"
               : "TERMINAL (line breaks and short • bullet lists are fine when asked for structure; no headings, tables or code fences)";
   return `CONTEXT NOW — reply channel: ${where}.\n` +
     (lines.length ? `Work in flight (when Tom says "the spec", "the plan", "that ticket", this is what he means):\n${lines.join("\n")}` : "No dispatches in flight.") +
@@ -1168,7 +1232,7 @@ function forSpeech(s: string): string {
   t = t.replace(/^\s*[-*•]\s+/gm, "");           // bullets
   t = t.replace(/[*_>|#]+/g, "");                // stray md symbols / table pipes
   t = t.replace(/\s+/g, " ").trim();
-  return t || "Done, dearie.";
+  return t || "Done.";
 }
 
 // ── Claude brain (Agent SDK, Tom's Claude plan) ───────────────────────────────
@@ -1308,7 +1372,7 @@ export function depersonalize(s: string): string {
   return s
     // vocative between separators or at a line start: ", dearie —" / "Dearie, …" / "…, dearie."
     .replace(new RegExp(`(^|[,—–-])\\s*${W}\\s*(?=[,—–\\-.!?]|$)`, "gim"), "$1")
-    .replace(/,\s*([—–-])/g, " $1").replace(/^\s*[,—–-]\s*/gm, "").replace(/\s+([,.!?])/g, "$1")
+    .replace(/,\s*([—–-])/g, " $1").replace(/^\s*[,—–-]\s*/gm, "").replace(/[ \t]+([,.!?])(?=\s|$)/g, "$1")   // sentence punctuation only: never "MR !1228", never a line break
     .replace(/,\s*,/g, ",").replace(/([,—–-])\s*([.!?])/g, "$2").replace(/  +/g, " ")
     .replace(/^(\s*)([a-z])/, (m, sp, c) => sp + c.toUpperCase());
 }
@@ -1356,9 +1420,45 @@ async function preBrief(text: string): Promise<string> {
   } catch { return ""; }
 }
 
+/** Notion, adaptively (Tom, 2026-09-22): before a text turn, pull what the team has written.
+ *  A PT number is a field → that ticket, always. Otherwise Jev (jev.sh notion) decides whether
+ *  the question needs written docs; if so, search Notion and read the best page. Read-only, a
+ *  few seconds at most, and every step fails closed to "no Notion context". */
+async function notionBrief(text: string): Promise<string> {
+  try {
+    const parts: string[] = [];
+    const pts = [...new Set((text.match(/\bPT-\d{2,5}\b/gi) || []).map((p) => p.toUpperCase()))].slice(0, 2);
+    for (const pt of pts) {
+      const t = (await runBashRaw(`${SCRIPTS}/notion.sh ticket read ${pt} 40`, { MARGIE_POLLER: "1" }, 20000)).trim();
+      if (t && !t.startsWith("[") && !/not found|No ticket/i.test(t.slice(0, 80))) parts.push(`${pt}:\n${t.slice(0, 2500)}`);
+    }
+    if (!pts.length && text.trim().length > 12) {
+      const q = text.replace(/[\u0000-\u001f"`$\\]/g, " ").slice(0, 400);
+      const j = (await runBashRaw(`printf '%s' "${q}" | ${SCRIPTS}/jev.sh notion`, { MARGIE_POLLER: "1" }, 8000)).trim().split("\t");
+      const need = j[0], conf = Number(j[1] || 0);
+      if (need === "docs" && conf >= 0.75) {
+        const words = (q.toLowerCase().match(/[a-z0-9-]{4,}/g) || [])
+          .filter((w) => !["what", "how", "does", "work", "with", "that", "this", "about", "have", "should", "would", "which", "when", "where", "there", "their"].includes(w))
+          .slice(0, 5).join(" ");
+        const hits = (await runBashRaw(`${SCRIPTS}/notion.sh search "${words}"`, { MARGIE_POLLER: "1" }, 15000)).trim().split("\n").filter((l) => /\[[0-9a-f]{32}\]/.test(l)).slice(0, 4);
+        const top = hits[0]?.match(/\[([0-9a-f]{32})\]/)?.[1];
+        if (top) {
+          const body = (await runBashRaw(`${SCRIPTS}/notion.sh read ${top} 60`, { MARGIE_POLLER: "1" }, 20000)).trim();
+          parts.push(`Best match for "${words}" — ${hits[0].replace(/^page:\s*/, "")}\n${body.slice(0, 3500)}` +
+            (hits.length > 1 ? `\nOther matches: ${hits.slice(1).map((h) => h.replace(/^page:\s*/, "")).join(" | ")}` : ""));
+        }
+        jevOutcome("notion", `docs@${conf} search="${words}" hits=${hits.length}`);
+      } else if (need) jevOutcome("notion", `${need}@${conf} skip`);
+    }
+    if (!parts.length) return "";
+    return `\n\nNOTION CONTEXT (fetched for you from the team's Notion — use it when it answers the question, name the page when you do, and trust live status from dispatch/GitLab over it when they disagree):\n${parts.join("\n\n")}`;
+  } catch { return ""; }
+}
+
 async function claudeTurn(rawText: string, history: ChatMsg[], source: string, conv?: string, speaker?: string, pub = false): Promise<string> {
   const { text, images } = extractImages(rawText);
   const briefNote = speaker ? "" : await preBrief(text);
+  const notionNote = await notionBrief(speaker ? (text.match(/<<<([\s\S]*?)>>>/)?.[1] || text) : text);
   if (images.length) logBrain(`IMAGES attached: ${images.map((i) => i.path).join(", ")}`);
   // With images the prompt is one user message with content blocks (streaming-input form).
   const prompt = images.length
@@ -1373,7 +1473,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
     + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns()
     + convNotes(conv)
     + (pub ? " PUBLIC ROOM: colleagues read this reply. Write for the room — no pet names, no aside to Tom, no asking Tom what to do here. If a decision is Tom's, say you'll check with him and stop; take the question to his DM (slack.sh dm) instead." : "");
-  const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}${briefNote}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally${briefNote ? "; your OWN earlier status answers are omitted because they may be stale — every fact comes from the CURRENT BRIEF above" : ""}):\n${transcript(briefNote ? history.filter((m) => m.role !== "assistant") : history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
+  const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}${briefNote}${notionNote}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally${briefNote ? "; your OWN earlier status answers are omitted because they may be stale — every fact comes from the CURRENT BRIEF above" : ""}):\n${transcript(briefNote ? history.filter((m) => m.role !== "assistant") : history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
   try {
     const q = query({
@@ -1392,7 +1492,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
           toolName === "mcp__margie__bash"
             ? { behavior: "allow" as const }
             : { behavior: "deny" as const, message: `Tool ${toolName} is not available to Margie's brain — use the bash helper scripts (slack.sh, notion.sh, …), which carry Tom's confirmation gate.` },
-        maxTurns: speaker ? Math.min(4, MAX_TOOL_STEPS) : MAX_TOOL_STEPS,  // colleagues get short, cheap turns
+        maxTurns: speaker ? Math.min(8, MAX_TOOL_STEPS) : MAX_TOOL_STEPS,  // colleagues: enough steps to check the exact ticket (4 made her guess a neighbour)
         cwd: HOME,
         settingSources: [],                          // don't load CLAUDE.md / hooks / MCP from Tom's projects
         persistSession: false,
@@ -1424,10 +1524,11 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
       logBrain("CLAUDE unavailable — falling back to grok for this turn");
       return xaiTurn(text, history, source, conv, speaker, pub);
     }
-    finalText = "Sorry dearie, my brain hit a snag reaching Claude.";
+    finalText = "I couldn't reach Claude just now — try me again in a minute.";
   }
   finalText = honest(finalText);
-  let shaped = neutralize(source === "app" ? forSpeech(finalText) : forText(finalText));
+  if (source !== "app") finalText = await dropPreamble(finalText);
+  let shaped = neutralize(source === "app" ? forSpeech(finalText) : (source === "slack" || source === "agent") ? forSlack(finalText) : forText(finalText));
   if (pub) shaped = depersonalize(shaped);
   history.push({ role: "user", content: text, conv, speaker });
   history.push({ role: "assistant", content: shaped, conv });
@@ -1462,11 +1563,11 @@ async function xaiTurn(text: string, history: ChatMsg[], source = "app", conv?: 
       data = await callModel(work);
     } catch (e) {
       logBrain(`XAI error: ${(e as Error).message}`);
-      finalText = "Sorry dearie, my brain hit an error reaching the model.";
+      finalText = "The model call failed on my side — try me again in a minute.";
       break;
     }
     const msg = data?.choices?.[0]?.message;
-    if (!msg) { finalText = "Sorry dearie, I got no reply from the model."; break; }
+    if (!msg) { finalText = "The model came back empty — try me again in a minute."; break; }
     work.push(msg);
     const calls = msg.tool_calls;
     if (Array.isArray(calls) && calls.length) {
@@ -1478,7 +1579,7 @@ async function xaiTurn(text: string, history: ChatMsg[], source = "app", conv?: 
       }
       continue; // let the model read the tool results and continue
     }
-    finalText = (msg.content || "Done, dearie.").trim();
+    finalText = (msg.content || "Done.").trim();
   }
 
   // Step budget exhausted mid-investigation — force a final answer (no tools).
@@ -1490,7 +1591,7 @@ async function xaiTurn(text: string, history: ChatMsg[], source = "app", conv?: 
     } catch (e) {
       logBrain(`XAI final-answer error: ${(e as Error).message}`);
     }
-    if (!finalText) finalText = "I looked into that, dearie, but it needs a proper dig — shall I open a session for it?";
+    if (!finalText) finalText = "That needs a proper dig — want me to open a session for it?";
   }
 
   finalText = honest(finalText);
@@ -1567,7 +1668,7 @@ async function drain() {
       const results: string[] = [];
       for (const held of fresh) {
         const out = await runBash(held.cmd, true);
-        results.push(out.split("\n").filter(Boolean).pop() || "Done, dearie.");
+        results.push(out.split("\n").filter(Boolean).pop() || "Done.");
       }
       const last = results.length === 1 ? results[0] : results.map((r, i) => `${i + 1}. ${r}`).join("\n");
       const spoken = (turn.source || "app") === "app" ? forSpeech(last) : forText(last);
@@ -1584,9 +1685,9 @@ async function drain() {
       logBrain(`HELD command(s) EXPIRED before Tom's yes: ${expired.join(" || ")}`);
       pending = []; savePending();
       const spoken =
-        `Your yes came after the hold expired, dearie — nothing ran. It was: ${expired
-          .map((c) => c.slice(0, 120))
-          .join("; ")}. Say the word and I'll set it up again.`;
+        `That yes came too late — I only hold an action for 15 minutes, so nothing ran (${expired
+          .map(humanAction)
+          .join("; ")}). Ask again and I'll set it up fresh.`;
       history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
       trimHistory();
       turn.reply(spoken);
@@ -1597,7 +1698,7 @@ async function drain() {
     if (pending.length && verdict === "no") {
       logBrain(`HELD command(s) CANCELLED by Tom: ${pending.map((p) => p.cmd).join(" || ")}`);
       pending = []; savePending();
-      const spoken = "Cancelled, dearie — nothing was done.";
+      const spoken = "Cancelled — nothing ran.";
       history.push({ role: "user", content: text }, { role: "assistant", content: spoken });
       trimHistory();
       turn.reply(spoken);
@@ -1636,7 +1737,7 @@ async function drain() {
         new Promise<string>((_, rej) => setTimeout(() => rej(new Error("turn-watchdog")), 150000)),
       ]);
     } catch {
-      out = "That turn timed out on me, dearie — give it another go.";
+      out = "That took too long and timed out — ask me again and I'll pick it up.";
     }
     trimHistory();
     logBrain(`MARGIE[${id}] (${Date.now() - started}ms): ${out}`);
@@ -1651,6 +1752,21 @@ async function drain() {
 export function runScript(cmd: string, timeoutMs?: number): Promise<string> {
   // Pollers must not leak progress events into whatever turn is in flight.
   return runBashRaw(cmd, { MARGIE_POLLER: "1" }, timeoutMs);
+}
+/** A held command described the way a person would ("merge !1207", "the Slack message to
+ *  Mike") — replies never show script paths or raw commands. */
+function humanAction(cmd: string): string {
+  const c = cmd.replace(/^\S*\//, "").replace(/\s+2>&1\s*$/, "");
+  let m;
+  if ((m = c.match(/^(?:dispatch|mr)\.sh\s+merge\s+"?(!?[\w-]+)"?/))) return `merge ${m[1]}`;
+  if ((m = c.match(/^dispatch\.sh\s+(go|file|close|spike)\s+(\S+)/))) return `${m[1] === "go" ? "start" : m[1]} ${m[2]}`;
+  if ((m = c.match(/^slack\.sh\s+(?:send|reply|dm)\s+"?([@#][\w.-]+)/))) return `the Slack message to ${m[1]}`;
+  if ((m = c.match(/^(gmail|messages)\.sh\s+send/))) return `the ${m[1] === "gmail" ? "email" : "text message"}`;
+  if (/^notion\.sh/.test(c)) return "the Notion update";
+  if ((m = c.match(/^mr\.sh\s+(create|update)/))) return `${m[1] === "create" ? "opening" : "updating"} the merge request`;
+  if ((m = c.match(/^agent-messages\.sh\s+(send|reply)/))) return "the message to the other agent";
+  const w = c.split(/\s+/).slice(0, 2).join(" ").replace(/\.sh\b/, "");
+  return w || "that action";
 }
 /** Record an unsolicited notice in history so "what was that?" works. */
 export function noteToHistory(text: string) {

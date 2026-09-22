@@ -52,7 +52,7 @@ if [ "$BOT_SEND" = 0 ] && { [ -z "$TOKEN" ] || [ "$VIA" = "claude" ]; }; then
   T="mcp__claude_ai_Slack__"
   ask() { # ask "<prompt>" <allowed tools csv>
     local out; out="$(cd "$HOME" && "$CLAUDE_BIN" -p "$1" --model "$CMODEL" --output-format json --allowedTools "$2" 2>/dev/null | jq -r '.result // empty')"
-    [ -n "$out" ] && printf '%s\n' "$out" || { echo "Slack via Claude returned nothing, dearie — is the Slack connector connected (claude mcp list)?" >&2; return 1; }
+    [ -n "$out" ] && printf '%s\n' "$out" || { echo "Slack via Claude returned nothing — is the Slack connector connected (claude mcp list)?" >&2; return 1; }
   }
   cmd="${1:-read}"; shift || true
 ARGS2=(); while [ $# -gt 0 ]; do case "$1" in --thread) export SLACK_THREAD_TS="${2:-}"; shift 2 ;; *) ARGS2+=("$1"); shift ;; esac; done; set -- ${ARGS2[@]+"${ARGS2[@]}"}; args="$*"
@@ -64,7 +64,7 @@ ARGS2=(); while [ $# -gt 0 ]; do case "$1" in --thread) export SLACK_THREAD_TS="
     send|reply|dm)
       # Never send through the connector: those posts appear as Tom with a
       # "Sent using @Claude" footer. Sends go out as the Margie bot only.
-      echo "Sends go out as @Margie, dearie — no Slack bot token is configured (slack_token), so I can't post this." >&2
+      echo "Sends go out as @Margie — no Slack bot token is configured (slack_token), so I can't post this." >&2
       exit 1 ;;
     channels)
       ask "List the Slack channels Tom is a member of, one #name per line, nothing else." "${T}slack_list_user_channels" ;;
@@ -86,9 +86,9 @@ ARGS2=(); while [ $# -gt 0 ]; do case "$1" in --thread) export SLACK_THREAD_TS="
 
 read_via_search() { # user token only
   local RESP; RESP="$(api search.messages --get --data-urlencode "query=$1" -d "count=15" -d "sort=timestamp")"
-  echo "$RESP" | ok || { echo "Slack search failed, dearie: $(echo "$RESP" | jq -r '.error // "unknown"')"; return 1; }
+  echo "$RESP" | ok || { echo "Slack search failed: $(echo "$RESP" | jq -r '.error // "unknown"')"; return 1; }
   echo "$RESP" | jq -r '.messages.matches[]? | "• #"+(.channel.name // "?")+" — "+(.username // .user // "?")+": "+((.text // "") | gsub("\n";" "))' | head -20
-  echo "$RESP" | jq -e '.messages.matches | length>0' >/dev/null 2>&1 || echo "Nothing matching '$1', dearie."
+  echo "$RESP" | jq -e '.messages.matches | length>0' >/dev/null 2>&1 || echo "Nothing matching '$1'."
 }
 
 read_member_channels() { # bot (or user) token: recent history from channels we're in + DMs
@@ -124,9 +124,9 @@ read_member_channels() { # bot (or user) token: recent history from channels we'
     done < <(echo "$IMS" | jq -r '.channels[]? | .id+" "+(.user // "?")')
   fi
   if [ "$any_src" = "0" ]; then
-    echo "I'm not in any channels yet, dearie — /invite @margie to the channels you'd like me to watch (DMs to me work already)."
+    echo "I'm not in any channels yet — /invite @margie to the channels you'd like me to watch (DMs to me work already)."
   elif [ "$found" = "0" ]; then
-    echo "Nothing recent${query:+ matching '$query'}, dearie."
+    echo "Nothing recent${query:+ matching '$query'}."
   fi
 }
 
@@ -200,7 +200,7 @@ case "$cmd" in
       api conversations.join -d "channel=$ch" >/dev/null 2>&1
       R="$(api conversations.replies --get --data-urlencode "channel=$ch" --data-urlencode "ts=$ts" -d "limit=50")"
     fi
-    echo "$R" | ok || { echo "Couldn't read that thread, dearie: $(echo "$R" | jq -r '.error // "unknown"') (is @margie in the conversation? channels:join lets me self-join public ones.)" >&2; exit 1; }
+    echo "$R" | ok || { echo "Couldn't read that thread: $(echo "$R" | jq -r '.error // "unknown"') (is @margie in the conversation? channels:join lets me self-join public ones.)" >&2; exit 1; }
     echo "$R" | jq -r '.messages | sort_by(.ts|tonumber) | .[] | "\((.ts|tonumber|strftime("%b %-d %H:%M")))\t\(.user // .bot_id // "?")\t\((.text // "")|gsub("\n";" "))"' | \
       while IFS=$'\t' read -r when who what; do printf '%s %s: %s\n' "$when" "$(uname_of "$who")" "$what"; done
     ;;
@@ -221,17 +221,17 @@ case "$cmd" in
       exit 1
     fi
     cid="$(resolve_target "$target")"
-    [ -z "$cid" ] && { echo "Couldn't resolve '$target' to a Slack conversation, dearie — give me a #channel, @name, a Slack message link, or the channel id (and make sure @margie is invited to it)." >&2; exit 1; }
+    [ -z "$cid" ] && { echo "Couldn't resolve '$target' to a Slack conversation — give me a #channel, @name, a Slack message link, or the channel id (and make sure @margie is invited to it)." >&2; exit 1; }
     RESP="$(api chat.postMessage --get --data-urlencode "channel=$cid" --data-urlencode "text=$text" ${THREAD_TS:+--data-urlencode "thread_ts=$THREAD_TS"})"
     if echo "$RESP" | ok; then
-      echo "Sent to $target${THREAD_TS:+ (in the thread)}, dearie$([ "$KIND" = bot ] && echo " (as the margie bot)")."
+      echo "Sent to $target${THREAD_TS:+ (in the thread)}$([ "$KIND" = bot ] && echo " (as the margie bot)")."
       # cc the owner: a bot's DM with someone else is invisible to Tom, so he gets a copy.
       OWNER_ID="$(jq -r '.slack_owner_id // empty' "$CFG" 2>/dev/null)"
       if [ -n "$OWNER_ID" ] && [ "$cid" != "$(api conversations.list --get --data-urlencode "types=im" -d "limit=1000" | jq -r --arg u "$OWNER_ID" '.channels[]? | select(.user==$u) | .id' | head -1)" ] && [ "$(jq -r '.slack_cc_owner // "true"' "$CFG")" != "false" ]; then
         api chat.postMessage --get --data-urlencode "channel=$OWNER_ID" --data-urlencode "text=📋 Copy of what I sent to *$target*:
 $text" >/dev/null 2>&1 || true
       fi
-    else echo "Send failed, dearie: $(echo "$RESP" | jq -r '.error // "unknown"')"; exit 1; fi
+    else echo "Send failed: $(echo "$RESP" | jq -r '.error // "unknown"')"; exit 1; fi
     ;;
   channels)
     # Channels and group DMs Margie is in, with ids — "the group with Cody and Tom" → use the id as the send target.
@@ -251,14 +251,14 @@ $text" >/dev/null 2>&1 || true
       pts="$(printf '%s' "$UTARGET" | grep -oE '/p[0-9]+' | tr -d '/p')"; [ -z "$UTHREAD" ] && UTHREAD="${pts:0:10}.${pts:10}"
     fi
     cid="$(resolve_target "$UTARGET")"
-    [ -z "$cid" ] && { echo "Couldn't resolve '$UTARGET' for the upload, dearie — give me a #channel, @name, permalink or channel id." >&2; exit 1; }
+    [ -z "$cid" ] && { echo "Couldn't resolve '$UTARGET' for the upload — give me a #channel, @name, permalink or channel id." >&2; exit 1; }
     LEN="$(wc -c < "$FILE" | tr -d ' ')"; FN="$(basename "$FILE")"
     U="$(api files.getUploadURLExternal --get --data-urlencode "filename=$FN" -d "length=$LEN")"
-    echo "$U" | ok || { echo "Upload URL failed, dearie: $(echo "$U" | jq -r '.error // "unknown"')" >&2; exit 1; }
+    echo "$U" | ok || { echo "Upload URL failed: $(echo "$U" | jq -r '.error // "unknown"')" >&2; exit 1; }
     UURL="$(echo "$U" | jq -r '.upload_url')"; FID="$(echo "$U" | jq -r '.file_id')"
-    curl -sS -f -F "file=@$FILE" "$UURL" >/dev/null || { echo "File POST to Slack failed, dearie." >&2; exit 1; }
+    curl -sS -f -F "file=@$FILE" "$UURL" >/dev/null || { echo "File POST to Slack failed." >&2; exit 1; }
     R="$(api files.completeUploadExternal --data-urlencode "files=[{\"id\":\"$FID\",\"title\":\"$FN\"}]" -d "channel_id=$cid" ${UTHREAD:+-d "thread_ts=$UTHREAD"} ${UCOMMENT:+--data-urlencode "initial_comment=$UCOMMENT"})"
-    echo "$R" | ok && echo "Uploaded $FN to ${UTARGET:-$cid}, dearie." || { echo "Upload finalize failed, dearie: $(echo "$R" | jq -r '.error // "unknown"')" >&2; exit 1; }
+    echo "$R" | ok && echo "Uploaded $FN to ${UTARGET:-$cid}." || { echo "Upload finalize failed: $(echo "$R" | jq -r '.error // "unknown"')" >&2; exit 1; }
     ;;
   react)
     # slack.sh react <permalink | "<cid> <ts>"> <emoji>   — acknowledge a message (reactions:write)
@@ -269,12 +269,12 @@ $text" >/dev/null 2>&1 || true
     else ch="$(printf '%s' "$rest" | awk '{print $1}')"; ts="$(printf '%s' "$rest" | awk '{print $2}')"; fi
     { [ -z "$ch" ] || [ -z "$ts" ] || [ -z "$EMOJI" ]; } && { echo "usage: slack.sh react <permalink|\"<cid> <ts>\"> <emoji>" >&2; exit 1; }
     R="$(api reactions.add -d "channel=$ch" -d "timestamp=$ts" -d "name=$EMOJI")"
-    echo "$R" | ok || { e="$(echo "$R" | jq -r '.error // "unknown"')"; [ "$e" = already_reacted ] && exit 0; echo "React failed, dearie: $e" >&2; exit 1; }
+    echo "$R" | ok || { e="$(echo "$R" | jq -r '.error // "unknown"')"; [ "$e" = already_reacted ] && exit 0; echo "React failed: $e" >&2; exit 1; }
     ;;
   join)
     # slack.sh join <cid>  — self-join a public channel to read its history (needs channels:join)
     ch="$(printf '%s' "$args" | awk '{print $1}')"; [ -z "$ch" ] && { echo "usage: slack.sh join <channel-id>" >&2; exit 1; }
-    R="$(api conversations.join -d "channel=$ch")"; echo "$R" | ok && echo "Joined $ch, dearie." || echo "Couldn't join $ch: $(echo "$R" | jq -r '.error // "unknown"') (needs channels:join)" >&2
+    R="$(api conversations.join -d "channel=$ch")"; echo "$R" | ok && echo "Joined $ch." || echo "Couldn't join $ch: $(echo "$R" | jq -r '.error // "unknown"') (needs channels:join)" >&2
     ;;
   *)
     echo "usage: slack.sh read [query] | send \"<target>: msg\" | reply \"<target>: msg\" | thread <link> | upload <file> --to <t> | react <link> <emoji> | join <cid> | channels" >&2

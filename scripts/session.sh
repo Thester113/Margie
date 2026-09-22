@@ -54,7 +54,7 @@ resolve_session() {
 case "$cmd" in
   list)
     NAMES="$("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' || true)"
-    [ -z "$NAMES" ] && { echo "No running sessions, dearie."; exit 0; }
+    [ -z "$NAMES" ] && { echo "No running sessions."; exit 0; }
     # Annotate each session working-vs-idle: "esc to interrupt" is Claude Code's
     # active-turn indicator (shown while thinking or running a tool), so a long
     # thinking turn reads as [working], not idle.
@@ -72,7 +72,7 @@ case "$cmd" in
     SESSION="$(resolve_session)"
     LINES="${1:-200}"
     if ! "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then
-      echo "No running session to read, dearie — start one first."
+      echo "No running session to read — start one first."
       exit 0
     fi
     echo "── session $SESSION ──"
@@ -331,21 +331,21 @@ $Q" 2>/dev/null)"
     ;;
   attach | watch)
     SESSION="$(resolve_session)"; [ -n "${1:-}" ] && SESSION="$1"
-    "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null || { echo "No session '$SESSION', dearie. Live: $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' | tr '\n' ' ')" >&2; exit 1; }
+    "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null || { echo "No session '$SESSION'. Live: $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie' | tr '\n' ' ')" >&2; exit 1; }
     exec "$TMUX_BIN" attach -t "$SESSION" ;;
   key | keys)
     SESSION="$(resolve_session)"
     [ $# -eq 0 ] && { echo "usage: session.sh key <Enter|Escape|y|1|Down…> [--branch <b>]" >&2; exit 1; }
-    "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null || { echo "No running session, dearie." >&2; exit 1; }
+    "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null || { echo "No running session." >&2; exit 1; }
     "$TMUX_BIN" send-keys -t "$SESSION" "$@"
-    echo "Pressed $* in session $SESSION, dearie."
+    echo "Pressed $* in session $SESSION."
     ;;
   send | inject | steer)
     SESSION="$(resolve_session)"
     TEXT="$*"
     [ -z "$TEXT" ] && { echo "usage: session.sh send \"<text>\" [--branch <b>]" >&2; exit 1; }
     if ! "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then
-      echo "No running session to steer, dearie — start one first with kickoff-claude.sh."
+      echo "No running session to steer — start one first with kickoff-claude.sh."
       exit 1
     fi
     # Collapse to a single line: a multi-line block is treated as a paste attachment
@@ -371,9 +371,9 @@ $Q" 2>/dev/null)"
     OK=0
     for _try in 1 2 3; do if submit_once; then OK=1; break; fi; sleep 0.5; done
     if [ "$OK" = 1 ]; then
-      echo "Sent into session $SESSION, dearie."
+      echo "Sent into session $SESSION."
     else
-      echo "Couldn't submit into $SESSION — the text stayed stuck in the composer, dearie." >&2
+      echo "Couldn't submit into $SESSION — the text stayed stuck in the composer." >&2
       exit 1
     fi
     ;;

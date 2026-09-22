@@ -40,28 +40,28 @@ Facts only; say 'unverified' where a page didn't state it. Write NOTHING to disk
     "$DIR/claude-task.sh" start "$HOME" "$P" --plan --no-subagents --model "$(cfg research_model | grep . || echo sonnet)" \
       --effort "$(cfg research_effort | grep . || echo medium)" --budget "$(cfg research_budget_usd | grep . || echo 2)" \
       --tag "research:$id" >/dev/null || exit 1
-    echo "Research started, dearie ($id) — I'll say when it's done. Check: research.sh show $id" ;;
+    echo "Research started ($id) — I'll say when it's done. Check: research.sh show $id" ;;
   list)
     for d in $(ls -t "$R" 2>/dev/null | head -10); do
       j="$(task_json "$d")"; st="running"; [ -n "$j" ] && [ -s "$j" ] && st="done"
       printf '%s  [%s]  %s%s\n' "$d" "$st" "$(cut -c1-80 "$R/$d/question.txt")" "$([ -s "$R/$d/for" ] && printf ' → %s' "$(cat "$R/$d/for")")"
     done ;;
   show)
-    id="$(resolve "${1:-latest}")" || { echo "No such research, dearie." >&2; exit 1; }
+    id="$(resolve "${1:-latest}")" || { echo "No such research." >&2; exit 1; }
     j="$(task_json "$id")"
     if [ -s "$R/$id/result.md" ]; then cat "$R/$id/result.md"
     elif [ -n "$j" ] && [ -s "$j" ]; then
-      if [ "$(jq -r '.is_error // false' "$j")" = true ]; then echo "That research failed, dearie: $(jq -r '.result // "no detail"' "$j" | head -3)"; exit 1; fi
+      if [ "$(jq -r '.is_error // false' "$j")" = true ]; then echo "That research failed: $(jq -r '.result // "no detail"' "$j" | head -3)"; exit 1; fi
       # Drop any "I have the data, writing now…" preamble the model put before a --- rule.
       jq -r '.result // empty' "$j" | awk 'NR<=6 && /^---+$/ { drop=NR } { l[NR]=$0 } END { for (i=drop+1;i<=NR;i++) if (i>drop+1 || l[i]!="") print l[i] }' | tee "$R/$id/result.md"
       printf '\n(cost $%s)\n' "$(jq -r '.total_cost_usd // 0 | .*100 | round / 100' "$j")"
-    else echo "Still researching, dearie — '$(cat "$R/$id/question.txt")' isn't finished yet."; fi ;;
+    else echo "Still researching — '$(cat "$R/$id/question.txt")' isn't finished yet."; fi ;;
   post)
-    id="$(resolve "${1:-latest}")" || { echo "No such research, dearie." >&2; exit 1; }
+    id="$(resolve "${1:-latest}")" || { echo "No such research." >&2; exit 1; }
     target="${2:-$(cat "$R/$id/for" 2>/dev/null)}"
-    [ -z "$target" ] && { echo "Where should it go, dearie? research.sh post $id <#channel|@user|conversation id>" >&2; exit 1; }
+    [ -z "$target" ] && { echo "Where should it go? research.sh post $id <#channel|@user|conversation id>" >&2; exit 1; }
     [ -s "$R/$id/result.md" ] || "$0" show "$id" >/dev/null 2>&1
-    [ -s "$R/$id/result.md" ] || { echo "Nothing to post yet, dearie — that research isn't finished." >&2; exit 1; }
+    [ -s "$R/$id/result.md" ] || { echo "Nothing to post yet — that research isn't finished." >&2; exit 1; }
     BODY="$(cat "$R/$id/result.md")"
     if [ "${MARGIE_DESCRIBE:-0}" = 1 ]; then echo "would post the research write-up '$(cut -c1-60 "$R/$id/question.txt")' ($(printf '%s' "$BODY" | wc -l | tr -d ' ') lines) to $target as @Margie"; exit 0; fi
     "$DIR/slack.sh" send "$target: $BODY" ;;

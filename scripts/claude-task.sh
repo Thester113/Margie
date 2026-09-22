@@ -40,7 +40,7 @@ meta() { jq -r ".$2 // empty" "$TASKS/$1.meta" 2>/dev/null; }
 latest() { ls -t "$TASKS"/*.meta 2>/dev/null | head -1 | xargs -n1 basename 2>/dev/null | sed 's/\.meta$//'; }
 resolve_id() {
   local id="${1:-latest}"; [ "$id" = "latest" ] && id="$(latest)"
-  [ -n "$id" ] && [ -f "$TASKS/$id.meta" ] || { echo "No such task${1:+ '$1'}, dearie." >&2; return 1; }
+  [ -n "$id" ] && [ -f "$TASKS/$id.meta" ] || { echo "No such task${1:+ '$1'}." >&2; return 1; }
   printf '%s' "$id"
 }
 running() { local pid; pid="$(meta "$1" pid)"; [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
@@ -127,7 +127,7 @@ case "$cmd" in
     if [ -n "$DAILY" ]; then
       SPENT="$("$DIR/usage.sh" today --total 2>/dev/null || echo 0)"
       if [ "$(echo "$SPENT >= $DAILY" | bc 2>/dev/null)" = 1 ]; then
-        echo "Not starting that, dearie — today's Claude spend is already \$$SPENT against the \$$DAILY daily budget (daily_budget_usd in config). Raise it or wait for tomorrow." >&2; exit 1
+        echo "Not starting that — today's Claude spend is already \$$SPENT against the \$$DAILY daily budget (daily_budget_usd in config). Raise it or wait for tomorrow." >&2; exit 1
       fi
     fi
     # Default model for dispatched runs (claude_model in config) unless --model was given.
@@ -135,10 +135,10 @@ case "$cmd" in
       DM="$(jq -r '.claude_model // empty' "$HOME/.margie/config.json" 2>/dev/null)"
       [ -n "$DM" ] && EXTRA+=(--model "$DM")
     fi
-    dir_abs="$(cd "${dir/#\~/$HOME}" 2>/dev/null && pwd)" || { echo "No such directory '$dir', dearie." >&2; exit 1; }
+    dir_abs="$(cd "${dir/#\~/$HOME}" 2>/dev/null && pwd)" || { echo "No such directory '$dir'." >&2; exit 1; }
     id="$(date +%s)-$(slugify "${TAG:-$task}")"
     launch "$id" "$dir_abs" "$task" ${EXTRA[@]+"${EXTRA[@]}"}
-    echo "Started background Claude task '${TAG:-$id}' in $(basename "$dir_abs"), dearie. Check it with: claude-task.sh status"
+    echo "Started background Claude task '${TAG:-$id}' in $(basename "$dir_abs"). Check it with: claude-task.sh status"
     ;;
   status|list)
     harvest
@@ -159,7 +159,7 @@ case "$cmd" in
       fi
       printf '%s  %-7s %4s  %s\n' "$id" "$state" "$(age "$id")" "$gist"
     done
-    [ "$found" = 0 ] && echo "No background tasks, dearie."
+    [ "$found" = 0 ] && echo "No background tasks."
     ;;
   result)
     JSON_OUT=0
@@ -168,9 +168,9 @@ case "$cmd" in
     set -- ${ARGS2[@]+"${ARGS2[@]}"}
     id="$(resolve_id "${1:-latest}")" || exit 1
     harvest
-    if running "$id"; then echo "Task '$id' is still running ($(age "$id")), dearie."; exit 0; fi
+    if running "$id"; then echo "Task '$id' is still running ($(age "$id"))."; exit 0; fi
     j="$TASKS/$id.json"
-    if [ "$JSON_OUT" = 1 ]; then jq -e '.structured_output' "$j" 2>/dev/null || { echo "Task '$id' produced no structured output, dearie." >&2; exit 1; }; exit 0; fi
+    if [ "$JSON_OUT" = 1 ]; then jq -e '.structured_output' "$j" 2>/dev/null || { echo "Task '$id' produced no structured output." >&2; exit 1; }; exit 0; fi
     if [ -s "$j" ] && jq -e . "$j" >/dev/null 2>&1; then
       jq -r '.result // "(no result text)"' "$j"
       printf '\n[%s turns, $%s, %ss, session %s]\n' \
@@ -179,18 +179,18 @@ case "$cmd" in
         "$(jq -r '((.duration_ms // 0) / 1000) | round' "$j")" \
         "$(jq -r '.session_id // "?"' "$j")"
     else
-      echo "Task '$id' produced no result, dearie. Last log lines:"; tail -5 "$TASKS/$id.log" 2>/dev/null
+      echo "Task '$id' produced no result. Last log lines:"; tail -5 "$TASKS/$id.log" 2>/dev/null
     fi
     ;;
   followup|continue)
     id="$(resolve_id "${1:-latest}")" || exit 1; shift || true; text="$*"
     [ -z "$text" ] && { echo "usage: claude-task.sh followup <id|latest> \"<text>\"" >&2; exit 1; }
-    if running "$id"; then echo "Task '$id' is still running, dearie — wait for it or stop it first."; exit 1; fi
+    if running "$id"; then echo "Task '$id' is still running — wait for it or stop it first."; exit 1; fi
     sess="$(jq -r '.session_id // empty' "$TASKS/$id.json" 2>/dev/null)"
-    [ -z "$sess" ] && { echo "Task '$id' has no session to continue, dearie."; exit 1; }
+    [ -z "$sess" ] && { echo "Task '$id' has no session to continue."; exit 1; }
     new="$(date +%s)-$(slugify "$text")"
     launch "$new" "$(meta "$id" dir)" "$text" --resume "$sess"
-    echo "Follow-up sent as task '$new' (continuing $id), dearie."
+    echo "Follow-up sent as task '$new' (continuing $id)."
     ;;
   log)
     id="$(resolve_id "${1:-latest}")" || exit 1
@@ -198,7 +198,7 @@ case "$cmd" in
     ;;
   stop)
     id="$(resolve_id "${1:-latest}")" || exit 1
-    if running "$id"; then kill "$(meta "$id" pid)" && echo "Stopped task '$id', dearie."; else echo "Task '$id' isn't running, dearie."; fi
+    if running "$id"; then kill "$(meta "$id" pid)" && echo "Stopped task '$id'."; else echo "Task '$id' isn't running."; fi
     ;;
   state)
     x="${1:-}"; [ -z "$x" ] && { echo "usage: claude-task.sh state <tag|id>" >&2; exit 1; }

@@ -54,9 +54,9 @@ device_for() {
     base="$(cfg sim_verify_base_udid)"; [ -z "$base" ] && base="$(cfg sim_device)"
     info="$(xcrun simctl list devices -j 2>/dev/null | jq -r --arg u "$base" '.devices | to_entries[] | .key as $rt | .value[] | select(.udid==$u) | "\($rt)\t\(.deviceTypeIdentifier)"' 2>/dev/null | head -1)"
     rt="$(printf '%s' "$info" | cut -f1)"; dt="$(printf '%s' "$info" | cut -f2)"
-    [ -z "$dt" ] && { echo "no base device to clone from (set sim_verify_base_udid), dearie" >&2; return 1; }
+    [ -z "$dt" ] && { echo "no base device to clone from (set sim_verify_base_udid)" >&2; return 1; }
     udid="$(xcrun simctl create "$name" "$dt" "$rt" 2>/dev/null)"
-    [ -z "$udid" ] && { echo "couldn't create a sim for $name, dearie" >&2; return 1; }
+    [ -z "$udid" ] && { echo "couldn't create a sim for $name" >&2; return 1; }
   fi
   xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || xcrun simctl boot "$udid" >/dev/null 2>&1 || true
   echo "$udid"
@@ -82,7 +82,7 @@ case "$cmd" in
     if [ -n "$u" ]; then xcrun simctl shutdown "$u" >/dev/null 2>&1; xcrun simctl delete "$u" >/dev/null 2>&1; echo "freed per-worktree sim $nm"; else echo "no per-worktree sim named $nm"; fi ;;
   boot)
     [ -n "${1:-}" ] && DEVICE="$1"
-    [ -z "$DEVICE" ] && { echo "No simulator device found, dearie — open Xcode once to install one." >&2; exit 1; }
+    [ -z "$DEVICE" ] && { echo "No simulator device found — open Xcode once to install one." >&2; exit 1; }
     xcrun simctl bootstatus "$DEVICE" -b >/dev/null 2>&1 || xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
     open -a Simulator >/dev/null 2>&1 || true
     echo "$DEVICE" ;;
@@ -90,8 +90,8 @@ case "$cmd" in
     WT="${1:?usage: sim.sh run <worktree> [--subdir d]}"
     RUNDIR="$WT${SUBDIR:+/$SUBDIR}"
     [ -d "$RUNDIR" ] || { echo "No such dir: $RUNDIR" >&2; exit 1; }
-    [ -x "$FLUTTER" ] || { echo "flutter not found, dearie (looked in PATH and ~/development/flutter/bin)." >&2; exit 1; }
-    [ -z "$DEVICE" ] && { echo "No simulator device, dearie." >&2; exit 1; }
+    [ -x "$FLUTTER" ] || { echo "flutter not found (looked in PATH and ~/development/flutter/bin)." >&2; exit 1; }
+    [ -z "$DEVICE" ] && { echo "No simulator device." >&2; exit 1; }
     xcrun simctl bootstatus "$DEVICE" -b >/dev/null 2>&1 || xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
     open -a Simulator >/dev/null 2>&1 || true
     [ -z "$LOG" ] && LOG="$SIMDIR/flutter-run.log"
@@ -109,14 +109,14 @@ case "$cmd" in
     done
     echo "Still building after 4 min — check $LOG" >&2; exit 1 ;;
   shot)
-    [ -z "$DEVICE" ] && { echo "No simulator device, dearie." >&2; exit 1; }
+    [ -z "$DEVICE" ] && { echo "No simulator device." >&2; exit 1; }
     [ -z "$OUT" ] && OUT="$SIMDIR/shot-$(date +%s).png"
-    xcrun simctl io "$DEVICE" screenshot "$OUT" >/dev/null 2>&1 || xcrun simctl io booted screenshot "$OUT" >/dev/null 2>&1 || { echo "Screenshot failed, dearie." >&2; exit 1; }
+    xcrun simctl io "$DEVICE" screenshot "$OUT" >/dev/null 2>&1 || xcrun simctl io booted screenshot "$OUT" >/dev/null 2>&1 || { echo "Screenshot failed." >&2; exit 1; }
     echo "$OUT" ;;
   stop)
     [ -f "$SIMDIR/run.pid" ] && kill "$(cat "$SIMDIR/run.pid")" 2>/dev/null || true
     pkill -f "flutter run.*$DEVICE" 2>/dev/null || true
-    echo "Stopped the flutter run (sim stays booted), dearie." ;;
+    echo "Stopped the flutter run (sim stays booted)." ;;
   scroll)
     DIR="${1:-down}"; N="${2:-1}"
     # Prefer idb: it drives the sim at the device level (no window focus needed),
@@ -131,10 +131,10 @@ case "$cmd" in
         else idb ui swipe --udid "$DEVICE" --duration 0.3 "$CX" "$LO" "$CX" "$HI" >/dev/null 2>&1; fi
         sleep 0.5; i=$((i+1))
       done
-      echo "Scrolled $DIR x$N (idb), dearie."; exit 0
+      echo "Scrolled $DIR x$N (idb)."; exit 0
     fi
-    command -v cliclick >/dev/null 2>&1 || { echo "No scroll tool, dearie — install idb (brew install facebook/fb/idb-companion && pipx install fb-idb) or cliclick." >&2; exit 1; }
-    B="$(win_bounds)"; [ -z "$B" ] && { echo "Can't read the Simulator window, dearie — grant Accessibility to the terminal/Margie in System Settings > Privacy." >&2; exit 1; }
+    command -v cliclick >/dev/null 2>&1 || { echo "No scroll tool — install idb (brew install facebook/fb/idb-companion && pipx install fb-idb) or cliclick." >&2; exit 1; }
+    B="$(win_bounds)"; [ -z "$B" ] && { echo "Can't read the Simulator window — grant Accessibility to the terminal/Margie in System Settings > Privacy." >&2; exit 1; }
     IFS=, read -r WX WY WW WH <<EOF
 $B
 EOF
@@ -147,7 +147,7 @@ EOF
       sleep 0.6; i=$((i+1))
     done
     [ -n "$SAVE" ] && cliclick m:$SAVE >/dev/null 2>&1
-    echo "Scrolled $DIR x$N, dearie." ;;
+    echo "Scrolled $DIR x$N." ;;
   tap)
     X="${1:?x}"; Y="${2:?y}"   # device PIXELS (as seen in `sim.sh shot`)
     if command -v idb >/dev/null 2>&1; then
@@ -156,11 +156,11 @@ EOF
       PX="$(awk "BEGIN{printf \"%d\", $X/$DEN}")"; PY="$(awk "BEGIN{printf \"%d\", $Y/$DEN}")"
       idb ui tap --udid "$DEVICE" "$PX" "$PY" >/dev/null 2>&1 && { echo "tapped device($X,$Y)->points($PX,$PY) (idb)"; exit 0; }
     fi
-    command -v cliclick >/dev/null 2>&1 || { echo "No tap tool, dearie — grant Accessibility for cliclick, or install idb (brew tap facebook/fb && brew install idb-companion && pipx install fb-idb)." >&2; exit 1; }
-    B="$(win_bounds)"; [ -z "$B" ] && { echo "Can't read the Simulator window, dearie — grant Accessibility." >&2; exit 1; }
+    command -v cliclick >/dev/null 2>&1 || { echo "No tap tool — grant Accessibility for cliclick, or install idb (brew tap facebook/fb && brew install idb-companion && pipx install fb-idb)." >&2; exit 1; }
+    B="$(win_bounds)"; [ -z "$B" ] && { echo "Can't read the Simulator window — grant Accessibility." >&2; exit 1; }
     TMP="$SIMDIR/.dim.png"; xcrun simctl io "$DEVICE" screenshot "$TMP" >/dev/null 2>&1 || xcrun simctl io booted screenshot "$TMP" >/dev/null 2>&1
     DW="$(sips -g pixelWidth "$TMP" 2>/dev/null | awk '/pixelWidth/{print $2}')"; DH="$(sips -g pixelHeight "$TMP" 2>/dev/null | awk '/pixelHeight/{print $2}')"
-    [ -z "$DW" ] || [ -z "$DH" ] && { echo "Couldn't read device screen size, dearie." >&2; exit 1; }
+    [ -z "$DW" ] || [ -z "$DH" ] && { echo "Couldn't read device screen size." >&2; exit 1; }
     IFS=, read -r WX WY WW WH <<EOF
 $B
 EOF

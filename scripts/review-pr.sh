@@ -43,7 +43,7 @@ set -e
 if [ "$RC" -ne 0 ]; then
   # One line, no ANSI/box-drawing noise: the brain speaks the LAST line of our output.
   PRCHECK="$(printf '%s' "$PRCHECK" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tr '\n' ' ' | tr -s ' ' | sed 's/^ *//;s/ *$//')"
-  echo "Couldn't find $NOUN $REF$PR in $(basename "$DIR_ABS"), dearie: ${PRCHECK:0:160}"
+  echo "Couldn't find $NOUN $REF$PR in $(basename "$DIR_ABS"): ${PRCHECK:0:160}"
   exit 1
 fi
 
@@ -64,7 +64,7 @@ for E in $("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^m
   printf '%s' "$T" | grep -qE "(request|MR|PR|#) *0*${PR}( |$|[^0-9])" || continue
   if "$TMUX_BIN" capture-pane -t "$E" -p 2>/dev/null | grep -q 'esc to interrupt'; then
     [ "${FORCE_REVIEW:-0}" = 1 ] && continue   # forced re-review runs alongside even a live one
-    echo "A review of $NOUN $REF$PR is already running in session '$E', dearie — watch it with /watch $E. Not starting a second."
+    echo "A review of $NOUN $REF$PR is already running in session '$E' — watch it with /watch $E. Not starting a second."
     exit 0
   else
     "$TMUX_BIN" kill-session -t "$E" 2>/dev/null || true   # retire a finished review; re-review afresh
@@ -143,7 +143,7 @@ else
   open -a Warp
 fi
 if [ "$(jq -r '.warp_mode // "window"' "$HOME/.margie/config.json" 2>/dev/null)" = "quiet" ]; then
-  echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — session '$SESSION' (watch it with /watch $SESSION), dearie."
+  echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — session '$SESSION' (watch it with /watch $SESSION)."
 else
-  echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — up in Warp (session '$SESSION'), dearie."
+  echo "$REVIEWER is reviewing $NOUN $REF$PR in $(basename "$DIR_ABS") — up in Warp (session '$SESSION')."
 fi
