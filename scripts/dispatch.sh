@@ -407,7 +407,17 @@ paths_overlap() { # paths_overlap "<paths A>" "<paths B>" → 0 when they share 
   done <<< "$1"
   return 1
 }
-live_coding_sessions() { "${MARGIE_TMUX:-$(command -v tmux)}" list-sessions -F '#{session_name}' 2>/dev/null | grep -c '^margie-margie-' ; }
+live_coding_sessions() { # coding sessions that use a slot — one parked on a held MR (e.g. waiting
+  # for a scheduled release) is idle by design and doesn't count
+  local n=0 s pt d
+  for s in $("${MARGIE_TMUX:-$(command -v tmux)}" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie-margie-'); do
+    pt="$(printf '%s' "$s" | grep -oE 'PT-[0-9]+' | head -1)"
+    d="$(grep -l "\"pt\":\"$pt\"" "$MDIR"/d-*/ticket.json 2>/dev/null | head -1)"
+    [ -n "$d" ] && [ -s "$(dirname "$d")/hold-merge" ] && continue
+    n=$((n+1))
+  done
+  echo "$n"
+}
 schedule_children() { # schedule_children <parent dir> → starts what's ready; prints started keys, or ALLDONE
   local d="$1" key c cst dep ok mine started="" rpaths="" nrun=0 all_closed=1 cap gcap
   cap="$(cfgd epic_parallel 2)"; gcap="$(cfgd max_coding_sessions 4)"
@@ -985,7 +995,7 @@ case "$cmd" in
         if [ "$S" = implementing ] && has_breakdown "$D" && [ "$(cfgd epic_parallel 2)" -gt 1 ]; then
           RUNNING_KIDS=0
           for c in "$D"--*; do [ -d "$c" ] || continue; case "$(st "$c")" in implementing|qa-running|qa-pass|qa-fail) RUNNING_KIDS=$((RUNNING_KIDS+1)) ;; esac; done
-          if [ "$RUNNING_KIDS" -gt 0 ]; then
+          if [ "$RUNNING_KIDS" -gt 0 ] || [ -f "$D/resumed" ]; then
             NEWK="$(schedule_children "$D")"
             case "$NEWK" in ""|ALLDONE) ;; *) announce "Started $NEWK in $(jq -r .pt "$D/ticket.json") alongside what's already running — different files, no dependency waiting." ;; esac
           fi
@@ -1630,6 +1640,7 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     need_d "${1:-latest}"
     has_breakdown "$D" || { echo "That dispatch isn't an epic." >&2; exit 1; }
     [ "${2:-}" = "--dry" ] && export SCHEDULE_DRY=1
+    [ "${SCHEDULE_DRY:-0}" = 1 ] || touch "$D/resumed"   # Tom's word: the tick keeps feeding this epic from now on
     R="$(schedule_children "$D")"
     case "$R" in
       ALLDONE) echo "Every ticket in $(jq -r .pt "$D/ticket.json") is merged." ;;
