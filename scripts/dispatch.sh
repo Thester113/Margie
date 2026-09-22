@@ -1430,7 +1430,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     echo "$SHA" > "$D/ui-verified-sha"; ui_patch_id "$WT" "$REPO_NAME" > "$D/ui-verified-patch"
                     open "$D/ui-shot.png" >/dev/null 2>&1 || true
                     METHOD="in the simulator"; is_web_ui_change "$WT" "$REPO_NAME" && METHOD="in a browser"
-                    UIMSG="UI MR !$IID ($PT) is green and ready — I checked it $METHOD (screenshot attached). React ✅ on the next message to merge it, or ❌ to hold it. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
+                    UIMSG="UI MR !$IID ($PT) is green and ready — I checked it $METHOD (screenshot attached). React ✅ here to merge it, or ❌ to hold it. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
                     # Upload the screenshot INTO Slack (files:write) so Tom reviews it there, not only
                     # on his Mac; fall back to a text ping if the upload fails. Detached: the tick
                     # never waits on Slack.

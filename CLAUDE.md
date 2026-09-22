@@ -89,8 +89,11 @@
   one line follows: "React ✅ to merge !n (PT), or ❌ to hold it." Tom's ✅ runs
   `dispatch.sh merge` (all its gates still apply); ❌ writes hold-merge and asks what
   should change; a new commit since the screenshot never merges. Only Tom's reaction
-  counts; prompts expire in 48 h. The reaction is the confirmation — no model composes
-  anything here.
+  counts — on the prompt OR on the screenshot message naming that MR (the upload lands
+  just below the prompt); prompts expire in 48 h. The reaction is the confirmation — no model
+  composes anything here. An open prompt is also the solicitation for Tom's typed "merge":
+  the brain runs the held merge without a second read-back when it targets that prompt's MR
+  and it is the only open prompt or Tom named the number (`approvalSolicited`, brain.ts).
 - **Parallel epic tickets (`schedule_children`, `dispatch.sh schedule <epic> [--dry]`).**
   Every ready ticket starts — dependencies merged, and its breakdown-scope files don't
   overlap a running sibling (no parseable paths = overlaps everything) — up to

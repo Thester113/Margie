@@ -235,9 +235,30 @@ const PROPOSE_RE = /\b(confirm|say (?:go|yes|the word)|i'?ll (?:fire|file|send|p
  *  reply already proposed exactly this action, treat his "yes" as THE confirmation and run
  *  it now — instead of holding it a second time. Sends to OTHER people (Slack/mail/agent
  *  messages) still require that the exact outgoing text was shown, since the wording matters. */
+/** An open "React ✅ to merge !n" prompt (approve.sh) is itself the solicitation: the
+ *  pipeline, not a brain reply, asked for the word, so Tom's "merge" answered it and a
+ *  second read-back only asks him twice (!1246, 2026-09-22). Deterministic: the held
+ *  command must merge an MR that has an open prompt, and — so a bare "merge" can't land on
+ *  the wrong MR (!1199) — either it is the ONLY open prompt or Tom named its number. */
+function approvalSolicited(cmd: string, said: string): boolean {
+  if (!/^(?:merge( it)?|yes,?\s*merge( it)?|ship it|✅)\s*(?:!?\d+)?[.!]*$/i.test(said.trim())) return false;
+  const dm = cmd.match(/\bdispatch\.sh\s+merge\s+(\S+)/);
+  const mm = cmd.match(/\bmr\.sh\s+merge\s+!?(\d+)/);
+  if (!dm && !mm) return false;
+  let open: { dispatch?: string; iid?: string }[] = [];
+  try {
+    const dir = `${HOME}/.margie/approvals`;
+    open = readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => JSON.parse(readFileSync(`${dir}/${f}`, "utf8")));
+  } catch { return false; }
+  const hit = open.find((a) => (dm && a.dispatch === dm[1].replace(/^['"]|['"]$/g, "")) || (mm && a.iid === mm[1]));
+  if (!hit) return false;
+  return open.length === 1 || new RegExp(`(^|\\D)${hit.iid}(\\D|$)`).test(said);
+}
+
 function solicitedGo(cmd: string): boolean {
   if (currentTurn.speaker) return false;                            // only Tom, only his surfaces
   const said = (currentTurn.text || "").trim();
+  if (approvalSolicited(cmd, said)) return true;
   if (!isAffirmative(said) && !turnApproved) return false;          // his message must be a yes
   const lastMargie = [...history].reverse().find((m) => m.role === "assistant" && !m.conv);
   const last = (lastMargie?.content || "");

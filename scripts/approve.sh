@@ -23,6 +23,7 @@ BTOK="$(jq -r '.slack_token // empty' "$CFG" 2>/dev/null)"
 OWNER="$(jq -r '.slack_owner_id // empty' "$CFG" 2>/dev/null)"
 [ -z "$BTOK" ] || [ -z "$OWNER" ] && exit 0
 sapi() { local m="$1"; shift; curl -sS --max-time 10 -H "Authorization: Bearer $BTOK" "$@" "https://slack.com/api/$m" 2>/dev/null; }
+BOTUSER="$(sapi auth.test | jq -r '.user_id // empty')"
 dm_channel() { sapi conversations.open -d "users=$OWNER" | jq -r '.channel.id // empty'; }
 MDIR="$HOME/.margie/dispatch"
 
@@ -46,8 +47,14 @@ case "${1:-}" in
       CH="$(jq -r .channel <<<"$R")"; TS="$(jq -r .ts <<<"$R")"; IID="$(jq -r .iid <<<"$R")"
       D="$(jq -r .dispatch <<<"$R")"; SHA="$(jq -r .sha <<<"$R")"; PT="$(jq -r .pt <<<"$R")"
       # Slack sometimes returns raw control characters that stop jq cold — strip them first.
-      M="$(sapi conversations.history --get --data-urlencode "channel=$CH" --data-urlencode "latest=$TS" -d inclusive=true -d limit=1 | LC_ALL=C tr '\000-\037' ' ')"
-      RX="$(jq -r --arg o "$OWNER" '[.messages[0].reactions[]? | select(.users | index($o)) | .name] | join(" ")' <<<"$M")"
+      # Tom's reaction counts on the prompt OR on the screenshot message for this MR: the
+      # upload finishes after the prompt is posted, so it lands just below it, and the ✅
+      # naturally goes on the picture (2026-09-22, !1246). Only Margie's own messages that
+      # name "!$IID" count, and only after the prompt was posted.
+      M="$(sapi conversations.history --get --data-urlencode "channel=$CH" --data-urlencode "oldest=$TS" -d inclusive=true -d limit=20 | LC_ALL=C tr '\000-\037' ' ')"
+      RX="$(jq -r --arg o "$OWNER" --arg ts "$TS" --arg iid "!$IID" --arg bot "$BOTUSER" \
+        '[.messages[]? | select(.ts == $ts or ((.user == $bot or .bot_id != null) and ((.text // "") + ((.files // []) | map(.title // "") | join(" ")) | contains($iid))))
+          | .reactions[]? | select(.users | index($o)) | .name] | unique | join(" ")' <<<"$M")"
       [ -z "$RX" ] && continue
       reply() { sapi chat.postMessage --get --data-urlencode "channel=$CH" --data-urlencode "thread_ts=$TS" --data-urlencode "text=$1" >/dev/null; }
       if printf '%s' " $RX " | grep -qE ' (white_check_mark|heavy_check_mark|ballot_box_with_check) '; then
