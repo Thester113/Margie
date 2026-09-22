@@ -34,6 +34,10 @@
 #                                             get it in his Slack DM now, and does he need to act?)
 #   jev.sh preamble                         stdin = a reply's first paragraph
 #                                           → yes | no<TAB>p  (the model narrating its own process?)
+#   jev.sh correction                       stdin = {"margie_said":…,"owner_replied":…}
+#                                           → correction | other<TAB>confidence (write a lesson?)
+#   jev.sh agree                            stdin = {"truth":…,"answer":…}
+#                                           → agree | contradict | unclear<TAB>confidence (evals)
 #   jev.sh notion                           stdin = a question to Margie
 #                                           → docs | none<TAB>confidence  (read Amby's Notion first?)
 #   jev.sh outcome <decision> <what>        log what the CALLER did with an answer
@@ -212,6 +216,28 @@ case "$cmd" in
       "criteria":{"true":"Self-narration about its own work or readiness, with no information the reader needs","false":"Part of the answer: it tells the reader a fact, a result, a status, a question, or a next step for them"}}}')" || exit $?
     printf '%s\n' "$R" | jq -r '.answers.narration.noul | if . >= 0.5 then "yes\t\(.)" else "no\t\(.)" end' ;;
 
+  # Tom's reply to what Margie just said: is he CORRECTING her (she got a fact, a ticket,
+  # a status or her behaviour wrong), or just carrying on? A correction makes her fix it
+  # and write a lesson (lessons.sh) so it doesn't recur. state = {margie_said, owner_replied}.
+  correction)
+    R="$(ask '{"kind":{"type":"choice",
+      "instructions":"Margie (an assistant) said margie_said; her owner replied owner_replied. Is the owner correcting her?",
+      "criteria":{
+        "correction":"Yes: he says she got something wrong — a wrong fact, ticket, number or status, a wrong assumption, or the wrong way of doing something — or tells her how it should have been done",
+        "other":"No: a new request, a follow-up question, an approval or decline, thanks, or more information that does not say she was wrong"}}}')" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.kind | "\(.choice)\t\(.confidence)"' ;;
+
+  # Eval grading: does Margie's answer agree with the known truth? state = JSON
+  # {truth, answer}. Used by evals.py; a contradiction is a factual regression.
+  agree)
+    R="$(ask '{"verdict":{"type":"choice",
+      "instructions":"The state has a TRUTH (a fact known to be correct) and an ANSWER an assistant gave to a question about it. Does the answer agree with the truth?",
+      "criteria":{
+        "agree":"The answer states the same fact as the truth (same ticket/MR, same status), even if worded differently or with extra detail",
+        "contradict":"The answer states something the truth contradicts: a different ticket or MR, the opposite status (live vs not live, merged vs not merged), or wrong numbers",
+        "unclear":"The answer does not say either way (evades, says it cannot tell, or asks a question back)"}}}')" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.verdict | "\(.choice)\t\(.confidence)"' ;;
+
   # What the caller DID with an answer — the half of the record the log was missing.
   outcome)
     [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: jev.sh outcome <decision> <what>" >&2; exit 64; }
@@ -336,6 +362,15 @@ ERROR: Job failed: exit code 1'
     expect preamble yes <<< 'Now I have the full picture. Let me put it together.'
     expect preamble no <<< 'PT-1461 is in QA — the MR should open within the hour.'
     expect preamble no <<< 'Yes — !1227 merged at 16:39 and deployed at 16:58.'
+    expect correction correction <<< '{"margie_said":"The hand-raiser count fix is PT-1462, not live yet.","owner_replied":"no, the count fix is PT-1461 and it merged this morning"}'
+    expect correction correction <<< '{"margie_said":"Kicked tick to retry the pipeline — no output back, which is normal.","owner_replied":"stop using harness jargon with me, just say what you did"}'
+    expect correction correction <<< '{"margie_said":"It sets move_score, amby_uid and the source fields, per write_back.ex.","owner_replied":"that is not how I want it — say it in plain words for someone who has never seen the code, no internal keys"}'
+    expect correction other <<< '{"margie_said":"!1227 is green and reviewed — merge it?","owner_replied":"merge 1227"}'
+    expect correction other <<< '{"margie_said":"PT-1461 merged as !1228 and is live.","owner_replied":"great, whats next on the epic?"}'
+    expect agree agree <<< '{"truth":"PT-1461 (Hand-raiser count names the current filter) merged as !1228 and is live in production.","answer":"The count fix is PT-1461 — it merged as !1228 and it is in production since the 17:40 deploy."}'
+    expect agree contradict <<< '{"truth":"PT-1461 (Hand-raiser count names the current filter) merged as !1228 and is live in production.","answer":"The hand-raiser count fix is PT-1462, MR !1229 — not live yet, it is waiting on Tom."}'
+    expect agree contradict <<< '{"truth":"PT-1472 is live in production.","answer":"PT-1472 is merged but not deployed yet."}'
+    expect agree unclear <<< '{"truth":"PT-1472 is live in production.","answer":"I will check with Tom and get back to you."}'
     expect "ticket PT-1004" work_existing <<< 'Fix PT-1004: the enrichment worker still retries dead Google tokens forever. Stop after the third invalid_grant and mark the account.'
     expect "ticket PT-1004" work_existing <<< 'PT-1004 shipped but the retry cap is not applied to calendar sync — finish it so both syncs stop after three invalid_grant answers.'
     expect "ticket PT-1412" context_only <<< 'Gaps found walking the Homie flow on prod. Do NOT duplicate what is already in flight: PT-1412 auto-designates the 7 write-back fields. 1. No seeded role can receive hand-raisers — seed an Agent role. 2. The upload form forgets the connection you picked.'
@@ -343,5 +378,5 @@ ERROR: Job failed: exit code 1'
     echo "$((N-FAIL))/$N passed"; [ "$FAIL" = 0 ] ;;
 
   *)
-    echo "usage: jev.sh ask '<questions>' [state] | session | mention <who> [owner] | danger | ticket <PT-n> | ci_failure | audience [owner] | notice | notion | preamble | outcome <decision> <what> | check | auto | status" >&2; exit 64 ;;
+    echo "usage: jev.sh ask '<questions>' [state] | session | mention <who> [owner] | danger | ticket <PT-n> | ci_failure | audience [owner] | notice | notion | preamble | agree | correction | outcome <decision> <what> | check | auto | status" >&2; exit 64 ;;
 esac

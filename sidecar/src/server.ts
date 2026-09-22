@@ -203,7 +203,9 @@ function startPollers() {
     ["deploy", "deploy.sh check", 60000],
     ["regressions", "regressions.sh auto", 300000],   // proactive regression sweep of owned code (config regression_scan)
     ["jev-check", "jev.sh auto", 300000],
-    ["tom-ping", "tom-ping.sh flush", 60000],       // notices worth Tom's attention → one Slack DM (Jev decides which)             // Jev fixture self-test: nightly and when jev-latest moves; Slacks Tom only on FAIL
+    ["tom-ping", "tom-ping.sh flush", 60000],
+    ["approvals", "approve.sh poll", 30000],        // Tom's ✅/❌ reactions on UI-MR approval messages → merge / hold
+    ["evals", "evals.sh auto", 600000],             // nightly answer evals (runs once a day after 02:00); Slacks Tom only on a regression       // notices worth Tom's attention → one Slack DM (Jev decides which)             // Jev fixture self-test: nightly and when jev-latest moves; Slacks Tom only on FAIL
     ["status-sync", "status-sync.sh push", 600000],   // back Margie's state up to Notion every 10 min        // watch a production deploy Tom triggers     // a coding session waiting on a human
   ];
   let extra: Array<{ name?: string; cmd?: string; every?: unknown }> = [];

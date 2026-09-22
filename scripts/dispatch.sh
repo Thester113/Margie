@@ -386,6 +386,61 @@ next_child() { # next_child <parent dir> → key of the first ticket not yet sta
     [ -d "$(child_dir "$d" "$key")" ] || { echo "$key"; return 0; }
   done; echo ""
 }
+# ── Parallel epic tickets (Tom, 2026-09-22) ─────────────────────────────────────────────
+# An epic used to run one ticket at a time. Now every ready ticket starts, up to
+# epic_parallel (default 2) per epic and max_coding_sessions (default 4) overall, when:
+# its depends_on tickets are merged, AND the files it touches (its breakdown scope lines)
+# don't overlap any ticket already running. A ticket whose scope names no paths is treated
+# as overlapping everything (fail closed): it only starts when nothing else is running.
+# Deterministic — paths and states are fields, no judgment involved.
+ticket_paths() { # ticket_paths <parent dir> <key> → one repo path per line, from its scope
+  jq -r --arg k "$2" '.tickets[] | select(.key==$k) | (.scope // [])[]' "$1/breakdown.json" 2>/dev/null \
+    | grep -oE '^[[:space:]]*`?[A-Za-z0-9_.@-]+(/[A-Za-z0-9_.@*{}-]+)+/?' | sed 's/^[[:space:]]*`\{0,1\}//; s/[*{].*$//' | sort -u
+}
+paths_overlap() { # paths_overlap "<paths A>" "<paths B>" → 0 when they share a file or directory
+  [ -z "$1" ] || [ -z "$2" ] && return 0
+  local a b
+  while IFS= read -r a; do [ -z "$a" ] && continue
+    while IFS= read -r b; do [ -z "$b" ] && continue
+      case "$a" in "$b"*) return 0 ;; esac; case "$b" in "$a"*) return 0 ;; esac
+    done <<< "$2"
+  done <<< "$1"
+  return 1
+}
+live_coding_sessions() { "${MARGIE_TMUX:-$(command -v tmux)}" list-sessions -F '#{session_name}' 2>/dev/null | grep -c '^margie-margie-' ; }
+schedule_children() { # schedule_children <parent dir> → starts what's ready; prints started keys, or ALLDONE
+  local d="$1" key c cst dep ok mine started="" rpaths="" nrun=0 all_closed=1 cap gcap
+  cap="$(cfgd epic_parallel 2)"; gcap="$(cfgd max_coding_sessions 4)"
+  local keys; keys="$(jq -r '.tickets[] | select((.spike // false)|not) | .key' "$d/breakdown.json")"
+  for key in $keys; do
+    c="$(child_dir "$d" "$key")"; if [ -d "$c" ]; then cst="$(st "$c")"; else cst="not started"; fi
+    [ "$cst" = closed ] || all_closed=0
+    case "$cst" in closed|"not started"|filed) ;; *) nrun=$((nrun+1)); rpaths="$rpaths
+$(ticket_paths "$d" "$key")" ;; esac
+  done
+  [ "$all_closed" = 1 ] && { echo ALLDONE; return 0; }
+  for key in $keys; do
+    [ "$nrun" -ge "$cap" ] && break
+    [ "$(live_coding_sessions)" -ge "$gcap" ] && break
+    c="$(child_dir "$d" "$key")"; if [ -d "$c" ]; then cst="$(st "$c")"; else cst="not started"; fi
+    case "$cst" in "not started"|filed) ;; *) continue ;; esac
+    ok=1
+    for dep in $(jq -r --arg k "$key" '.tickets[] | select(.key==$k) | (.depends_on // [])[]' "$d/breakdown.json"); do
+      [ -d "$(child_dir "$d" "$dep")" ] && [ "$(st "$(child_dir "$d" "$dep")")" = closed ] && continue
+      # a spike dependency counts as met once answered
+      [ -f "$d/spike-resolved-$dep" ] && continue
+      jq -e --arg k "$dep" '.tickets[] | select(.key==$k) | (.spike // false) and (((.needs_from_owner // []) | length) == 0)' "$d/breakdown.json" >/dev/null 2>&1 && continue
+      ok=0; break
+    done
+    [ "$ok" = 1 ] || continue
+    mine="$(ticket_paths "$d" "$key")"
+    if [ "$nrun" -gt 0 ] && paths_overlap "$mine" "$(printf '%s\n' "$rpaths" | sed '/^$/d')"; then continue; fi
+    [ "${SCHEDULE_DRY:-0}" = 1 ] || start_child "$d" "$key" >/dev/null 2>&1
+    nrun=$((nrun+1)); rpaths="$rpaths
+$mine"; started="$started $key"
+  done
+  echo "${started# }"
+}
 start_child() { # start_child <parent dir> <key>  → file+implement the child (branch from fresh main)
   local d="$1" key="$2" c; c="$(make_child "$d" "$key")"
   archive_draft "$c"   # the child ticket is already filed; drop its "Draft —" preview
@@ -707,7 +762,7 @@ case "$cmd" in
       SESS_SP="$(jq -r '[.tickets[] | select((.spike // false) and (((.needs_from_owner // []) | length) == 0)) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
       [ -n "$OWNER_SP" ] && echo "On you (spike needs YOUR input, not automated): $OWNER_SP."
       [ -n "$SESS_SP" ] && echo "Code-investigation spike(s) — the sessions resolve these, not you: $SESS_SP."
-      K="$(next_child "$D")"; [ -n "$K" ] && start_child "$D" "$K"
+      schedule_children "$D" >/dev/null
     else
       "$0" implement "$(basename "$D")"
     fi
@@ -905,6 +960,19 @@ case "$cmd" in
     for D in "$MDIR"/d-*; do
       [ -d "$D" ] || continue
       S="$(st "$D")"
+      # Parallel epic tickets: an epic that already has a ticket running gets any other
+      # ready, non-overlapping ticket started too (schedule_children). An epic with nothing
+      # running is stalled or paused — it only restarts on Tom's word (dispatch.sh schedule).
+      case "$(basename "$D")" in *--*) ;; *)
+        if [ "$S" = implementing ] && has_breakdown "$D" && [ "$(cfgd epic_parallel 2)" -gt 1 ]; then
+          RUNNING_KIDS=0
+          for c in "$D"--*; do [ -d "$c" ] || continue; case "$(st "$c")" in implementing|qa-running|qa-pass|qa-fail) RUNNING_KIDS=$((RUNNING_KIDS+1)) ;; esac; done
+          if [ "$RUNNING_KIDS" -gt 0 ]; then
+            NEWK="$(schedule_children "$D")"
+            case "$NEWK" in ""|ALLDONE) ;; *) announce "Started $NEWK in $(jq -r .pt "$D/ticket.json") alongside what's already running — different files, no dependency waiting." ;; esac
+          fi
+        fi ;;
+      esac
       if [ -f "$D/replan-pending" ] && [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "RUNNING" ] \
          && [ $(( $(date +%s) - $(cat "$D/planner-started" 2>/dev/null || echo 0) )) -ge 1200 ]; then
         [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md" "$D/breakdown.json" "$D/breakdown.md" "$D/breakdown-running"  # a re-plan invalidates the ticket breakdown
@@ -1331,11 +1399,15 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     echo "$SHA" > "$D/ui-verified-sha"; ui_patch_id "$WT" "$REPO_NAME" > "$D/ui-verified-patch"
                     open "$D/ui-shot.png" >/dev/null 2>&1 || true
                     METHOD="in the simulator"; is_web_ui_change "$WT" "$REPO_NAME" && METHOD="in a browser"
-                    UIMSG="UI MR !$IID ($PT) is green and ready — I verified it $METHOD (screenshot attached). Review it and say \"merge\" when it looks right. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
+                    UIMSG="UI MR !$IID ($PT) is green and ready — I checked it $METHOD (screenshot attached). React ✅ on the next message to merge it, or ❌ to hold it. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
                     # Upload the screenshot INTO Slack (files:write) so Tom reviews it there, not only
                     # on his Mac; fall back to a text ping if the upload fails. Detached: the tick
                     # never waits on Slack.
-                    slack_bg upload "$D/ui-shot.png" --to "@$(cfgd owner_first_name Tom)" --comment "$UIMSG" -- send "@$(cfgd owner_first_name Tom): $UIMSG (screenshot is open on your Mac.)"
+                    # Screenshot first, then the one-line ✅/❌ prompt tied to this MR and commit
+                    # (approve.sh); detached so the tick never waits on Slack.
+                    ( { "$DIR/slack.sh" upload "$D/ui-shot.png" --to "@$(cfgd owner_first_name Tom)" --comment "$UIMSG" >/dev/null 2>&1 \
+                        || "$DIR/slack.sh" send "@$(cfgd owner_first_name Tom): $UIMSG (screenshot is open on your Mac.)" >/dev/null 2>&1; } \
+                      && "$DIR/approve.sh" post "$(basename "$D")" "$IID" "$SHA" >/dev/null 2>&1 ) < /dev/null > /dev/null 2>&1 &
                     announce "MR !$IID for $PT is a UI/UX change — I verified it $METHOD and captured a screenshot (open on your Mac, and I pinged you on Slack). I won't merge a UI/UX change without your eyes: say \"merge\" when it looks right."
                   elif { [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" != "$SHA" ] || ui_verify_stale "$D"; } && web_review_slot_free "$D" "$WT" "$REPO_NAME"; then
                     if [ "$(cat "$D/ui-verify-kicked" 2>/dev/null)" = "$SHA" ]; then
@@ -1448,8 +1520,9 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
                 if [ -s "$D/parent" ]; then
                   PD="$MDIR/$(cat "$D/parent")"
                   if [ -d "$PD" ]; then
-                    K="$(next_child "$PD")"
-                    if [ -n "$K" ]; then announce "Next ticket for $(jq -r .pt "$PD/ticket.json"): $K — starting it now."; start_child "$PD" "$K" >/dev/null 2>&1
+                    K="$(schedule_children "$PD")"
+                    if [ "$K" != ALLDONE ]; then
+                      [ -n "$K" ] && announce "Next for $(jq -r .pt "$PD/ticket.json"): started $K."
                     else
                       "$DIR/notion.sh" ticket status "$(jq -r .pt "$PD/ticket.json")" "Done" >/dev/null 2>&1; st "$PD" closed
                       announce "All tickets under $(jq -r .pt "$PD/ticket.json") are merged — umbrella closed.$( SP="$(jq -r '[.tickets[] | select(.spike // false) | .key] | join(", ")' "$PD/breakdown.json")"; [ -n "$SP" ] && echo " Still on you: $SP.")"
@@ -1534,6 +1607,17 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
       fi
     fi
     "$DIR/mr.sh" merge "!$IID" --repo "$WT" ;;
+  schedule)
+    # Start every ready ticket of an epic that fits (see schedule_children); --dry lists them.
+    need_d "${1:-latest}"
+    has_breakdown "$D" || { echo "That dispatch isn't an epic." >&2; exit 1; }
+    [ "${2:-}" = "--dry" ] && export SCHEDULE_DRY=1
+    R="$(schedule_children "$D")"
+    case "$R" in
+      ALLDONE) echo "Every ticket in $(jq -r .pt "$D/ticket.json") is merged." ;;
+      "") echo "Nothing ready to start in $(jq -r .pt "$D/ticket.json") — waiting on running tickets, dependencies, or file overlap." ;;
+      *) echo "$([ "${SCHEDULE_DRY:-0}" = 1 ] && echo "Would start" || echo "Started") in $(jq -r .pt "$D/ticket.json"): $R" ;;
+    esac ;;
   __make_child)   # internal: build (not start) the child dispatch for a ticket key
     need_d "${1:-latest}"; make_child "$D" "${2:?key}" ;;
   __next_child)

@@ -191,5 +191,9 @@
   "slack_ping": "on",
   "agent_autoreply": "on",
   "agent_autoreply_per_hour": 6,
-  "_slack_extension": "slack_ping on|off: Jev-chosen background notices DM'd to the owner (tom-ping.sh). agent_autoreply on|off + agent_autoreply_per_hour: Margie answers other agents herself (agent-messages.sh auto), read-only, NEEDS TOM flagged."
+  "_slack_extension": "slack_ping on|off: Jev-chosen background notices DM'd to the owner (tom-ping.sh). agent_autoreply on|off + agent_autoreply_per_hour: Margie answers other agents herself (agent-messages.sh auto), read-only, NEEDS TOM flagged.",
+  "epic_parallel": 2,
+  "max_coding_sessions": 4,
+  "evals": "on",
+  "_parallel_and_evals": "epic_parallel: how many tickets of one epic may code at once (disjoint files, dependencies merged); max_coding_sessions: overall cap on live coding sessions. evals on|off: nightly answer evals (evals.sh auto)."
 }

@@ -253,7 +253,7 @@ function solicitedGo(cmd: string): boolean {
 /** In a colleague's conversation Margie may only touch shared project artefacts —
  *  never read other Slack chats, mail, messages, or private files. Deterministic,
  *  because a prompt rule alone let a colleague pump her for another group's chat. */
-const COLLEAGUE_ALLOW = /^(?:\S*\/)?(?:dispatch\.sh\s+(?:spec|show|status|amend|replan|describe|qa|tick)\b|research\.sh\s+(?:start|show|list)\b|notion\.sh\s+(?:ticket\s+read|find|rows|mine|schema|search|read)\b|forge\.sh\b|appsignal\.sh\b|deploy\.sh\s+(?:live|status)\b|claude-task\.sh\s+(?:status|result|state)\b)/;
+const COLLEAGUE_ALLOW = /^(?:\S*\/)?(?:dispatch\.sh\s+(?:spec|show|status|amend|replan|describe|qa|tick)\b|research\.sh\s+(?:start|show|list)\b|notion\.sh\s+(?:ticket\s+read|find|rows|mine|schema|search|read)\b|forge\.sh\b|appsignal\.sh\b|deploy\.sh\s+(?:live|status)\b|state\.sh\b|claude-task\.sh\s+(?:status|result|state)\b)/;
 function colleagueDenied(cmd: string): boolean {
   if (!currentTurn.speaker) return false;
   const first = cmd.trim().split(/\s*(?:\|\||&&|;|\|)\s*/)[0].trim();
@@ -263,7 +263,7 @@ function colleagueDenied(cmd: string): boolean {
 async function runBash(cmd: string, confirmed = false): Promise<string> {
   if (colleagueDenied(cmd)) {
     logBrain(`BASH DENIED (colleague turn, ${currentTurn.speaker}): ${cmd}`);
-    return "DENIED: in a colleague's conversation Margie only uses dispatch.sh (show/status/amend/qa), notion.sh ticket read/find/rows, forge.sh and appsignal.sh. She never reads other Slack conversations, mail or files for a colleague — answer from this conversation and the shared spec only, or say you'll take it to Tom.";
+    return "DENIED: in a colleague's conversation Margie only uses read-only lookups: state.sh, deploy.sh live|status, dispatch.sh (show/status/amend/qa), notion.sh search/read/ticket read/find/rows, forge.sh and appsignal.sh. She never reads other Slack conversations, mail or files for a colleague — answer from this conversation and the shared spec only, or say you'll take it to Tom.";
   }
   if (denied(cmd)) {
     logBrain(`BASH DENIED: ${cmd}`);
@@ -383,8 +383,10 @@ const SLACK_STYLE = `SLACK. Write the way a sharp colleague types in Slack, not 
     ticket (PT-1461) and MR (!1227) by number, the real state ("in QA", "pipeline green,
     waiting on your merge", "deployed 16:58"), a number or time when there is one, and
     what happens next and when. Usually 2–6 lines; one line when one line answers it.
-  - Look things up before answering (dispatch status, the ticket, the MR, Notion) rather
-    than answering from memory; never guess a status. Match the question to the EXACT
+  - Look things up before answering rather than answering from memory; never guess a
+    status. state.sh is the source of truth for work: state.sh ticket <PT-n or !n> (one
+    ticket: state, MR, what it waits on, live or not), state.sh waiting (what needs Tom),
+    state.sh summary (everything, with merged tickets by name). Notion for docs. Match the question to the EXACT
     ticket: a ticket that already merged no longer shows as in flight, so check the
     epic's merged tickets (dispatch.sh status <epic>) before saying something isn't done.
     If you can't pin down which ticket they mean, name the one you checked and ask —
@@ -398,6 +400,8 @@ const SLACK_STYLE = `SLACK. Write the way a sharp colleague types in Slack, not 
     pipeline", "waiting on your merge", "the check didn't come back yet").
   - Start with the answer itself — never with a line about your own process ("I have what
     I need", "Let me put this together").
+  - Use the names people see ("Amby Move Score", "the Integrations page"), not code
+    identifiers (move_score, IntegrationsLive).
   - Never paste a file path, script name or shell command. No nicknames or endearments,
     no "Great question", no "I hope this helps", no sign-offs, no emoji.
   - Asking for a go-ahead is one plain question with the facts that matter:
@@ -1455,10 +1459,34 @@ async function notionBrief(text: string): Promise<string> {
   } catch { return ""; }
 }
 
+/** Learn from corrections (Tom, 2026-09-22): when Tom's message corrects what she last said
+ *  in this conversation — Jev (jev.sh correction) at ≥0.7 — she fixes it AND writes a lesson
+ *  (lessons.sh → ~/.margie/process/lessons.md, injected into every later turn). Tom's own turns
+ *  only; unsure or unavailable → an ordinary turn. */
+async function correctionBrief(text: string, history: ChatMsg[], conv?: string): Promise<string> {
+  try {
+    const last = [...history].reverse().find((m) => m.role === "assistant" && m.conv === conv && m.content);
+    if (!last || text.length > 600) return "";
+    const state = JSON.stringify({ margie_said: String(last.content).slice(0, 700), owner_replied: text.slice(0, 500) });
+    const j = (await runBashRaw(`printf '%s' ${shq(state)} | ${SCRIPTS}/jev.sh correction`, { MARGIE_POLLER: "1" }, 8000)).trim().split("\t");
+    const p = Number(j[1] || 0);
+    if (j[0] !== "correction" || p < 0.4) return "";
+    if (p < 0.7) {
+      // Jev unsure: the brain decides — but a "noted, I won't do that again" must be backed by a lesson.
+      jevOutcome("correction", `brain-decides@${p}: ${text.slice(0, 60)}`);
+      return `\n\nTom may be correcting you or telling you how he wants things done. If he is, put it right, and back any "I won't do that again" with lessons.sh add "<what went wrong> → <the rule>" (one line, general, no names) — a promise without a lesson is forgotten next turn. If he isn't, answer normally.`;
+    }
+    jevOutcome("correction", `lesson@${p}: ${text.slice(0, 60)}`);
+    return `\n\nTOM IS CORRECTING YOU — his message says your last answer was wrong or done the wrong way. Put it right in this reply (no grovelling, one short acknowledgement at most), then record the lesson so it never recurs: run lessons.sh add "<what went wrong> → <the rule that prevents it>" — one line, general enough to apply next time, no customer or colleague names.`;
+  } catch { return ""; }
+}
+function shq(s: string): string { return `'${s.replace(/'/g, `'\\''`)}'`; }
+
 async function claudeTurn(rawText: string, history: ChatMsg[], source: string, conv?: string, speaker?: string, pub = false): Promise<string> {
   const { text, images } = extractImages(rawText);
   const briefNote = speaker ? "" : await preBrief(text);
   const notionNote = await notionBrief(speaker ? (text.match(/<<<([\s\S]*?)>>>/)?.[1] || text) : text);
+  const correctionNote = speaker ? "" : await correctionBrief(text, history, conv);
   if (images.length) logBrain(`IMAGES attached: ${images.map((i) => i.path).join(", ")}`);
   // With images the prompt is one user message with content blocks (streaming-input form).
   const prompt = images.length
@@ -1472,8 +1500,9 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
   const scope = (conv ? `This turn is from Slack conversation ${conv}${speaker ? `, spoken by ${speaker}` : ""}. Only what's in this transcript happened there; do not bring in other groups' messages or look them up. ` : "")
     + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns()
     + convNotes(conv)
+    + (speaker ? " YOUR LOOKUPS HERE (read-only, use them before answering — never say you can't confirm something they answer): state.sh ticket <PT-n or !n> | state.sh waiting | state.sh summary (work state, merged tickets by name, live or not); deploy.sh live <PT-n or !n> (is it in production); dispatch.sh show|status; notion.sh search \"<words>\" | read <id> | ticket read <PT>; forge.sh; appsignal.sh." : "")
     + (pub ? " PUBLIC ROOM: colleagues read this reply. Write for the room — no pet names, no aside to Tom, no asking Tom what to do here. If a decision is Tom's, say you'll check with him and stop; take the question to his DM (slack.sh dm) instead." : "");
-  const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}${briefNote}${notionNote}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally${briefNote ? "; your OWN earlier status answers are omitted because they may be stale — every fact comes from the CURRENT BRIEF above" : ""}):\n${transcript(briefNote ? history.filter((m) => m.role !== "assistant") : history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
+  const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}${briefNote}${notionNote}${correctionNote}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally${briefNote ? "; your OWN earlier status answers are omitted because they may be stale — every fact comes from the CURRENT BRIEF above" : ""}):\n${transcript(briefNote ? history.filter((m) => m.role !== "assistant") : history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
   try {
     const q = query({

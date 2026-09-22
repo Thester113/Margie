@@ -70,6 +70,33 @@
   (read-only brain turn as that agent; "NEEDS TOM:" flagged; digest to Tom;
   `agent_autoreply`, `agent_autoreply_per_hour`). `deploy.sh live <PT|!n>` is the only
   source for "is it in production". No "dearie" in any script output.
+- **One source of truth for work: `state.sh`** (`json|waiting|ticket <PT|!n>|summary`,
+  state.py). Reads the dispatch folders, GitLab's last SUCCESSFUL production deploy and
+  git ancestry; every ticket carries its MR, what it's waiting on, and live-or-not;
+  epics list merged tickets by name. Deterministic, read-only, allowed to colleagues.
+  Answers and evals read this, not prose status lines.
+- **Nightly answer evals (`evals.sh run|auto|last`, evals.py).** Questions generated from
+  state.sh each run (is <PT> live? where's the "<title words>" work? what's !n doing?
+  what's waiting on Tom?) plus fixed docs questions, asked as colleague "Eval" (isolated,
+  read-only), graded by fact checks + Jev `agree` + a style pass (no nicknames, paths,
+  tables, jargon, code identifiers). Poller runs once a day after 02:00; Slacks Tom only
+  on a factual failure or a drop. Add a question here whenever she gets something wrong.
+- **She learns from corrections (`lessons.sh add|list|drop`).** When Tom's own message
+  corrects what she just said (Jev `correction` ≥0.7; 0.4–0.7 → the brain decides), she
+  fixes it and writes one line to `~/.margie/process/lessons.md`, which is injected into
+  every turn. Tom's turns only; capped at 40.
+- **✅ to merge (`approve.sh post|poll`).** After a UI MR's screenshot reaches Tom's DM,
+  one line follows: "React ✅ to merge !n (PT), or ❌ to hold it." Tom's ✅ runs
+  `dispatch.sh merge` (all its gates still apply); ❌ writes hold-merge and asks what
+  should change; a new commit since the screenshot never merges. Only Tom's reaction
+  counts; prompts expire in 48 h. The reaction is the confirmation — no model composes
+  anything here.
+- **Parallel epic tickets (`schedule_children`, `dispatch.sh schedule <epic> [--dry]`).**
+  Every ready ticket starts — dependencies merged, and its breakdown-scope files don't
+  overlap a running sibling (no parseable paths = overlaps everything) — up to
+  `epic_parallel` (2) per epic and `max_coding_sessions` (4) overall. The tick adds
+  capacity only to epics that already have a ticket running; a stalled epic restarts
+  on Tom's word. The umbrella closes only when EVERY ticket is merged.
 - **Notion is her memory of what the team wrote (Tom, 2026-09-22).** Before each text
   turn `notionBrief()` reads any PT ticket named in the question, and — when Jev
   `notion` says the question needs docs — searches Notion and reads the best page into
@@ -183,6 +210,8 @@
   | `notion` docs/none | brain `notionBrief` | docs ≥0.75 → search + read the best page | no Notion context (a PT number is always read) |
   | `preamble` | brain, every text reply | narration ≥0.6 → drop the opening self-talk paragraph | reply as written |
   | `mention` (agents) | `agent-messages.sh auto` | no_reply ≥0.7 → acknowledge only | brain composes a reply |
+  | `correction` | brain, Tom's turns | ≥0.7 → fix + lessons.sh add; 0.4–0.7 → the brain decides | ordinary turn |
+  | `agree` | `evals.py` grading | contradict ≥0.7 → factual fail; anything but agree → "doesn't state the fact" | — |
 
   `jev.sh outcome <decision> <what>` (and `jevOutcome()` in TS) writes what the
   caller DID next to the answer in `~/.margie/jev.log` — grep `outcome` to see
@@ -192,7 +221,8 @@
 - **Confirm-first is code, not prose.** The sidecar's `OUTWARD` gate holds
   any send-on-Tom's-behalf command, makes the model read it back, and executes
   it verbatim only on Tom's short affirmative (regex, or Jev at ≥0.9) within
-  15 minutes; anything else drops it. The prompt-only rule was skipped by the model in testing.
+  15 minutes; anything else drops it. The one other confirmation is Tom's own ✅
+  reaction on an `approve.sh` message, which is tied to one MR and one commit. The prompt-only rule was skipped by the model in testing.
 
 ## Build & verify
 
