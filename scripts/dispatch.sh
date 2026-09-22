@@ -790,6 +790,9 @@ case "$cmd" in
       SESS_SP="$(jq -r '[.tickets[] | select((.spike // false) and (((.needs_from_owner // []) | length) == 0)) | .key + " " + .title] | join("; ")' "$D/breakdown.json")"
       [ -n "$OWNER_SP" ] && echo "On you (spike needs YOUR input, not automated): $OWNER_SP."
       [ -n "$SESS_SP" ] && echo "Code-investigation spike(s) — the sessions resolve these, not you: $SESS_SP."
+      # "go" is Tom's word for the whole epic: the tick must keep feeding it even when no
+      # slot is free right now (all coding sessions busy) — otherwise it never starts.
+      touch "$D/resumed"
       schedule_children "$D" >/dev/null
     else
       "$0" implement "$(basename "$D")"
@@ -1644,7 +1647,9 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
     R="$(schedule_children "$D")"
     case "$R" in
       ALLDONE) echo "Every ticket in $(jq -r .pt "$D/ticket.json") is merged." ;;
-      "") echo "Nothing ready to start in $(jq -r .pt "$D/ticket.json") — waiting on running tickets, dependencies, or file overlap." ;;
+      "") LIVE="$(live_coding_sessions)"; MAXC="$(cfgd max_coding_sessions 4)"
+          if [ "$LIVE" -ge "$MAXC" ]; then echo "Nothing started in $(jq -r .pt "$D/ticket.json") yet — all $MAXC coding slots are busy ($LIVE running). It starts as soon as one frees up."
+          else echo "Nothing ready to start in $(jq -r .pt "$D/ticket.json") — waiting on running tickets, dependencies, or file overlap."; fi ;;
       *) echo "$([ "${SCHEDULE_DRY:-0}" = 1 ] && echo "Would start" || echo "Started") in $(jq -r .pt "$D/ticket.json"): $R" ;;
     esac ;;
   __make_child)   # internal: build (not start) the child dispatch for a ticket key
