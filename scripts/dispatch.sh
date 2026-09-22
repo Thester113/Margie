@@ -415,7 +415,7 @@ schedule_children() { # schedule_children <parent dir> → starts what's ready; 
   for key in $keys; do
     c="$(child_dir "$d" "$key")"; if [ -d "$c" ]; then cst="$(st "$c")"; else cst="not started"; fi
     [ "$cst" = closed ] || all_closed=0
-    case "$cst" in closed|"not started"|filed) ;; *) nrun=$((nrun+1)); rpaths="$rpaths
+    case "$cst" in closed|"not started"|filed|start-failed) ;; *) nrun=$((nrun+1)); rpaths="$rpaths
 $(ticket_paths "$d" "$key")" ;; esac
   done
   [ "$all_closed" = 1 ] && { echo ALLDONE; return 0; }
@@ -423,7 +423,8 @@ $(ticket_paths "$d" "$key")" ;; esac
     [ "$nrun" -ge "$cap" ] && break
     [ "$(live_coding_sessions)" -ge "$gcap" ] && break
     c="$(child_dir "$d" "$key")"; if [ -d "$c" ]; then cst="$(st "$c")"; else cst="not started"; fi
-    case "$cst" in "not started"|filed) ;; *) continue ;; esac
+    case "$cst" in "not started"|filed|start-failed) ;; *) continue ;; esac
+    if [ "$cst" = start-failed ] && [ "$(cat "$c/start-attempts" 2>/dev/null || echo 0)" -ge 3 ]; then continue; fi
     ok=1
     for dep in $(jq -r --arg k "$key" '.tickets[] | select(.key==$k) | (.depends_on // [])[]' "$d/breakdown.json"); do
       [ -d "$(child_dir "$d" "$dep")" ] && [ "$(st "$(child_dir "$d" "$dep")")" = closed ] && continue
@@ -435,7 +436,10 @@ $(ticket_paths "$d" "$key")" ;; esac
     [ "$ok" = 1 ] || continue
     mine="$(ticket_paths "$d" "$key")"
     if [ "$nrun" -gt 0 ] && paths_overlap "$mine" "$(printf '%s\n' "$rpaths" | sed '/^$/d')"; then continue; fi
-    [ "${SCHEDULE_DRY:-0}" = 1 ] || start_child "$d" "$key" >/dev/null 2>&1
+    if [ "${SCHEDULE_DRY:-0}" != 1 ] && ! start_child "$d" "$key" >/dev/null 2>&1; then
+      echo "Couldn't start $( jq -r --arg k "$key" '.[] | select(.key==$k) | .pt' "$d/tickets.json" 2>/dev/null ) ($key): $(tail -1 "$c/start-failed" 2>/dev/null | cut -c1-160)" >&2
+      continue
+    fi
     nrun=$((nrun+1)); rpaths="$rpaths
 $mine"; started="$started $key"
   done
@@ -462,11 +466,16 @@ spec_text() { # spec_text <dir>  — spec.md plus the ticket breakdown when ther
 
 # Umbrella and child tickets move together through the lifecycle; spike tickets
 # (human verification work) are left where they are and named as blockers.
-status_all() { # status_all <dispatch dir> "<Status>"
+status_all() { # status_all <dispatch dir> "<Status>" [--umbrella-only]
+  # "In Progress" on an epic marks ONLY the umbrella: each child is marked when its own
+  # coding session actually starts (implement). Marking all of them at `go` left 21 unstarted
+  # tickets showing In Progress in Notion for days (2026-09-22) — the team read that as work.
   local d="$1" stt="$2" pt
+  [ "${3:-}" = "--umbrella-only" ] || { [ "$stt" = "In Progress" ] && [ -s "$d/breakdown.json" ]; } && local only=1
   pt="$(jq -r '.pt // empty' "$d/ticket.json" 2>/dev/null)"; [ -n "$pt" ] && "$DIR/notion.sh" ticket status "$pt" "$stt" >/dev/null 2>&1
   if [ -s "$d/epic.json" ]; then case "$stt" in "In Progress") "$DIR/notion.sh" epic status "$(jq -r .id "$d/epic.json")" Executing >/dev/null 2>&1 ;; Done) "$DIR/notion.sh" epic status "$(jq -r .id "$d/epic.json")" Done >/dev/null 2>&1 ;; Canceled) "$DIR/notion.sh" epic status "$(jq -r .id "$d/epic.json")" Backlog >/dev/null 2>&1 ;; esac; fi
   [ -s "$d/tickets.json" ] || return 0
+  [ "${only:-0}" = 1 ] && return 0
   for pt in $(jq -r --slurpfile b "$d/breakdown.json" '.[] | select(.key as $k | ($b[0].tickets[] | select(.key==$k) | .spike // false) | not) | .pt' "$d/tickets.json" 2>/dev/null); do
     "$DIR/notion.sh" ticket status "$pt" "$stt" >/dev/null 2>&1
   done
@@ -732,7 +741,16 @@ case "$cmd" in
     P="${P//'{{BRANCH}}'/$BRANCH}"
     P="${P//'{{MR_FILE}}'/$D/mr.md}"
     P="${P//'{{SPEC}}'/$(spec_text "$D")$(process_notes "$D")}"
-    KOUT="$("$DIR/kickoff-claude.sh" "$REPO" --worktree "$BRANCH" ${SUBDIR:+--subdir "$SUBDIR"} "$P")" || exit 1
+    # A kickoff that fails must never leave a ticket silently "filed" forever: PT-1421 and
+    # PT-1433 sat that way from 09-18/19 (the worktree-path bug) and two epics stalled
+    # with nobody told. Record the failure, say it, and let schedule_children retry (≤3).
+    if ! KOUT="$("$DIR/kickoff-claude.sh" "$REPO" --worktree "$BRANCH" ${SUBDIR:+--subdir "$SUBDIR"} "$P" 2>&1)"; then
+      N=$(( $(cat "$D/start-attempts" 2>/dev/null || echo 0) + 1 )); echo "$N" > "$D/start-attempts"
+      printf '%s' "$KOUT" | tail -3 > "$D/start-failed"; st "$D" start-failed
+      echo "Couldn't start the coding session for $PT (attempt $N): $(printf '%s' "$KOUT" | tail -1 | cut -c1-200)" >&2
+      exit 1
+    fi
+    rm -f "$D/start-failed" "$D/start-attempts"
     echo "$KOUT" | tail -1
     WT="$HOME/.margie/worktrees/$(basename "$REPO")__$(printf '%s' "$BRANCH" | tr '/ ' '--')"
     jq -n --arg branch "$BRANCH" --arg wt "$WT" '{branch:$branch, worktree:$wt}' > "$D/impl.json"
