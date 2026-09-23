@@ -39,6 +39,12 @@ api() { # api <METHOD> <path> [json]
 # The real page/database id is the last hex in the PATH.
 nid() { printf '%s' "$1" | sed 's/[?#].*//' | grep -oE '[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | tail -1 | tr -d '-'; }
 fail_if_error() { # fail_if_error <json>
+  # A non-JSON answer (Notion's gateway says "upstream request timeout" in plain text on a
+  # large create) is a failure too — it used to slip through and cascade into jq errors and
+  # a PATCH to /blocks//children (2026-09-23, the PT-1569 import epic's 118-block body).
+  if ! printf '%s' "$1" | jq -e . >/dev/null 2>&1; then
+    echo "Notion says: $(printf '%s' "${1:-no answer}" | head -c 200)" >&2; exit 1
+  fi
   if printf '%s' "$1" | jq -e '.object == "error"' >/dev/null 2>&1; then
     echo "Notion says: $(printf '%s' "$1" | jq -r '.message')" >&2; exit 1
   fi
@@ -102,9 +108,9 @@ append_blocks() { # append_blocks <block/page id> <children-json-array>
   n="$(printf '%s' "$ch" | jq 'length')"
   i=0
   while [ "$i" -lt "$n" ]; do
-    R="$(api2 PATCH "/blocks/$id/children" "$(printf '%s' "$ch" | jq -c --argjson i "$i" '{children: .[$i:$i+100]}')")"
+    R="$(api2 PATCH "/blocks/$id/children" "$(printf '%s' "$ch" | jq -c --argjson i "$i" '{children: .[$i:$i+20]}')")"
     fail_if_error "$R"
-    i=$((i + 100))
+    i=$((i + 20))
   done
 }
 # Resolve "PT-296" / "296" (ticket unique id) or a page id/url -> "id<TAB>url<TAB>PT-n"
@@ -271,7 +277,8 @@ EOF2
         desc "would create Epic \"$TITLE\" (status ${STATUS:-default}) linking tickets ${TICKETS:-none}"
         PROPS="$(jq -n --arg t "$TITLE" --arg st "$STATUS" --argjson tk "$(ticket_ids "$TICKETS")" '{Name:{title:[{type:"text",text:{content:$t}}]}} + (if $st != "" then {Status:{select:{name:$st}}} else {} end) + (if ($tk|length) > 0 then {Tickets:{relation:$tk}} else {} end)')"
         CH="$(md_blocks "$MD")"
-        R="$(api2 POST /pages "$(jq -n --arg ds "$ds" --argjson p "$PROPS" --argjson c "$CH" '{parent:{type:"data_source_id", data_source_id:$ds}, properties:$p, children: $c[0:100]}')")"; fail_if_error "$R"
+        R="$(api2 POST /pages "$(jq -n --arg ds "$ds" --argjson p "$PROPS" '{parent:{type:"data_source_id", data_source_id:$ds}, properties:$p}')")"; fail_if_error "$R"
+        [ "$(printf '%s' "$CH" | jq 'length')" -gt 0 ] && append_blocks "$(printf '%s' "$R" | jq -r .id)" "$CH"   # bare create + small appends (see ticket create)
         echo "Created Epic \"$TITLE\": $(printf '%s' "$R" | jq -r .url)"
         jq -cn --arg id "$(printf '%s' "$R" | jq -r .id)" --arg url "$(printf '%s' "$R" | jq -r .url)" '{id:$id, url:$url}' ;;
       status)
@@ -332,11 +339,14 @@ EOF2
           + ($epic | opt({Epic:{relation:[{id:.}]}}) // {})')"
         CH="$(md_blocks "$MD")"
         R="$(api2 POST /pages "$(jq -n --arg ds "$ds" --argjson p "$PROPS" --argjson c "$CH" \
-              '{parent:{type:"data_source_id", data_source_id:$ds}, properties:$p, children: $c[0:100]}')")"
+              '{parent:{type:"data_source_id", data_source_id:$ds}, properties:$p}')")"
         fail_if_error "$R"
         PID="$(printf '%s' "$R" | jq -r .id)"; PURL="$(printf '%s' "$R" | jq -r .url)"
         PT="$(printf '%s' "$R" | jq -r '(.properties.ID.unique_id.prefix // "T") + "-" + ((.properties.ID.unique_id.number // 0)|tostring)')"
-        REST="$(printf '%s' "$CH" | jq -c '.[100:]')"
+        # Create the page bare, then append the body in small slices: Notion answers a create
+        # that carries a long body with a Cloudflare "Attention Required" page (2026-09-23,
+        # PT-1581 - the same body appended in 20-block slices went through).
+        REST="$CH"
         [ "$(printf '%s' "$REST" | jq 'length')" -gt 0 ] && append_blocks "$PID" "$REST"
         echo "Created $PT \"$TITLE\": $PURL"
         jq -cn --arg pt "$PT" --arg id "$PID" --arg url "$PURL" '{pt:$pt, id:$id, url:$url}' ;;
@@ -452,11 +462,11 @@ EOF2
         desc "would create a page \"$TITLE\" under $(printf '%.24s' "$PARENT")…"
         PARENT_ID="$(nid "$PARENT")"
         CH="$(md_blocks "$MD")"
-        R="$(api2 POST /pages "$(jq -n --arg p "$PARENT_ID" --arg t "$TITLE" --argjson c "$CH" \
-              '{parent:{page_id:$p}, properties:{title:{title:[{type:"text",text:{content:$t}}]}}, children: $c[0:100]}')")"
+        R="$(api2 POST /pages "$(jq -n --arg p "$PARENT_ID" --arg t "$TITLE" \
+              '{parent:{page_id:$p}, properties:{title:{title:[{type:"text",text:{content:$t}}]}}}')")"
         fail_if_error "$R"
         PID="$(printf '%s' "$R" | jq -r .id)"
-        REST="$(printf '%s' "$CH" | jq -c '.[100:]')"
+        REST="$CH"   # bare create + small appends (see ticket create)
         [ "$(printf '%s' "$REST" | jq 'length')" -gt 0 ] && append_blocks "$PID" "$REST"
         echo "Created page \"$TITLE\": $(printf '%s' "$R" | jq -r .url)" ;;
       append)
