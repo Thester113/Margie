@@ -988,6 +988,21 @@ case "$cmd" in
     # to start again.
     [ -f "$HOME/.margie/paused" ] && { echo "Paused: $(head -1 "$HOME/.margie/paused")"; exit 0; }
     [ "${1:-}" = "--announce" ] && export MARGIE_ANNOUNCE=1
+    # Fairness (2026-09-23): an epic Tom said go on that has NOTHING running gets the first
+    # free slot. Otherwise the loop below, walking oldest-first, lets older epics take every
+    # slot that frees up for their 2nd parallel ticket and a newer epic never starts (PT-1510
+    # sat 4 h at 0 started). Deterministic — counts and markers, no Jev.
+    if [ "$(cfgd epic_parallel 2)" -gt 1 ]; then
+      for D in "$MDIR"/d-*; do
+        case "$(basename "$D")" in *--*) continue ;; esac
+        [ -f "$D/resumed" ] && [ "$(st "$D")" = implementing ] && has_breakdown "$D" || continue
+        RUNNING_KIDS=0
+        for c in "$D"--*; do [ -d "$c" ] || continue; case "$(st "$c")" in implementing|qa-running|qa-pass|qa-fail) RUNNING_KIDS=$((RUNNING_KIDS+1)) ;; esac; done
+        [ "$RUNNING_KIDS" -eq 0 ] || continue
+        NEWK="$(schedule_children "$D")"
+        case "$NEWK" in ""|ALLDONE) ;; *) announce "Started $NEWK in $(jq -r .pt "$D/ticket.json") — it had nothing running, so it got the first free coding slot." ;; esac
+      done
+    fi
     for D in "$MDIR"/d-*; do
       [ -d "$D" ] || continue
       S="$(st "$D")"
