@@ -1583,6 +1583,15 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
                 # leftover twin of a merged ticket held a coding slot (PT-1555, 2026-09-23)
                 SN="margie-$(printf '%s' "$BR" | tr '/ ' '--')"
                 for t in $(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -E "^${SN}(-[0-9]+)?$"); do tmux kill-session -t "$t" 2>/dev/null || true; done
+                # …and its Docker leftovers: each session's test DB / warm app containers and
+                # their volumes stayed forever — 154 containers and ~90 GB of volumes filled the
+                # Docker VM and blocked every session's tests (2026-09-23). Match on the ticket
+                # number as the compose projects name it (pt-1558-…, pt1610-…). Deterministic — no Jev.
+                PTN="$(printf '%s' "$PT" | tr -dc '0-9')"
+                if [ -n "$PTN" ] && command -v docker >/dev/null 2>&1; then
+                  for c in $(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -iE "(^|[^0-9])pt-?${PTN}([^0-9]|$)"); do docker rm -f "$c" >/dev/null 2>&1 || true; done
+                  for v in $(docker volume ls -q --filter dangling=true 2>/dev/null | grep -iE "(^|[^0-9])pt-?${PTN}([^0-9]|$)"); do docker volume rm "$v" >/dev/null 2>&1 || true; done
+                fi
                 announce "$PT merged and closed."
                 # a child finished → start the next ticket, or close the umbrella after the last
                 if [ -s "$D/parent" ]; then
