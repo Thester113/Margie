@@ -409,11 +409,17 @@ paths_overlap() { # paths_overlap "<paths A>" "<paths B>" → 0 when they share 
 }
 live_coding_sessions() { # coding sessions that use a slot — one parked on a held MR (e.g. waiting
   # for a scheduled release) is idle by design and doesn't count
-  local n=0 s pt d
+  local n=0 s pt d h
   for s in $("${MARGIE_TMUX:-$(command -v tmux)}" list-sessions -F '#{session_name}' 2>/dev/null | grep '^margie-margie-'); do
     pt="$(printf '%s' "$s" | grep -oE 'PT-[0-9]+' | head -1)"
     d="$(grep -l "\"pt\":\"$pt\"" "$MDIR"/d-*/ticket.json 2>/dev/null | head -1)"
     [ -n "$d" ] && [ -s "$(dirname "$d")/hold-merge" ] && continue
+    # A UI MR whose screenshot for its head commit is already with Tom is done coding and
+    # waiting on his ✅ — overnight two of these held half the slots (2026-09-23).
+    if [ -n "$d" ]; then d="$(dirname "$d")"
+      h="$(jq -r '.sha // empty' "$d/mr-check.json" 2>/dev/null)"
+      [ -n "$h" ] && [ "$(cat "$d/ui-verified-sha" 2>/dev/null)" = "$h" ] && [ "$(jq -r '.pipeline // empty' "$d/mr-check.json" 2>/dev/null)" = success ] && continue
+    fi
     n=$((n+1))
   done
   echo "$n"
