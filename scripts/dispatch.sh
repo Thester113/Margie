@@ -426,6 +426,9 @@ live_coding_sessions() { # coding sessions that use a slot — one parked on a h
 }
 schedule_children() { # schedule_children <parent dir> → starts what's ready; prints started keys, or ALLDONE
   local d="$1" key c cst dep ok mine started="" rpaths="" nrun=0 all_closed=1 cap gcap
+  # Focus mode (Tom, 2026-09-23): an epic with a `paused` marker starts nothing new; its
+  # running tickets finish. `dispatch.sh focus <epic…>` / `dispatch.sh unfocus` manage it.
+  [ -f "$d/paused" ] && { echo ""; return 0; }
   cap="$(cfgd epic_parallel 2)"; gcap="$(cfgd max_coding_sessions 4)"
   local keys; keys="$(jq -r '.tickets[] | select((.spike // false)|not) | .key' "$d/breakdown.json")"
   for key in $keys; do
@@ -1671,6 +1674,18 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
       fi
     fi
     "$DIR/mr.sh" merge "!$IID" --repo "$WT" ;;
+  focus)
+    # focus <epic id|PT>… — only these epics start new tickets; every other implementing epic
+    # gets a `paused` marker (its running tickets finish). Deterministic — no Jev.
+    [ $# -gt 0 ] || { echo "usage: dispatch.sh focus <epic id|PT>… | unfocus" >&2; exit 1; }
+    KEEP=""; for a in "$@"; do need_d "$a"; KEEP="$KEEP $(basename "$D")"; done
+    for E in "$MDIR"/d-*; do case "$(basename "$E")" in *--*) continue ;; esac
+      has_breakdown "$E" && [ "$(st "$E")" = implementing ] || continue
+      case " $KEEP " in *" $(basename "$E") "*) rm -f "$E/paused"; touch "$E/resumed"; echo "focus: $(jq -r .pt "$E/ticket.json")" ;;
+        *) date -u +%FT%TZ > "$E/paused"; echo "paused: $(jq -r .pt "$E/ticket.json")" ;; esac
+    done ;;
+  unfocus)
+    for E in "$MDIR"/d-*; do [ -f "$E/paused" ] && rm -f "$E/paused" && echo "resumed: $(jq -r .pt "$E/ticket.json")"; done ;;
   schedule)
     # Start every ready ticket of an epic that fits (see schedule_children); --dry lists them.
     need_d "${1:-latest}"
