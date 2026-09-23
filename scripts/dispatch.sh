@@ -1579,7 +1579,10 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
                 status_all "$D" "Done"
                 st "$D" closed
                 # Retire the coding session — its ticket is merged, nothing left to do.
-                tmux kill-session -t "margie-$(printf '%s' "$BR" | tr '/ ' '--')" 2>/dev/null || true
+                # also its "-2", "-3"… relaunch twins (kickoff suffixes a name that's taken) — a
+                # leftover twin of a merged ticket held a coding slot (PT-1555, 2026-09-23)
+                SN="margie-$(printf '%s' "$BR" | tr '/ ' '--')"
+                for t in $(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -E "^${SN}(-[0-9]+)?$"); do tmux kill-session -t "$t" 2>/dev/null || true; done
                 announce "$PT merged and closed."
                 # a child finished → start the next ticket, or close the umbrella after the last
                 if [ -s "$D/parent" ]; then
