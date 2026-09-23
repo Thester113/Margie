@@ -94,6 +94,17 @@
   composes anything here. An open prompt is also the solicitation for Tom's typed "merge":
   the brain runs the held merge without a second read-back when it targets that prompt's MR
   and it is the only open prompt or Tom named the number (`approvalSolicited`, brain.ts).
+- **Margie doesn't get stuck (Tom, 2026-09-23) — guards in `dispatch.sh tick`, all
+  deterministic:** a "go" given before the spec/breakdown is ready is remembered
+  (`go-pending`) and run by the tick when ready, retried every 10 min, Tom Slacked after 3
+  failures; an approved epic with nothing running gets the first free slot and blocks other
+  epics' 2nd tickets while starved (fairness pre/post pass, also on the merge path);
+  `dispatch.sh focus <epic…>` / `unfocus` pause every other epic's new starts; merge retires
+  the ticket's tmux twins and Docker containers/volumes, and every 30 min Docker volumes over
+  30 GB trigger a cleanup of closed tickets' leftovers; a UI MR waiting only on Tom's ✅
+  doesn't hold a slot; an approved epic with ready tickets and no start/finish for 2 h
+  Slacks Tom. `notion.sh` creates pages bare and appends bodies in 20-block slices (Notion's
+  Cloudflare rejected long creates) and fails on non-JSON answers.
 - **Parallel epic tickets (`schedule_children`, `dispatch.sh schedule <epic> [--dry]`).**
   Every ready ticket starts — dependencies merged, and its breakdown-scope files don't
   overlap a running sibling (no parseable paths = overlaps everything) — up to

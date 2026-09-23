@@ -779,11 +779,14 @@ case "$cmd" in
 
   go)
     need_d "${1:-latest}"
-    spec_ready "$D" || { echo "The spec isn't ready yet." >&2; exit 1; }
+    # Tom's "go" before the spec is ready is remembered (go-pending) and the tick runs it the
+    # moment the spec is ready — it used to be refused and depended on someone re-saying it.
+    spec_ready "$D" || { date -u +%FT%TZ > "$D/go-pending"; echo "Noted — I'll file it and start it the moment the spec is ready."; exit 0; }
     TITLE="$(jq -r .title "$D/spec.json")"
     case "$(jq -r '.estimate // ""' "$D/spec.json")" in L|XL)
       if ! has_breakdown "$D"; then
         [ -f "$D/breakdown-running" ] || "$0" breakdown "$(basename "$D")" >/dev/null 2>&1
+        date -u +%FT%TZ > "$D/go-pending"   # the tick finishes the go once the ticket list is up
         echo "That spec is $(jq -r .estimate "$D/spec.json") — I'm splitting it into tickets first so the MRs stay small. Say \"go\" again once the ticket list is up (a few minutes)."; exit 1
       fi ;;
     esac
@@ -1021,6 +1024,59 @@ case "$cmd" in
         esac
       done
     }
+    # --- keep-moving guards (Tom 2026-09-23: "make sure Margie doesn't get stuck anymore").
+    # All deterministic (files, states, sizes, times) - no Jev.
+    # (a) A go Tom already gave runs as soon as its spec/breakdown is ready; a failing go is
+    #     retried every 10 min and Tom is told once after 3 failures (the PT-1581 epic failed to
+    #     file for an hour in a loop nobody saw).
+    for G in "$MDIR"/d-*/go-pending; do
+      [ -f "$G" ] || continue; GD="$(dirname "$G")"
+      case "$(st "$GD")" in implementing|filed|closed|qa-*) rm -f "$G" "$GD/go-attempts"; continue ;; esac
+      spec_ready "$GD" || continue
+      case "$(jq -r '.estimate // ""' "$GD/spec.json")" in L|XL) has_breakdown "$GD" || continue ;; esac
+      [ -f "$GD/go-last" ] && [ $(( $(date +%s) - $(stat -f %m "$GD/go-last") )) -lt 600 ] && continue
+      touch "$GD/go-last"
+      GOUT="$("$0" go "$(basename "$GD")" 2>&1 | tail -3)"
+      case "$(st "$GD")" in implementing|filed)
+        rm -f "$G" "$GD/go-attempts"; announce "Started $(jq -r .pt "$GD/ticket.json" 2>/dev/null) — you'd said go before its spec was ready." ;;
+      *) N=$(( $(cat "$GD/go-attempts" 2>/dev/null || echo 0) + 1 )); echo "$N" > "$GD/go-attempts"
+         if [ "$N" -eq 3 ]; then
+           slack_bg send "@$(cfgd owner_first_name Tom): I couldn't start \"$(jq -r .title "$GD/spec.json")\" after 3 tries — last error: $(printf '%s' "$GOUT" | tr '\n' ' ' | cut -c1-200). I'll keep retrying every 10 minutes."
+         fi ;;
+      esac
+    done
+    # (b) Docker hygiene every 30 min: if sessions' volumes pass 30 GB, remove the containers
+    #     and dangling volumes of tickets that are already closed (90 GB once filled the VM).
+    if command -v docker >/dev/null 2>&1 && { [ ! -f "$MDIR/.docker-check" ] || [ $(( $(date +%s) - $(stat -f %m "$MDIR/.docker-check") )) -ge 1800 ]; }; then
+      touch "$MDIR/.docker-check"
+      VGB="$(docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null | awk '/^Local Volumes/ {s=$3; if (s ~ /GB$/) {sub(/GB$/,"",s); print int(s)} else print 0}')"
+      if [ "${VGB:-0}" -ge 30 ]; then
+        for c in $(docker ps -a --format '{{.Names}}' 2>/dev/null); do
+          n="$(printf '%s' "$c" | grep -oiE 'pt-?[0-9]{3,4}' | head -1 | tr -dc '0-9')"; [ -n "$n" ] || continue
+          f="$(grep -l "\"PT-$n\"" "$MDIR"/d-*/ticket.json 2>/dev/null | head -1)"
+          [ -n "$f" ] && [ "$(st "$(dirname "$f")")" = closed ] && docker rm -f "$c" >/dev/null 2>&1
+        done
+        for v in $(docker volume ls -q --filter dangling=true 2>/dev/null); do
+          n="$(printf '%s' "$v" | grep -oiE 'pt-?[0-9]{3,4}' | head -1 | tr -dc '0-9')"
+          if [ -z "$n" ]; then printf '%s' "$v" | grep -qE '^[0-9a-f]{64}$' && docker volume rm "$v" >/dev/null 2>&1; continue; fi
+          f="$(grep -l "\"PT-$n\"" "$MDIR"/d-*/ticket.json 2>/dev/null | head -1)"
+          [ -n "$f" ] && [ "$(st "$(dirname "$f")")" = closed ] && docker volume rm "$v" >/dev/null 2>&1
+        done
+        announce "Docker volumes had reached ${VGB} GB — cleared merged tickets' leftovers (now $(docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null | awk '/^Local Volumes/ {print $3}'))."
+      fi
+    fi
+    # (c) Stall alarm: an epic Tom said go on, with ready tickets, that hasn't started or
+    #     finished anything for 2 h gets one Slack to Tom (then at most every 2 h).
+    for E in "$MDIR"/d-*; do
+      case "$(basename "$E")" in *--*) continue ;; esac
+      [ -f "$E/resumed" ] && [ ! -f "$E/paused" ] && [ "$(st "$E")" = implementing ] && has_breakdown "$E" || continue
+      LAST="$(ls -td "$E"--*/state 2>/dev/null | head -1)"; LT=$([ -n "$LAST" ] && stat -f %m "$LAST" || stat -f %m "$E/resumed")
+      [ $(( $(date +%s) - LT )) -ge 7200 ] || continue
+      [ -f "$E/stall-alerted" ] && [ $(( $(date +%s) - $(stat -f %m "$E/stall-alerted") )) -lt 7200 ] && continue
+      [ -n "$(SCHEDULE_DRY=1 SCHEDULE_IGNORE_GCAP=1 schedule_children "$E")" ] || continue
+      touch "$E/stall-alerted"
+      slack_bg send "@$(cfgd owner_first_name Tom): $(jq -r .pt "$E/ticket.json") ($(jq -r .title "$E/spec.json" | cut -c1-60)) has had no ticket start or finish for 2 h although tickets are ready — coding slots: $(live_coding_sessions)/$(cfgd max_coding_sessions 4). I'm looking into it."
+    done
     serve_idle_epics
     for D in "$MDIR"/d-*; do
       [ -d "$D" ] || continue
