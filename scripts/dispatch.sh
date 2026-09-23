@@ -431,7 +431,7 @@ $(ticket_paths "$d" "$key")" ;; esac
   [ "$all_closed" = 1 ] && { echo ALLDONE; return 0; }
   for key in $keys; do
     [ "$nrun" -ge "$cap" ] && break
-    [ "$(live_coding_sessions)" -ge "$gcap" ] && break
+    [ "${SCHEDULE_IGNORE_GCAP:-0}" = 1 ] || { [ "$(live_coding_sessions)" -ge "$gcap" ] && break; }
     c="$(child_dir "$d" "$key")"; if [ -d "$c" ]; then cst="$(st "$c")"; else cst="not started"; fi
     case "$cst" in "not started"|filed|start-failed) ;; *) continue ;; esac
     if [ "$cst" = start-failed ] && [ "$(cat "$c/start-attempts" 2>/dev/null || echo 0)" -ge 3 ]; then continue; fi
@@ -989,20 +989,30 @@ case "$cmd" in
     [ -f "$HOME/.margie/paused" ] && { echo "Paused: $(head -1 "$HOME/.margie/paused")"; exit 0; }
     [ "${1:-}" = "--announce" ] && export MARGIE_ANNOUNCE=1
     # Fairness (2026-09-23): an epic Tom said go on that has NOTHING running gets the first
-    # free slot. Otherwise the loop below, walking oldest-first, lets older epics take every
-    # slot that frees up for their 2nd parallel ticket and a newer epic never starts (PT-1510
-    # sat 4 h at 0 started). Deterministic — counts and markers, no Jev.
-    if [ "$(cfgd epic_parallel 2)" -gt 1 ]; then
-      for D in "$MDIR"/d-*; do
-        case "$(basename "$D")" in *--*) continue ;; esac
-        [ -f "$D/resumed" ] && [ "$(st "$D")" = implementing ] && has_breakdown "$D" || continue
-        RUNNING_KIDS=0
-        for c in "$D"--*; do [ -d "$c" ] || continue; case "$(st "$c")" in implementing|qa-running|qa-pass|qa-fail) RUNNING_KIDS=$((RUNNING_KIDS+1)) ;; esac; done
-        [ "$RUNNING_KIDS" -eq 0 ] || continue
-        NEWK="$(schedule_children "$D")"
-        case "$NEWK" in ""|ALLDONE) ;; *) announce "Started $NEWK in $(jq -r .pt "$D/ticket.json") — it had nothing running, so it got the first free coding slot." ;; esac
+    # free slot. Walking oldest-first, older epics otherwise refill every freed slot with a
+    # 2nd parallel ticket (slots free up DURING the loop, as merges close children) and a newer
+    # epic never starts — PT-1510 sat 5 h at 0 started. So: serve idle epics first, keep other
+    # epics from taking a 2nd ticket while one is starved, and serve idle epics again after
+    # the loop. Deterministic — counts and markers, no Jev.
+    serve_idle_epics() {
+      STARVED=""
+      [ "$(cfgd epic_parallel 2)" -gt 1 ] || return 0
+      local E K NEWK
+      for E in "$MDIR"/d-*; do
+        case "$(basename "$E")" in *--*) continue ;; esac
+        [ -f "$E/resumed" ] && [ "$(st "$E")" = implementing ] && has_breakdown "$E" || continue
+        K=0
+        for c in "$E"--*; do [ -d "$c" ] || continue; case "$(st "$c")" in implementing|qa-running|qa-pass|qa-fail) K=$((K+1)) ;; esac; done
+        [ "$K" -eq 0 ] || continue
+        NEWK="$(schedule_children "$E")"
+        case "$NEWK" in
+          ALLDONE) ;;
+          "") [ -n "$(SCHEDULE_DRY=1 SCHEDULE_IGNORE_GCAP=1 schedule_children "$E")" ] && STARVED="$STARVED $(basename "$E")" ;;
+          *) announce "Started $NEWK in $(jq -r .pt "$E/ticket.json") — it had nothing running, so it got the first free coding slot." ;;
+        esac
       done
-    fi
+    }
+    serve_idle_epics
     for D in "$MDIR"/d-*; do
       [ -d "$D" ] || continue
       S="$(st "$D")"
@@ -1013,7 +1023,7 @@ case "$cmd" in
         if [ "$S" = implementing ] && has_breakdown "$D" && [ "$(cfgd epic_parallel 2)" -gt 1 ]; then
           RUNNING_KIDS=0
           for c in "$D"--*; do [ -d "$c" ] || continue; case "$(st "$c")" in implementing|qa-running|qa-pass|qa-fail) RUNNING_KIDS=$((RUNNING_KIDS+1)) ;; esac; done
-          if [ "$RUNNING_KIDS" -gt 0 ] || [ -f "$D/resumed" ]; then
+          if { [ "$RUNNING_KIDS" -gt 0 ] || [ -f "$D/resumed" ]; } && [ -z "$STARVED" ]; then
             NEWK="$(schedule_children "$D")"
             case "$NEWK" in ""|ALLDONE) ;; *) announce "Started $NEWK in $(jq -r .pt "$D/ticket.json") alongside what's already running — different files, no dependency waiting." ;; esac
           fi
@@ -1580,6 +1590,7 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
           fi ;;
       esac
     done
+    serve_idle_epics   # slots that freed during the loop go to an idle epic first
     exit 0
     ;;
 
