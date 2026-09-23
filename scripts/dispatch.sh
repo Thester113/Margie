@@ -1576,6 +1576,7 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
                 if [ -s "$D/parent" ]; then
                   PD="$MDIR/$(cat "$D/parent")"
                   if [ -d "$PD" ]; then
+                    serve_idle_epics   # the slot this merge freed goes to a starved epic first
                     K="$(schedule_children "$PD")"
                     if [ "$K" != ALLDONE ]; then
                       [ -n "$K" ] && announce "Next for $(jq -r .pt "$PD/ticket.json"): started $K."
