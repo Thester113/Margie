@@ -1025,6 +1025,16 @@ case "$cmd" in
     ;;
 
   tick)
+    # One tick at a time (2026-09-24): the poller starts a tick every minute and gives up
+    # waiting after 170 s but leaves it running, so when the forge is slow ticks piled up
+    # (five at once during GitLab's outage) and could race on the same MR. A second tick
+    # exits while the first is alive; a dead holder's lock is reclaimed. Deterministic.
+    TLOCK="$MDIR/.tick.lock"
+    if ! mkdir "$TLOCK" 2>/dev/null; then
+      if kill -0 "$(cat "$TLOCK/pid" 2>/dev/null || echo 0)" 2>/dev/null; then exit 0; fi
+      rm -rf "$TLOCK"; mkdir "$TLOCK" 2>/dev/null || exit 0
+    fi
+    echo $$ > "$TLOCK/pid"; trap 'rm -rf "$TLOCK"' EXIT
     # Global pause (Tom, 2026-09-17): while ~/.margie/paused exists, the pipeline
     # advances NOTHING — no QA, no MR, no merge, no deploy, no owner pings.
     # `dispatch.sh status` still reads. Remove the file (or `dispatch.sh resume`)
