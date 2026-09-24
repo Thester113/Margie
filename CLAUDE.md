@@ -211,6 +211,7 @@
   | decision (`jev.sh` / `jev()`) | caller | acts when | below the gate |
   |---|---|---|---|
   | `session` kind + needs_operator | `session.sh needs` | kind conf ≥0.5 and needs <0.5 → skip checkpoint / transient / working | wake the brain (old path) |
+| `session` (idle ask) | `session.sh needs` | a finished turn idle ≥10 min that no regex flagged: question/handoff ≥0.6 → wake the brain (once per screen) | nothing (old path) |
   | `session` (QA hand-off) | `dispatch.sh tick` | idle + clean + ahead of main and kind ∈ {checkpoint, handoff} | wait for the marker |
   | `danger` risky | `session.sh needs` | HARD regex → Tom, always; SOFT word + Jev <0.35 → answer; otherwise the BRAIN judges once (SAFE → answer, ESCALATE/none → Tom with the reason) | SOFT word → escalate |
   | `mention` addressed | `slack-watch.sh` (colleague mentions, and Tom's untagged thread replies; Tom tagging someone else is skipped deterministically) | no_reply ≥0.7 → don't compose | reply as before |

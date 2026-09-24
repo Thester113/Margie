@@ -273,6 +273,8 @@ case "$cmd" in
       if [ "$got" = "$2" ]; then printf 'ok   %-28s %-16s %s\n' "$1" "$2" "${conf:+@$conf}"; else printf 'FAIL %-28s want %s got %s\n' "$1" "$2" "${got:-<none>}"; FAIL=$((FAIL+1)); fi
     }
     expect session question <<< '⏺ I found two candidate table names for the audit log: enrichment_events and enrichment_audit. Which one should I use'
+    expect session question <<< '⏺ The rest of the ticket is not blocked by this: enqueueing through start_homie_run/2 and the 60-second wait for the run id. Reply A, B or C and I will build it.
+✻ Worked for 5m 55s · done 7:23 PM'
     expect session handoff <<< '⏺ Done with the code. Still needed from Tom: the Brevo API key in 1Password (I could not create it), and a product decision on whether free users get the export.'
     expect session transient_error <<< 'API Error: Connection lost mid-response
 Request timed out

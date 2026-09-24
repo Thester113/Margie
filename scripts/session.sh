@@ -207,6 +207,24 @@ case "$cmd" in
       if printf '%s' "$TAIL" | grep -qE 'Enter to confirm|Esc to cancel|Do you want to|Yes, I trust|Yes, and don.t ask|\(y/n\)|\[Y/n\]|\[y/N\]|No, and tell Claude|Allow (once|always)|Press Enter|❯ *1\.|^ *1\. Yes'; then WHY="waiting on a prompt"
       elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 45 ] && printf '%s' "$PANE" | tail -12 | grep -qE '· done [0-9]' && printf '%s' "$CONTENT" | grep -qiE 'still needed|next steps?|remaining|what is left|to finish|blocked on|needs? (you|tom)|could not|did not|unable|flag for tom|ready (for|to) (tom|review|submit)|filled and ready|review and submit|for tom to'; then WHY="finished its task and reported what is still needed"
       elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 120 ] && printf '%s' "$LAST" | grep -qiE '\?|\b(shall i|should i|want me to|would you like|let me know|say the word|ready to|waiting for|tell me)\b'; then WHY="asked a question and has been idle $((IDLE/60)) min"
+      elif [ "$WORKING" = 0 ] && [ "$IDLE" -ge 600 ] && printf '%s' "$PANE" | tail -12 | grep -qE '· done [0-9]'; then
+        # Jev question (typed, from text): a turn that ENDED with a request the phrases above
+        # miss ("Reply A, B or C and I'll build it." sat 1 h 40 m on PT-1602, 2026-09-24).
+        # Asked once per distinct screen (hash marker), only after 10 idle minutes; question
+        # or hand-off at >=0.6 wakes the brain like the regex branches. Below the gate:
+        # nothing (the old behaviour).
+        H="$(printf '%s' "$CONTENT" | tail -25 | shasum | cut -c1-16)"
+        if [ "$(cat "$ST/$S.jevq" 2>/dev/null)" != "$H" ]; then
+          printf '%s' "$H" > "$ST/$S.jevq"
+          JQ="$(printf '%s' "$CONTENT" | tail -25 | "$(dirname "$0")/jev.sh" session 2>/dev/null)"
+          JK="$(printf '%s' "$JQ" | cut -f1)"; JC="$(printf '%s' "$JQ" | cut -f2)"
+          if awk -v c="${JC:-0}" 'BEGIN{exit !(c >= 0.6)}'; then
+            case "$JK" in
+              question) WHY="asked a question and has been idle $((IDLE/60)) min"; "$(dirname "$0")/jev.sh" outcome session "idle-question $S" >/dev/null 2>&1 ;;
+              handoff) WHY="finished its task and reported what is still needed"; "$(dirname "$0")/jev.sh" outcome session "idle-handoff $S" >/dev/null 2>&1 ;;
+            esac
+          fi
+        fi
       fi
       [ -z "$WHY" ] && continue
       # Tom's explicit instruction (2026-09-03): Margie answers the session's permission
