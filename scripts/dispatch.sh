@@ -395,7 +395,17 @@ next_child() { # next_child <parent dir> → key of the first ticket not yet sta
 # Deterministic — paths and states are fields, no judgment involved.
 ticket_paths() { # ticket_paths <parent dir> <key> → one repo path per line, from its scope
   jq -r --arg k "$2" '.tickets[] | select(.key==$k) | (.scope // [])[]' "$1/breakdown.json" 2>/dev/null \
-    | grep -oE '^[[:space:]]*`?[A-Za-z0-9_.@-]+(/[A-Za-z0-9_.@*{}-]+)+/?' | sed 's/^[[:space:]]*`\{0,1\}//; s/[*{].*$//' | sort -u
+    | grep -oE '(^|[[:space:]`(])[A-Za-z0-9_.@-]+(/[A-Za-z0-9_.@*{}<>-]+)+/?' \
+    | sed -E 's/^[[:space:]`(]+//; s/[*{<].*$//; s#/+$#/#' \
+    | grep -E '/' | grep -vE '^(https?:|www\.)' \
+    | grep -E '(\.[A-Za-z0-9]+|/)$' | grep -vE -- '-$' | sort -u
+  # Only a real file (ends in an extension) or a directory (ends in /). A per-ticket templated
+  # name ("…/connections-<date>-<branch>.md") cut at its placeholder ends in "-" and was a
+  # prefix every ticket shared; code refs ("__MODULE__.sleep/1", "blank/nil") aren't paths.
+  # Every path-like token anywhere in a scope line, not only one at its start: the planner
+  # writes scope as prose ("apps/…/brevo.ex (new …) the pump behaviour module …"), and a line
+  # that opened with words used to yield no path - which reads as "overlaps everything" and
+  # blocked independent tickets (PT-1671..PT-1673, 2026-09-24). Deterministic - no Jev.
 }
 paths_overlap() { # paths_overlap "<paths A>" "<paths B>" → 0 when they share a file or directory
   [ -z "$1" ] || [ -z "$2" ] && return 0
