@@ -23,6 +23,11 @@
 # body.md,testcases.json,ticket.json,tcmap.json,impl.json,qa.json,qa.md,mr.md,state}
 # with a PT-### symlink once filed. `state` is one word.
 set -uo pipefail
+# Every forge call gets a deadline: after GitLab's 2026-09-24 outage its API accepted
+# connections and never answered, and one hung `glab api` stalled every dispatch tick.
+_GLAB="$(command -v glab)"; _GH="$(command -v gh)"
+glab() { perl -e 'alarm shift; exec @ARGV' "${MARGIE_GLAB_TIMEOUT:-45}" "$_GLAB" "$@"; }
+gh() { perl -e 'alarm shift; exec @ARGV' "${MARGIE_GLAB_TIMEOUT:-45}" "$_GH" "$@"; }
 
 MDIR="$HOME/.margie/dispatch"; mkdir -p "$MDIR"
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -355,6 +360,9 @@ render_breakdown() { # render_breakdown <dir>
 # (d-<parent>--T2 …): each has its own scoped spec, ticket, branch, session, QA,
 # MR and merge, and the next one starts when the previous merges. Spike tickets
 # are human work: skipped and named as blockers. The umbrella closes last.
+forge_up() { # the forge's API answers (glab/gh use the configured host and login)
+  if [ "$(cfgd forge gitlab)" = github ]; then gh api / >/dev/null 2>&1; else glab api version >/dev/null 2>&1; fi
+}
 child_dir() { echo "$MDIR/$(basename "$1")--$2"; }
 make_child() { # make_child <parent dir> <key>  → creates the child dispatch dir (idempotent)
   local d="$1" key="$2" c; c="$(child_dir "$d" "$key")"
@@ -1263,7 +1271,12 @@ case "$cmd" in
             if [ "$S" = qa-pass ] && [ -f "$D/mr-nudged" ] && [ ! -s "$D/mr.json" ] &&
                [ "$(( ( $(date +%s) - $(stat -f %m "$D/mr-nudged" 2>/dev/null || echo 0) ) / 60 ))" -ge "$(cfgd mr_open_retry_minutes 10)" ]; then
               N="$(cat "$D/mr-open-attempts" 2>/dev/null || echo 1)"
-              if [ "$N" -lt "$(cfgd mr_open_max_attempts 3)" ]; then
+              # A forge outage is not a failed attempt (GitLab 503'd for ~30 min on 2026-09-24
+              # and used up every retry for PT-1675/PT-1676). Deterministic: the forge's own
+              # API answering — no Jev decision.
+              if ! forge_up; then
+                rm -f "$D/mr-nudged"
+              elif [ "$N" -lt "$(cfgd mr_open_max_attempts 3)" ]; then
                 echo $((N + 1)) > "$D/mr-open-attempts"; rm -f "$D/mr-nudged"
                 announce "The MR for $PT never opened — trying again (attempt $((N + 1)))."
               elif [ ! -f "$D/mr-open-gaveup" ]; then

@@ -11,6 +11,11 @@
 #   forge.sh pipelines [repo] [n]     recent pipelines / workflow runs for a repo (default 5)
 #   forge.sh whoami                   who glab/gh is logged in as
 set -uo pipefail
+# Every forge call gets a deadline: after GitLab's 2026-09-24 outage its API accepted
+# connections and never answered, and one hung `glab api` stalled every dispatch tick.
+_GLAB="$(command -v glab)"; _GH="$(command -v gh)"
+glab() { perl -e 'alarm shift; exec @ARGV' "${MARGIE_GLAB_TIMEOUT:-45}" "$_GLAB" "$@"; }
+gh() { perl -e 'alarm shift; exec @ARGV' "${MARGIE_GLAB_TIMEOUT:-45}" "$_GH" "$@"; }
 
 CFG="$HOME/.margie/config.json"
 cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }

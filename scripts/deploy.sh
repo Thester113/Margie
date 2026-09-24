@@ -10,6 +10,11 @@
 #   deploy.sh watch [<sha>]           launch the deploy-watcher agent on the running/last deploy
 #   deploy.sh check                   poller: announce + watch a newly-started prod deploy (silent otherwise)
 set -uo pipefail
+# Every forge call gets a deadline: after GitLab's 2026-09-24 outage its API accepted
+# connections and never answered, and one hung `glab api` stalled every dispatch tick.
+_GLAB="$(command -v glab)"; _GH="$(command -v gh)"
+glab() { perl -e 'alarm shift; exec @ARGV' "${MARGIE_GLAB_TIMEOUT:-45}" "$_GLAB" "$@"; }
+gh() { perl -e 'alarm shift; exec @ARGV' "${MARGIE_GLAB_TIMEOUT:-45}" "$_GH" "$@"; }
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="$HOME/.margie/config.json"; ST="$HOME/.margie/deploy"; mkdir -p "$ST"
 cfg() { local v; v="$(jq -r ".$1 // empty" "$CFG" 2>/dev/null)"; case "$v" in op://*) v="$(op read "$v" 2>/dev/null || true)";; esac; printf "%s" "$v"; }

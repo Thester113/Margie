@@ -21,6 +21,11 @@
 # to try again in a minute if the draft isn't ready). DRY_RUN=1 prints the glab
 # command instead of running it. MARGIE_DESCRIBE=1 describes without acting.
 set -uo pipefail
+# Every forge call gets a deadline: after GitLab's 2026-09-24 outage its API accepted
+# connections and never answered, and one hung `glab api` stalled every dispatch tick.
+_GLAB="$(command -v glab)"; _GH="$(command -v gh)"
+glab() { perl -e 'alarm shift; exec @ARGV' "${MARGIE_GLAB_TIMEOUT:-45}" "$_GLAB" "$@"; }
+gh() { perl -e 'alarm shift; exec @ARGV' "${MARGIE_GLAB_TIMEOUT:-45}" "$_GH" "$@"; }
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CFG="$HOME/.margie/config.json"
