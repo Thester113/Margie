@@ -41,6 +41,8 @@ def norm(x):
 
 # Fixed docs questions: answer must mention at least `need` of the keywords.
 DOCS = [
+    {"q": "Homie's enriched file had about 10.6K contacts but only 6,646 got a Move Score in Follow Up Boss. Where are the rest?",
+     "truth": "They are not waiting on anything. 3,905 had no score from enrichment (usually missing address data) and 29 matched more than one Follow Up Boss person so they were skipped; every contact that could be scored and matched got its score."},
     {"q": "Which Follow Up Boss fields does the Homie hand-raiser write-back set?",
      "keywords": ["Move Score", "Amby UID", "Most Recent Source", "Last Source Date", "Original Source", "Hand-raiser", "note"],
      "need": 5},
