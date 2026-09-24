@@ -424,6 +424,16 @@ live_coding_sessions() { # coding sessions that use a slot — one parked on a h
   done
   echo "$n"
 }
+merge_stalled() { # merge_stalled <dir> <iid> <worktree> — the one merge attempt for this commit
+  # didn't stick: the MR is still open and not set to merge when green, 20+ min after we
+  # tried (GitLab drops auto-merge when a merged-results pipeline restarts or main moves).
+  # !1362 sat green, reviewed and mergeable for 30+ min on 2026-09-24. Retries at most every
+  # 20 min. Deterministic (MR fields, file age) — no Jev.
+  local d="$1" iid="$2" wt="$3" j
+  [ -f "$d/merge-ready" ] && [ $(( $(date +%s) - $(stat -f %m "$d/merge-ready") )) -ge 1200 ] || return 1
+  j="$(cd "$wt" 2>/dev/null && glab api "projects/:id/merge_requests/$iid" 2>/dev/null)" || return 1
+  [ "$(printf '%s' "$j" | jq -r '.state')" = opened ] && [ "$(printf '%s' "$j" | jq -r '.merge_when_pipeline_succeeds')" = false ]
+}
 schedule_children() { # schedule_children <parent dir> → starts what's ready; prints started keys, or ALLDONE
   local d="$1" key c cst dep ok mine started="" rpaths="" nrun=0 all_closed=1 cap gcap
   # Focus mode (Tom, 2026-09-23): an epic with a `paused` marker starts nothing new; its
@@ -1585,7 +1595,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                     slack_bg send "@$(cfgd owner_first_name Tom): MR !$IID ($PT) is green and mergeable, but I couldn't capture the UI screenshot after $(cat "$D/ui-verify-attempts" 2>/dev/null || echo several) tries — it's holding for your eyes WITHOUT one. $(jq -r '.url // empty' "$D/mr.json" 2>/dev/null)"
                     announce "I couldn't get a screenshot of MR !$IID for $PT after several tries — it's green and held for you, and I've said so on Slack."
                   fi
-                elif [ "$GATE_GREEN" = 1 ] && [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ]; then
+                elif [ "$GATE_GREEN" = 1 ] && { [ "$(cat "$D/merge-ready" 2>/dev/null)" != "$SHA" ] || merge_stalled "$D" "$IID" "$WT"; }; then
                   echo "$SHA" > "$D/merge-ready"
                   # Tom's explicit instruction (2026-09-03): a green MR with every thread resolved is
                   # merged by Margie herself (config auto_merge, default true); no "say merge" step.
@@ -1600,6 +1610,7 @@ Cover BOTH code review and ADR compliance.$RAGENTS
                           *"won't auto-deploy"*) DEP=" Heads up: it merged but I couldn't add the deploy label, so it won't ship on its own." ;;
                         esac
                         announce "MR !$IID for $PT was green with every thread resolved, so I merged it.$DEP$(printf '%s' "$MOUT" | grep -q 'Auto-merge enabled' && echo ' The merge train will land it.')" ;;
+                      *"as soon as its pipeline passes"*) announce "MR !$IID for $PT is green and reviewed — set to merge when its pipeline passes." ;;   # not a failure (was mis-announced as one)
                       *) announce "MR !$IID for $PT is ready but the merge didn't go through: $MOUT" ;;
                     esac
                   else
