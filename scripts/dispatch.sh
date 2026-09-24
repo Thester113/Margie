@@ -537,7 +537,10 @@ case "$cmd" in
       JV="$(printf '%s' "$REQ" | "$DIR/jev.sh" ticket "$FIRSTPT" 2>/dev/null)" || JV=""
       case "$(printf '%s' "$JV" | cut -f1)" in
         work_existing) [ "$(printf '%s' "$JV" | cut -f2 | awk '{print ($1>=0.9)}')" = 1 ] && EXPT="$FIRSTPT" ;;
-        context_only)  [ "$(printf '%s' "$JV" | cut -f2 | awk '{print ($1>=0.9)}')" = 1 ] && EXPT="-" ;;
+        # Asymmetric on purpose: reusing a ticket is the costly mistake (a "Follow-up to
+        # PT-1638 …" request was filed UNDER PT-1638 when Jev said context_only@0.67 and the
+        # 64-char fallback took over, 2026-09-24), so Jev leaning context_only is enough.
+        context_only)  [ "$(printf '%s' "$JV" | cut -f2 | awk '{print ($1>=0.6)}')" = 1 ] && EXPT="-" ;;
       esac
       if [ -n "$EXPT" ]; then "$DIR/jev.sh" outcome ticket "$([ "$EXPT" = "-" ] && echo context_only || echo "work_existing $EXPT") jev=$(printf '%s' "$JV" | tr '\t' '@')" >/dev/null 2>&1
       else EXPT="$(printf '%s' "$REQ" | head -c 64 | grep -oiE '\bPT-[0-9]+\b' | head -1 | tr 'a-z' 'A-Z')"; "$DIR/jev.sh" outcome ticket "fallback-regex ${EXPT:-none} jev=$(printf '%s' "${JV:-unavailable}" | tr '\t' '@')" >/dev/null 2>&1; fi

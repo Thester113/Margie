@@ -376,6 +376,7 @@ ERROR: Job failed: exit code 1'
     expect "ticket PT-1004" work_existing <<< 'Fix PT-1004: the enrichment worker still retries dead Google tokens forever. Stop after the third invalid_grant and mark the account.'
     expect "ticket PT-1004" work_existing <<< 'PT-1004 shipped but the retry cap is not applied to calendar sync — finish it so both syncs stop after three invalid_grant answers.'
     expect "ticket PT-1412" context_only <<< 'Gaps found walking the Homie flow on prod. Do NOT duplicate what is already in flight: PT-1412 auto-designates the 7 write-back fields. 1. No seeded role can receive hand-raisers — seed an Agent role. 2. The upload form forgets the connection you picked.'
+    expect "ticket PT-1638" context_only <<< 'Follow-up to PT-1638 (Homie missing Move Scores), the two sibling tickets its spec deferred: A) Linker root cause + fix B) Operator repair task'
     expect "ticket PT-1361" context_only <<< 'Since PT-1361 landed, Faraday matches by address. Now make a 15,000-contact upload survive: bound the enrich concurrency and persist progress every 500 rows.'
     echo "$((N-FAIL))/$N passed"; [ "$FAIL" = 0 ] ;;
 
