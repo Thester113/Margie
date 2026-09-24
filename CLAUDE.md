@@ -226,6 +226,7 @@
   | `preamble` | brain, every text reply | narration ≥0.6 → drop the opening self-talk paragraph | reply as written |
   | `mention` (agents) | `agent-messages.sh auto` | no_reply ≥0.7 → acknowledge only | brain composes a reply |
   | `correction` | brain, Tom's turns | ≥0.7 → fix + lessons.sh add; 0.4–0.7 → the brain decides | ordinary turn |
+  | `grounded` | brain, every colleague (speaker) reply | grounded ≥0.7 → post | Tom's DM with the draft ("I didn't send … couldn't confirm all of it"); colleague turns never fall back to grok |
   | `agree` | `evals.py` grading | contradict ≥0.7 → factual fail; anything but agree → "doesn't state the fact" | — |
 
   `jev.sh outcome <decision> <what>` (and `jevOutcome()` in TS) writes what the

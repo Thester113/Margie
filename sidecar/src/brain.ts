@@ -1501,6 +1501,26 @@ async function correctionBrief(text: string, history: ChatMsg[], conv?: string):
     return `\n\nTOM IS CORRECTING YOU — his message says your last answer was wrong or done the wrong way. Put it right in this reply (no grovelling, one short acknowledgement at most), then record the lesson so it never recurs: run lessons.sh add "<what went wrong> → <the rule that prevents it>" — one line, general enough to apply next time, no customer or colleague names.`;
   } catch { return ""; }
 }
+/** Jev `grounded` (same question as `jev.sh grounded`): is a colleague reply clear and backed
+ *  by what she looked up this turn? Returns the verdict at ≥0.7 confidence, else null. */
+async function groundedReply(question: string, found: string[], answer: string): Promise<string | null> {
+  const a = await jev("grounded", {
+    question: question.slice(-4000),
+    evidence: found.join("\n---\n").slice(-8000) || "(no lookups this turn)",
+    answer: answer.slice(0, 2000),
+  }, {
+    verdict: {
+      type: "choice",
+      instructions: "An assistant was asked `question` by a colleague. `evidence` is everything it looked up this turn plus the conversation. Is `answer` a clear answer whose every factual claim (ticket and MR numbers, statuses, counts, dates, what the product does or does not do) appears in or follows directly from the evidence?",
+      criteria: {
+        grounded: "Answers the question clearly, and every fact it states is in the evidence",
+        unsupported: "States at least one fact (a number, a status, a capability, a ticket) that the evidence does not contain or contradicts",
+        not_an_answer: "Vague, evasive, only says it will check or pass it on, or does not address the question",
+      },
+    },
+  }, 8000);
+  return confident(a?.verdict, 0.7);
+}
 function shq(s: string): string { return `'${s.replace(/'/g, `'\\''`)}'`; }
 
 async function claudeTurn(rawText: string, history: ChatMsg[], source: string, conv?: string, speaker?: string, pub = false): Promise<string> {
@@ -1596,6 +1616,20 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
       }
       logBrain(`CLAUDE out of steps — answered from ${found.length} findings${finalText ? "" : " (empty)"}`);
     } catch (e) { logBrain(`CLAUDE finish error: ${(e as Error).message}`); }
+  }
+  if (speaker) {
+    // A colleague only ever gets a clear, confirmed answer (Tom, 2026-09-24: "only respond if
+    // she has a clear answer, no hallucinated responses"). No fallback brain for them — grok's
+    // research-free answer is what posted Mike's vague reply — and Jev `grounded` must find
+    // every fact in what she looked up; anything else goes to Tom's DM, not the chat.
+    // Jev question (typed, from text), fails closed to Tom's DM.
+    const bare = finalText.trim().replace(/[\s.]/g, "");
+    if (!finalText) finalText = `FOR TOM: I couldn't put together a reliable answer for ${speaker} — it needs you.`;
+    else if (bare !== "NO_REPLY" && bare !== "NOREPLY" && !finalText.trimStart().startsWith("FOR TOM:")) {
+      const verdict = await groundedReply(text, found, finalText);
+      jevOutcome("grounded", `${verdict === "grounded" ? "post" : "tom"} speaker=${speaker} jev=${verdict ?? "unsure-or-unavailable"}`);
+      if (verdict !== "grounded") finalText = `FOR TOM: I didn't send ${speaker} this because I couldn't confirm all of it — ${finalText}`;
+    }
   }
   if (!finalText) {
     // Claude unavailable (usage cap, outage): fall back to the fast brain so she keeps working.

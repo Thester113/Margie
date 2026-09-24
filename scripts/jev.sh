@@ -38,6 +38,10 @@
 #                                           → correction | other<TAB>confidence (write a lesson?)
 #   jev.sh agree                            stdin = {"truth":…,"answer":…}
 #                                           → agree | contradict | unclear<TAB>confidence (evals)
+#   jev.sh grounded                         stdin = {"question":…,"evidence":…,"answer":…}
+#                                           → grounded | unsupported | not_an_answer<TAB>confidence
+#                                             (may a colleague see this reply? only when every
+#                                             fact in it is in the evidence)
 #   jev.sh notion                           stdin = a question to Margie
 #                                           → docs | none<TAB>confidence  (read Amby's Notion first?)
 #   jev.sh outcome <decision> <what>        log what the CALLER did with an answer
@@ -238,6 +242,17 @@ case "$cmd" in
         "unclear":"The answer does not say either way (evades, says it cannot tell, or asks a question back)"}}}')" || exit $?
     printf '%s\n' "$R" | jq -r '.answers.verdict | "\(.choice)\t\(.confidence)"' ;;
 
+  # Colleague-reply gate (Tom, 2026-09-24: "only respond if she has a clear answer, no
+  # hallucinated responses"). The same question is asked from brain.ts groundedReply().
+  grounded)
+    R="$(ask '{"verdict":{"type":"choice",
+      "instructions":"An assistant was asked `question` by a colleague. `evidence` is everything it looked up this turn plus the conversation. Is `answer` a clear answer whose every factual claim (ticket and MR numbers, statuses, counts, dates, what the product does or does not do) appears in or follows directly from the evidence?",
+      "criteria":{
+        "grounded":"Answers the question clearly, and every fact it states is in the evidence",
+        "unsupported":"States at least one fact (a number, a status, a capability, a ticket) that the evidence does not contain or contradicts",
+        "not_an_answer":"Vague, evasive, only says it will check or pass it on, or does not address the question"}}}')" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.verdict | "\(.choice)\t\(.confidence)"' ;;
+
   # What the caller DID with an answer — the half of the record the log was missing.
   outcome)
     [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "usage: jev.sh outcome <decision> <what>" >&2; exit 64; }
@@ -369,6 +384,9 @@ ERROR: Job failed: exit code 1'
     expect correction correction <<< '{"margie_said":"It sets move_score, amby_uid and the source fields, per write_back.ex.","owner_replied":"that is not how I want it — say it in plain words for someone who has never seen the code, no internal keys"}'
     expect correction other <<< '{"margie_said":"!1227 is green and reviewed — merge it?","owner_replied":"merge 1227"}'
     expect correction other <<< '{"margie_said":"PT-1461 merged as !1228 and is live.","owner_replied":"great, whats next on the epic?"}'
+    expect grounded grounded <<< '{"question":"Is PT-1671 in production?","evidence":"deploy.sh live PT-1671: PT-1671 is live in production — it is included in the deploy of eef8d3b7 (finished 2026-09-24 19:59 UTC).","answer":"Yes — PT-1671 is live; it went out in the 19:59 UTC deploy on Sep 24."}'
+    expect grounded unsupported <<< '{"question":"Can a new client skip the CSV export and start through the CRM integration?","evidence":"notion.sh search: no results. state.sh summary: PT-1674 suppression step inside HomiePush — implementing.","answer":"Yes, PT-1674 adds a direct CRM pull, so new clients can skip the CSV export once it ships next week."}'
+    expect grounded not_an_answer <<< '{"question":"Can a new client skip the CSV export and start through the CRM integration?","evidence":"state.sh summary: PT-1674 suppression step inside HomiePush — implementing.","answer":"I have flagged this for Tom — the current Homie work (PT-1674 and related epics) does not change this. They will confirm the details."}'
     expect agree agree <<< '{"truth":"PT-1461 (Hand-raiser count names the current filter) merged as !1228 and is live in production.","answer":"The count fix is PT-1461 — it merged as !1228 and it is in production since the 17:40 deploy."}'
     expect agree contradict <<< '{"truth":"PT-1461 (Hand-raiser count names the current filter) merged as !1228 and is live in production.","answer":"The hand-raiser count fix is PT-1462, MR !1229 — not live yet, it is waiting on Tom."}'
     expect agree contradict <<< '{"truth":"PT-1472 is live in production.","answer":"PT-1472 is merged but not deployed yet."}'
