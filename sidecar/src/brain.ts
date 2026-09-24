@@ -1525,6 +1525,11 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
     + (pub ? " PUBLIC ROOM: colleagues read this reply. Write for the room — no pet names, no aside to Tom, no asking Tom what to do here. If a decision is Tom's, say you'll check with him and stop; take the question to his DM (slack.sh dm) instead." : "");
   const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}${briefNote}${notionNote}${correctionNote}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally${briefNote ? "; your OWN earlier status answers are omitted because they may be stale — every fact comes from the CURRENT BRIEF above" : ""}):\n${transcript(briefNote ? history.filter((m) => m.role !== "assistant") : history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";
+  // What she found this turn (her notes + tool output), kept so a turn that runs out of
+  // steps can still answer from it instead of dropping to the fallback brain (2026-09-24:
+  // Mike's onboarding question hit maxTurns and the fallback posted a vague "flagged for Tom").
+  const found: string[] = [];
+  let maxedOut = false;
   try {
     const q = query({
       prompt,
@@ -1557,16 +1562,40 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
         const hasTool = blocks.some((b) => b.type === "tool_use");
         const say = blocks.filter((b) => b.type === "text" && b.text).map((b) => b.text!.trim()).join(" ").trim();
         if (hasTool && say) currentEmit?.("say", say.slice(0, 300));
+        if (say) found.push(say.slice(0, 600));
+      }
+      if (m.type === "user") {
+        for (const b of (((m as any).message?.content || []) as any[])) {
+          if (b?.type !== "tool_result") continue;
+          const c = typeof b.content === "string" ? b.content : (b.content || []).map((x: any) => x?.text || "").join("\n");
+          if (c) found.push(c.slice(0, 1500));
+        }
       }
       if (m.type === "result") {
         const r = m as any;
         finalText = r.is_error ? "" : String(r.result || "");
         if (r.is_error) logBrain(`CLAUDE error: ${String(r.result || r.subtype)}`);
+        if (r.subtype === "error_max_turns") maxedOut = true;
         logUsage(source, BRAIN_CLAUDE_MODEL, r);
       }
     }
   } catch (e) {
     logBrain(`CLAUDE brain error: ${(e as Error).message}`);
+  }
+  if (!finalText && maxedOut && found.length) {
+    // Out of steps is not an outage: one tool-less Claude call answers from what she found.
+    // Deterministic (the SDK's result subtype) — no Jev question here.
+    try {
+      const notes = found.slice(-12).join("\n---\n").slice(-12000);
+      const fin = query({
+        prompt: `${text}\n\nYOU HAVE NO LOOKUP STEPS LEFT. Answer now from what you already found (below). State plainly what is confirmed; for anything you could not confirm, say you'll check and come back — never guess, never mention steps or tools.\n\nWHAT YOU FOUND:\n${notes}`,
+        options: { systemPrompt: { type: "custom", prompt: sys }, model: BRAIN_CLAUDE_MODEL, tools: [], mcpServers: {}, strictMcpConfig: true, allowedTools: [], permissionMode: "default", maxTurns: 1, cwd: HOME, settingSources: [], persistSession: false, includePartialMessages: false },
+      });
+      for await (const m of fin) {
+        if (m.type === "result") { const r = m as any; finalText = r.is_error ? "" : String(r.result || ""); logUsage(source, BRAIN_CLAUDE_MODEL, r); }
+      }
+      logBrain(`CLAUDE out of steps — answered from ${found.length} findings${finalText ? "" : " (empty)"}`);
+    } catch (e) { logBrain(`CLAUDE finish error: ${(e as Error).message}`); }
   }
   if (!finalText) {
     // Claude unavailable (usage cap, outage): fall back to the fast brain so she keeps working.
