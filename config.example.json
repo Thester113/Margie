@@ -36,6 +36,7 @@
   "slack_via": "claude",
   "slack_cc_owner": true,
   "slack_watch": "preview",
+  "slack_untagged_wait_s": 600,
   "standup_channel": "#standup",
   "standup_time": "08:45",
   "standup_mode": "draft",

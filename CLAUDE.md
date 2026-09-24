@@ -60,7 +60,7 @@
   its canned "flagged for Tom" line are gone. Colleagues run with `--speaker`
   (conversation-isolated, read-only allowlist). A turn over ~8 s posts "On it — one
   moment." and edits it into the answer; an empty answer retries, and after 3 tries Tom
-  is told — never a canned reply. Tom's DMs answer `status|usage|held|sessions` directly
+  is told — never a canned reply. A colleague's message that doesn't tag or name her (an @Tom mention, an untagged thread reply) waits 10 min (`slack_untagged_wait_s`) with no reaction, and is skipped if anyone else answered meanwhile; DMs and Tom's own messages never wait. Tom's DMs answer `status|usage|held|sessions` directly
   from the CLI's own scripts. Style lives in `SLACK_STYLE` (brain.ts): answer first,
   exact ticket/MR/state, plain words (no tick/gate/hold/dispatch), no paths or
   nicknames; output goes through `forSlack()` (Slack markup, no tables). A

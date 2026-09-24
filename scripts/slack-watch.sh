@@ -262,7 +262,27 @@ brain_reply() {
 }
 
 SPOKEN_ITEMS=()
+# Untagged waits (Tom, 2026-09-24): a colleague's message that doesn't tag or name Margie
+# (an @Tom mention, an untagged reply in a thread) gets no reaction and no reply for 10
+# minutes — it stays out of slack-handled.txt, so a later poll picks it up. After the wait,
+# if anyone other than the poster has answered in the thread, the people have it: skip.
+# DMs to her and Tom's own messages are addressed to her and never wait.
+# Deterministic (a field and a clock) — no Jev decision.
+UNTAGGED_WAIT="$(cfg slack_untagged_wait_s)"; UNTAGGED_WAIT="${UNTAGGED_WAIT:-600}"
+other_replied_after() { # other_replied_after <cid> <thread_ts> <msg_ts> <poster>
+  local R; R="$(sapi conversations.replies --get --data-urlencode "channel=$1" --data-urlencode "ts=$2" -d "limit=50")"
+  echo "$R" | jq -e --arg p "$4" --arg b "$BOTID" --arg m "$3" '[.messages[]? | select(.subtype==null and .user!=$p and .user!=$b and (.ts|tonumber) > ($m|tonumber))] | length > 0' >/dev/null 2>&1
+}
 while IFS=$'\t' read -r kind cid label ts thread user text; do
+  if [ "$kind" != "im" ] && [ "$user" != "${OWNER:-__none__}" ] \
+     && ! printf '%s' "$text" | grep -qF "<@$BOTID>" && ! printf '%s' "$text" | grep -qiwE 'margie'; then
+    if [ $(( NOW - ${ts%.*} )) -lt "$UNTAGGED_WAIT" ]; then
+      logl "wait (untagged $kind, $(( NOW - ${ts%.*} ))s old) $label ts=$ts"; continue
+    fi
+    if other_replied_after "$cid" "$thread" "$ts" "$user"; then
+      logl "skip (untagged $kind, someone answered during the wait) $label ts=$ts"; echo "${NOW}|${ts}" >> "$HANDLED"; continue
+    fi
+  fi
   # Immediately signal she's on it (react before the slower compose) so nobody wonders
   # if she saw it. :eyes: = noticed; the actual reply follows. reactions:write, best-effort.
   sapi reactions.add -d "channel=$cid" -d "timestamp=$ts" -d "name=eyes" >/dev/null 2>&1 || true
