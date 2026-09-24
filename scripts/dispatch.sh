@@ -1107,6 +1107,14 @@ case "$cmd" in
           fi
         fi ;;
       esac
+      # A dispatch already FILED (its tickets exist) is never re-planned: a re-plan wipes the
+      # breakdown and the next go would file every ticket twice (PT-1656, 2026-09-24, where an
+      # amend landed while the go-pending guard was filing it). The amendment goes onto the
+      # ticket instead, for the sessions to pick up. Deterministic - no Jev.
+      if [ -f "$D/replan-pending" ] && [ -s "$D/ticket.json" ]; then
+        rm -f "$D/replan-pending"
+        "$DIR/notion.sh" ticket comment "$(jq -r .pt "$D/ticket.json")" "Amendment after filing (not re-planned): $(tail -c 1500 "$D/request.txt")" >/dev/null 2>&1 || true
+      fi
       if [ -f "$D/replan-pending" ] && [ "$("$DIR/claude-task.sh" state "spec:$(basename "$D")")" != "RUNNING" ] \
          && [ $(( $(date +%s) - $(cat "$D/planner-started" 2>/dev/null || echo 0) )) -ge 1200 ]; then
         [ -s "$D/spec.json" ] && cp "$D/spec.json" "$D/prev-spec.json"; rm -f "$D/spec.json" "$D/spec.md" "$D/body.md" "$D/breakdown.json" "$D/breakdown.md" "$D/breakdown-running"  # a re-plan invalidates the ticket breakdown
