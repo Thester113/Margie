@@ -179,6 +179,12 @@ def main():
         prev = previous()
         if prev and prev["stamp"][:8] == time.strftime("%Y%m%d"):
             return
+        # Claim the day BEFORE asking: a run killed mid-way (poller timeout, daemon restart)
+        # never saved its record, so every 10-minute poll started a fresh run (2026-09-24).
+        claim = os.path.join(OUT, ".claimed-" + time.strftime("%Y%m%d"))
+        if os.path.exists(claim):
+            return
+        open(claim, "w").write(str(os.getpid()))
         rec = run()
         factual = [r for r in rec["results"] if r["fails"]]
         dropped = prev and rec["passed"] / max(rec["total"], 1) < prev["passed"] / max(prev["total"], 1)
