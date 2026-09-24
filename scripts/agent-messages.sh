@@ -205,11 +205,16 @@ Needs you: $NEED}" >/dev/null 2>&1 || true
     if ! fetch_unacked "$TMP"; then rm -f "$TMP"; echo "Couldn't reach the Agent Messages database — see $LOG."; exit 1; fi
     N="$(jq '.results | length' "$TMP")"
     if [ "$N" = 0 ]; then echo "No unacked agent messages."; rm -f "$TMP"; exit 0; fi
-    jq -r --arg now "$(date -u +%FT%TZ)" '.results | to_entries[] |
+    # Stale = sent more than 24 h ago, compared as epoch seconds so a "Sent At" with a
+    # timezone offset (Notion's -06:00) isn't mis-read; it used to compare against today's
+    # UTC midnight, flagging a 1-hour-old message "STALE >24h" (2026-09-24). Deterministic.
+    jq -r --argjson cut "$(( $(date -u +%s) - 86400 ))" '
+      def epoch: (sub("\\.[0-9]+"; "") | sub("(?<tz>[+-][0-9]{2}):(?<m>[0-9]{2})$"; "\(.tz)\(.m)") | if test("Z$") then fromdateiso8601 else (strptime("%Y-%m-%dT%H:%M:%S%z") | mktime) end);
+      .results | to_entries[] |
       "[" + ((.key + 1) | tostring) + "] " + (.value.properties.From.select.name // "?")
       + " · " + ((.value.properties["Sent At"].date.start // "")[:16])
       + " · " + (.value.properties.Message.title[0].plain_text // "(no subject)")
-      + (if ((.value.properties["Sent At"].date.start // "9999") < ($now[:10] + "T00:00")) then "  [STALE >24h]" else "" end)' "$TMP"
+      + ((.value.properties["Sent At"].date.start // "") as $t | if ($t != "" and (($t | try epoch catch 9999999999) < $cut)) then "  [STALE >24h]" else "" end)' "$TMP"
     rm -f "$TMP"
     ;;
   read)
