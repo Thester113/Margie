@@ -1070,7 +1070,10 @@ case "$cmd" in
         [ "$K" -eq 0 ] || continue
         NEWK="$(schedule_children "$E")"
         case "$NEWK" in
-          ALLDONE) ;;
+          # Every ticket merged or canceled but no merge event closed the umbrella (the last
+          # one was canceled — PT-1418, 2026-09-25): close it here. Deterministic.
+          ALLDONE) "$DIR/notion.sh" ticket status "$(jq -r .pt "$E/ticket.json")" "Done" >/dev/null 2>&1; st "$E" closed
+                   announce "Every ticket under $(jq -r .pt "$E/ticket.json") is merged or canceled — umbrella closed." ;;
           "") [ -n "$(SCHEDULE_DRY=1 SCHEDULE_IGNORE_GCAP=1 schedule_children "$E")" ] && STARVED="$STARVED $(basename "$E")" ;;
           *) announce "Started $NEWK in $(jq -r .pt "$E/ticket.json") — it had nothing running, so it got the first free coding slot." ;;
         esac
