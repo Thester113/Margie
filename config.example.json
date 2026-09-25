@@ -202,5 +202,18 @@
       "backend/"
     ]
   },
-  "_deploy_paths": "Per repo, path prefixes whose changes actually deploy. An MR touching none of them is announced as 'nothing in it deploys' instead of 'it deploys to production'. Unset = always say it deploys (old behaviour)."
+  "_deploy_paths": "Per repo, path prefixes whose changes actually deploy. An MR touching none of them is announced as 'nothing in it deploys' instead of 'it deploys to production'. Unset = always say it deploys (old behaviour).",
+  "prod_read": {
+    "gcloud_project": "<gcp-project>",
+    "zone": "<zone>",
+    "instance_filter": "name~<app> AND -name~gke",
+    "container_cmd": "bin/<app> rpc"
+  },
+  "prod_queries": {
+    "runs": {
+      "about": "Recent workflow runs: status, counts, list, failure. Arg: tenant id or empty.",
+      "sql": "select \u2026 from projection_workflow_runs where ($1 = '' or tenant_id = $1) order by started_at desc limit 10"
+    }
+  },
+  "_prod_read": "prodread.sh: read-only production answers. Where production lives (prod_read) and the named SELECT-only queries (prod_queries) are config, never code; each runs in a READ ONLY transaction."
 }
