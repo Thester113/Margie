@@ -519,7 +519,11 @@ status_all() { # status_all <dispatch dir> "<Status>" [--umbrella-only]
   # tickets showing In Progress in Notion for days (2026-09-22) — the team read that as work.
   local d="$1" stt="$2" pt
   [ "${3:-}" = "--umbrella-only" ] || { [ "$stt" = "In Progress" ] && [ -s "$d/breakdown.json" ]; } && local only=1
-  pt="$(jq -r '.pt // empty' "$d/ticket.json" 2>/dev/null)"; [ -n "$pt" ] && "$DIR/notion.sh" ticket status "$pt" "$stt" >/dev/null 2>&1
+  pt="$(jq -r '.pt // empty' "$d/ticket.json" 2>/dev/null)"
+  # A single dispatch filed under another dispatch's epic umbrella never moves that
+  # umbrella (its merge would mark the whole epic Done while children are open).
+  if [ -n "$pt" ] && [ ! -s "$d/breakdown.json" ] && grep -l "\"$pt\"" "$MDIR"/*/ticket.json 2>/dev/null | while read -r tj; do [ "$(dirname "$tj")" != "$d" ] && [ -s "$(dirname "$tj")/breakdown.json" ] && echo y; done | grep -q y; then pt=""; fi
+  [ -n "$pt" ] && "$DIR/notion.sh" ticket status "$pt" "$stt" >/dev/null 2>&1
   if [ -s "$d/epic.json" ]; then case "$stt" in "In Progress") "$DIR/notion.sh" epic status "$(jq -r .id "$d/epic.json")" Executing >/dev/null 2>&1 ;; Done) "$DIR/notion.sh" epic status "$(jq -r .id "$d/epic.json")" Done >/dev/null 2>&1 ;; Canceled) "$DIR/notion.sh" epic status "$(jq -r .id "$d/epic.json")" Backlog >/dev/null 2>&1 ;; esac; fi
   [ -s "$d/tickets.json" ] || return 0
   [ "${only:-0}" = 1 ] && return 0
@@ -573,6 +577,13 @@ case "$cmd" in
       if [ -n "$EXPT" ]; then "$DIR/jev.sh" outcome ticket "$([ "$EXPT" = "-" ] && echo context_only || echo "work_existing $EXPT") jev=$(printf '%s' "$JV" | tr '\t' '@')" >/dev/null 2>&1
       else EXPT="$(printf '%s' "$REQ" | head -c 64 | grep -oiE '\bPT-[0-9]+\b' | head -1 | tr 'a-z' 'A-Z')"; "$DIR/jev.sh" outcome ticket "fallback-regex ${EXPT:-none} jev=$(printf '%s' "${JV:-unavailable}" | tr '\t' '@')" >/dev/null 2>&1; fi
       [ "$EXPT" = "-" ] && EXPT=""
+    fi
+    # An epic's umbrella is never worked as one ticket: a fix for an epic's feature
+    # ("… HomieSendEnriched, PT-1669 …") is new work under its own PT, or merging it would
+    # close the umbrella while its children are open (2026-09-25). Deterministic: the named
+    # PT belongs to a dispatch with a ticket breakdown.
+    if [ -n "$EXPT" ] && grep -l "\"$EXPT\"" "$MDIR"/*/ticket.json 2>/dev/null | while read -r tj; do [ -s "$(dirname "$tj")/breakdown.json" ] && echo y; done | grep -q y; then
+      "$DIR/jev.sh" outcome ticket "umbrella-not-reused $EXPT" >/dev/null 2>&1; EXPT=""
     fi
     [ -n "$EXPT" ] && echo "$EXPT" > "$D/existing-pt.txt"
 
