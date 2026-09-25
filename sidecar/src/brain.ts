@@ -1503,8 +1503,30 @@ async function correctionBrief(text: string, history: ChatMsg[], conv?: string):
       return `\n\nTom may be correcting you or telling you how he wants things done. If he is, put it right, and back any "I won't do that again" with lessons.sh add "<what went wrong> → <the rule>" (one line, general, no names) — a promise without a lesson is forgotten next turn. If he isn't, answer normally.`;
     }
     jevOutcome("correction", `lesson@${p}: ${text.slice(0, 60)}`);
+    await learnEval(history, last, text, conv);
     return `\n\nTOM IS CORRECTING YOU — his message says your last answer was wrong or done the wrong way. Put it right in this reply (no grovelling, one short acknowledgement at most), then record the lesson so it never recurs: run lessons.sh add "<what went wrong> → <the rule that prevents it>" — one line, general enough to apply next time, no customer or colleague names.`;
   } catch { return ""; }
+}
+/** Every confident correction of a FACT becomes a nightly eval case (Tom, 2026-09-25: "as
+ *  close to flawless"): the question Tom asked, re-asked each night and graded against his
+ *  correction, so a mistake fixed once stays fixed. Jev `testable` decides fact vs rule (a
+ *  rule is a lesson only); cases expire after 21 days, since today's facts go stale.
+ *  Deterministic write; the fact/rule call is a Jev question with fixtures. */
+async function learnEval(history: ChatMsg[], last: ChatMsg, correction: string, conv?: string) {
+  try {
+    const i = history.lastIndexOf(last);
+    const q = [...history.slice(0, i)].reverse().find((m) => m.role === "user" && m.conv === conv && m.content);
+    if (!q) return;
+    const question = String(q.content).replace(/\s+/g, " ").trim().slice(0, 600);
+    if (question.length < 8) return;
+    const state = JSON.stringify({ question, correction: correction.slice(0, 600) });
+    const j = (await runBashRaw(`printf '%s' ${shq(state)} | ${SCRIPTS}/jev.sh testable`, { MARGIE_POLLER: "1" }, 8000)).trim().split("\t");
+    jevOutcome("testable", `${j[0]}@${j[1]}: ${question.slice(0, 50)}`);
+    if (j[0] !== "fact" || Number(j[1] || 0) < 0.7) return;
+    const rec = { q: question, truth: `Tom corrected Margie on this: ${correction.slice(0, 600)}`, wrong: String(last.content).slice(0, 400),
+                  at: new Date().toISOString(), expires: new Date(Date.now() + 21 * 864e5).toISOString() };
+    appendFileSync(`${HOME}/.margie/evals/learned.jsonl`, JSON.stringify(rec) + "\n");
+  } catch { /* never block a turn on this */ }
 }
 /** Jev `grounded` (same question as `jev.sh grounded`): is a colleague reply clear and backed
  *  by what she looked up this turn? Returns the verdict at ≥0.7 confidence, else null. */

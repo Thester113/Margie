@@ -42,6 +42,8 @@
 #                                           → grounded | unsupported | not_an_answer<TAB>confidence
 #                                             (may a colleague see this reply? only when every
 #                                             fact in it is in the evidence)
+#   jev.sh testable                         stdin = {"question":…,"correction":…}
+#                                           → fact | rule | unclear<TAB>confidence (becomes an eval?)
 #   jev.sh tone                             stdin = a Slack thread, newest line last
 #                                           → social | request | status_question | fyi<TAB>confidence
 #   jev.sh notion                           stdin = a question to Margie
@@ -140,6 +142,18 @@ case "$cmd" in
       '{addressed: {type: "choice", instructions: $ins, criteria: {reply: $reply, no_reply: $no_reply}}}')"
     R="$(ask "$QS" "$MSG")" || exit $?
     printf '%s\n' "$R" | jq -r '.answers.addressed | "\(.choice)\t\(.confidence)"' ;;
+
+  # Is Tom's correction a checkable FACT (so it can become a nightly eval: ask the question
+  # again, compare the answer with the corrected fact) or a RULE about how to behave (a
+  # lesson only)? stdin = {"question":…,"correction":…}.
+  testable)
+    R="$(ask '{"kind":{"type":"choice",
+      "instructions":"Tom asked Margie `question`, she answered wrongly, and `correction` is what Tom said to correct her. Could someone check a future answer to the same question against the correction?",
+      "criteria":{
+        "fact":"The correction states a fact the right answer must contain or agree with (a number, a status, who/what/where, what the product does)",
+        "rule":"The correction is about how she should behave, format, tone, or what to do next, not a checkable fact about the answer",
+        "unclear":"Too vague or too tied to the moment to check later"}}}')" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.kind | "\(.choice)\t\(.confidence)"' ;;
 
   # What kind of message is Margie about to answer in a Slack thread? (Tom, 2026-09-25:
   # she answered a joking thread with a status report.) stdin = the thread's recent lines,
@@ -304,6 +318,9 @@ case "$cmd" in
       local out got conf; out="$("$0" $1 2>/dev/null)"; got="$(printf '%s' "$out" | cut -f1)"; conf="$(printf '%s' "$out" | cut -f2)"; N=$((N+1))
       if [ "$got" = "$2" ]; then printf 'ok   %-28s %-16s %s\n' "$1" "$2" "${conf:+@$conf}"; else printf 'FAIL %-28s want %s got %s\n' "$1" "$2" "${got:-<none>}"; FAIL=$((FAIL+1)); fi
     }
+    expect testable fact <<< '{"question":"How many Homie contacts got a Move Score in Follow Up Boss?","correction":"No, it is 9,620 in total: 6,646 from the export plus 2,974 from Faraday."}'
+    expect testable rule <<< '{"question":"Whats margie working on?","correction":"Only report my items in flight, not the teammates deploys."}'
+    expect testable fact <<< '{"question":"Is the Aug 18 Move Score issue an Amby bug?","correction":"No, it is a confirmed bug on the Faraday side, not Amby."}'
     expect tone social <<< 'Tom: Whoah... So i gave Margie a picture a few days ago.
 Cody: Oh yeah, I saw that this morning. Do not worry Margie - we will give you the glow-up you deserve!
 Cody: There you go, @Margie - how do you like the look?'

@@ -121,7 +121,29 @@ def cases():
         out.append({"kind": "docs", **d})
     for d in SOCIAL:
         out.append({"kind": "social", **d})
+    out.extend(learned())
     return out
+
+
+LEARNED = os.path.join(OUT, "learned.jsonl")
+
+
+def learned(include_expired=False):
+    """Cases learned from Tom's corrections (brain.ts learnEval): re-ask, grade vs his correction."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    rows = []
+    try:
+        for i, line in enumerate(open(LEARNED)):
+            try:
+                c = json.loads(line)
+            except Exception:
+                continue
+            if c.get("dropped") or (not include_expired and c.get("expires", "9") < now):
+                continue
+            rows.append({"kind": "learned", "n": i, "q": c["q"], "truth": c["truth"], "at": c.get("at", "")})
+    except FileNotFoundError:
+        pass
+    return rows
 
 
 def grade(c, a):
@@ -193,6 +215,16 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "run"
     if cmd == "run":
         print(summary(run())); return
+    if cmd == "learned":
+        sub = sys.argv[2] if len(sys.argv) > 2 else "list"
+        if sub == "list":
+            rows = learned()
+            print("\n".join(f"[{r['n']}] {r['at'][:10]} {r['q'][:90]}" for r in rows) or "No learned cases yet.")
+        elif sub == "drop" and len(sys.argv) > 3:
+            n = int(sys.argv[3]); lines = open(LEARNED).read().splitlines()
+            c = json.loads(lines[n]); c["dropped"] = True; lines[n] = json.dumps(c)
+            open(LEARNED, "w").write("\n".join(lines) + "\n"); print(f"Dropped learned case {n}.")
+        return
     if cmd == "last":
         p = previous(); print(summary(p) if p else "No eval runs yet."); return
     if cmd == "auto":
@@ -226,7 +258,7 @@ def main():
             sh([os.path.join(DIR, "slack.sh"), "send", f"@{owner}: Margie's nightly answer check found problems.\n{msg}"], timeout=120)
             print(msg.splitlines()[0])
         return
-    print("usage: evals.sh run | auto | last", file=sys.stderr); sys.exit(64)
+    print("usage: evals.sh run | auto | last | learned [list | drop <n>]", file=sys.stderr); sys.exit(64)
 
 
 if __name__ == "__main__":
