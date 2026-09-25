@@ -79,8 +79,19 @@ Follow your full procedure (MIG cut-over vs healthy, the ~1-minute health-check 
       [ -f "$ST/mainfail-$MP" ] && continue
       touch "$ST/mainfail-$MP"
       MSHA="$(gl "projects/:id/pipelines/$MP" | jq -r '.sha[0:8]')"
-      FJ="$(gl "projects/:id/pipelines/$MP/jobs?per_page=100" | jq -r '.[] | select(.status=="failed" and (.allow_failure|not)) | "\(.id)\t\(.name)"')"
-      [ -z "$FJ" ] && continue    # only allow_failure jobs failed (e.g. release:rollback's nothing-to-do exit)
+      JOBS="$(gl "projects/:id/pipelines/$MP/jobs?per_page=100")"
+      # GitLab's "prevent outdated deployment jobs" fails a deploy whose commit a NEWER deploy
+      # already shipped (failure_reason failed_outdated_deployment_job) — GitLab still sends a
+      # "Failed pipeline" alert, but nothing is wrong (494177c8, 2026-09-25). Not a failure:
+      # say so once, in plain words, instead of "did not deploy" or a retry. Deterministic.
+      FJ="$(printf '%s' "$JOBS" | jq -r '.[] | select(.status=="failed" and (.allow_failure|not) and (.failure_reason != "failed_outdated_deployment_job")) | "\(.id)\t\(.name)"')"
+      if [ -z "$FJ" ]; then
+        if printf '%s' "$JOBS" | jq -e '[.[] | select(.failure_reason == "failed_outdated_deployment_job")] | length > 0' >/dev/null 2>&1; then
+          PROD="$(latest_deploy | jq -r '.sha[0:8] // empty' 2>/dev/null)"
+          echo "The \"Failed pipeline\" alert for $MSHA is harmless: GitLab skipped its deploy because a newer one${PROD:+ ($PROD)} already shipped those changes. Nothing to do."
+        fi
+        continue    # only allow_failure or outdated-deploy jobs failed
+      fi
       TAILS="$(printf '%s\n' "$FJ" | while IFS=$'\t' read -r jid jname; do [ -n "$jid" ] || continue; echo "=== job $jname"; (cd "$REPO" && glab ci trace "$jid" 2>/dev/null) | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -vE '^\s*$' | tail -60; done | tail -200)"
       JC="$(printf '%s' "$TAILS" | "$DIR/jev.sh" ci_failure 2>/dev/null)" || JC=""
       NAMES="$(printf '%s' "$FJ" | cut -f2 | tr '\n' ' ')"
