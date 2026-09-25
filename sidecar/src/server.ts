@@ -205,6 +205,7 @@ function startPollers() {
     ["jev-check", "jev.sh auto", 300000],
     ["tom-ping", "tom-ping.sh flush", 60000],
     ["approvals", "approve.sh poll", 30000],        // Tom's ✅/❌ reactions on UI-MR approval messages → merge / hold
+    ["integrations-guard", "integrations-guard.sh auto", 600000, 300000],   // teammates' MRs touching the integrations flow → impact check
     ["scoreboard", "scoreboard.sh auto", 3600000],   // Monday: Margie's week (evals, corrections, gate catches) → one DM
     ["evals", "evals.sh auto", 600000, 3600000],   // a full run is ~20 brain turns; the default timeout killed it before it saved, so it re-ran every 10 min             // nightly answer evals (runs once a day after 02:00); Slacks Tom only on a regression       // notices worth Tom's attention → one Slack DM (Jev decides which)             // Jev fixture self-test: nightly and when jev-latest moves; Slacks Tom only on FAIL
     ["status-sync", "status-sync.sh push", 600000],   // back Margie's state up to Notion every 10 min        // watch a production deploy Tom triggers     // a coding session waiting on a human
