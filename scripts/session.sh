@@ -27,8 +27,10 @@ BR=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --branch | -b) BR="${2:-}"; shift 2 ;;
-    --session) SESSION_NAME="${2:-}"; shift 2 ;;
+    # An explicit but empty target is a caller bug, not "use the newest session": a
+    # blank --branch sent steering meant for one ticket into another (twice, 2026-09-25).
+    --branch | -b) BR="${2:-}"; [ -n "$BR" ] || { echo "session.sh: --branch was given but is empty; refusing to guess a session." >&2; exit 2; }; shift 2 ;;
+    --session) SESSION_NAME="${2:-}"; [ -n "$SESSION_NAME" ] || { echo "session.sh: --session was given but is empty; refusing to guess a session." >&2; exit 2; }; shift 2 ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
