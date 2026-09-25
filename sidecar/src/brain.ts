@@ -1544,10 +1544,12 @@ async function learnEval(history: ChatMsg[], last: ChatMsg, correction: string, 
 }
 /** Jev `grounded` (same question as `jev.sh grounded`): is a colleague reply clear and backed
  *  by what she looked up this turn? Returns the verdict at ≥0.7 confidence, else null. */
-async function groundedReply(question: string, found: string[], answer: string): Promise<string | null> {
+async function groundedReply(question: string, found: string[], answer: string, known = ""): Promise<string | null> {
+  // Evidence = this turn's lookups PLUS what she was given as fact (process notes, the Notion
+  // brief): a correct answer from her process notes was being held back as "unconfirmed".
   const a = await jev("grounded", {
     question: question.slice(-4000),
-    evidence: found.join("\n---\n").slice(-8000) || "(no lookups this turn)",
+    evidence: ([found.join("\n---\n"), known].filter(Boolean).join("\n---\n").slice(-12000)) || "(no lookups this turn)",
     answer: answer.slice(0, 2000),
   }, {
     verdict: {
@@ -1669,7 +1671,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
   if (!speaker && finalText && ["cli", "slack", "stdio"].includes(source) && !text.includes("THIS IS A SOCIAL MOMENT")
       && !/^(SESSION QUESTION|\[Slack — .*(colleague|COLLEAGUE))/.test(text)
       && !/^\s*(NO_REPLY|FOR TOM:)/.test(finalText)) {
-    const verdict = await groundedReply(text, found, finalText);
+    const verdict = await groundedReply(text, found, finalText, `${processNotes()}${notionNote}`);
     jevOutcome("grounded", `${verdict === "unsupported" ? "recheck" : "keep"} owner jev=${verdict ?? "unsure-or-unavailable"}`);
     if (verdict === "unsupported") {
       try {
@@ -1697,7 +1699,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
     // A social reply (Jev `tone` = social, flagged in the prompt by slack-watch) makes no
     // factual claim to ground — a warm "thank you" would otherwise read as not_an_answer.
     else if (bare !== "NO_REPLY" && bare !== "NOREPLY" && !finalText.trimStart().startsWith("FOR TOM:") && !text.includes("THIS IS A SOCIAL MOMENT")) {
-      const verdict = await groundedReply(text, found, finalText);
+      const verdict = await groundedReply(text, found, finalText, `${processNotes()}${notionNote}`);
       jevOutcome("grounded", `${verdict === "grounded" ? "post" : "tom"} speaker=${speaker} jev=${verdict ?? "unsure-or-unavailable"}`);
       if (verdict !== "grounded") finalText = `FOR TOM: I didn't send ${speaker} this because I couldn't confirm all of it — ${finalText}`;
     }

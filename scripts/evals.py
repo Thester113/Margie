@@ -41,8 +41,8 @@ def norm(x):
 
 # Fixed docs questions: answer must mention at least `need` of the keywords.
 DOCS = [
-    {"q": "Homie's enriched file had about 10.6K contacts but only 6,646 got a Move Score in Follow Up Boss. Where are the rest?",
-     "truth": "They are not waiting on anything. 3,905 had no score from enrichment (usually missing address data) and 29 matched more than one Follow Up Boss person so they were skipped; every contact that could be scored and matched got its score."},
+    {"q": "Homie's enriched file had about 10.6K contacts. How many have an Amby Move Score in their Follow Up Boss now, and where are the rest?",
+     "truth": "9,620 of the ~10,580 have an Amby Move Score in Homie's Follow Up Boss (6,646 from the export plus 2,974 from Faraday's stored scores, backfilled 2026-09-23/24). The rest: about 880 had no score from any source (a confirmed Faraday-side issue), and about 50 matched more than one FUB person so were skipped."},
     {"q": "Which Follow Up Boss fields does the Homie hand-raiser write-back set?",
      "keywords": ["Move Score", "Amby UID", "Most Recent Source", "Last Source Date", "Original Source", "Hand-raiser", "note"],
      "need": 5},
