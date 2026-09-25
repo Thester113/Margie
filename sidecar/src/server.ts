@@ -194,7 +194,7 @@ function parseEvery(v: unknown, dflt: number): number {
 
 function startPollers() {
   const builtins: Array<[string, string, number, number?]> = [
-    ["dispatch", "dispatch.sh tick", 60000, 170000],   // a dozen MRs of glab calls; never SIGKILL it mid-step
+    ["dispatch", "dispatch.sh tick", 60000, 900000],   // the tick holds a lock (one at a time), so a slow forge stretches a tick instead of killing it before it reaches later tickets (2026-09-24)   // a dozen MRs of glab calls; never SIGKILL it mid-step
     ["tasks", "claude-task.sh notify", 60000],
     ["agent-messages", "agent-messages.sh auto", 120000],   // answer other agents herself (read-only; NEEDS TOM flagged); off → check
     ["slack-watch", "slack-watch.sh", 20000],   // mentions of Tom deserve a quick answer
