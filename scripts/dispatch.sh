@@ -1090,6 +1090,10 @@ case "$cmd" in
     #     and dangling volumes of tickets that are already closed (90 GB once filled the VM).
     if command -v docker >/dev/null 2>&1 && { [ ! -f "$MDIR/.docker-check" ] || [ $(( $(date +%s) - $(stat -f %m "$MDIR/.docker-check") )) -ge 1800 ]; }; then
       touch "$MDIR/.docker-check"
+      # Networks leak too: each ticket's compose stack makes its own, merge cleanup never
+      # removed them, and at ~30 Docker ran out of address pools and PT-1677 couldn't boot
+      # its stack (2026-09-25). prune removes only networks no container uses. Deterministic.
+      docker network prune -f >/dev/null 2>&1
       VGB="$(docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null | awk '/^Local Volumes/ {s=$3; if (s ~ /GB$/) {sub(/GB$/,"",s); print int(s)} else print 0}')"
       if [ "${VGB:-0}" -ge 30 ]; then
         for c in $(docker ps -a --format '{{.Names}}' 2>/dev/null); do
@@ -1702,6 +1706,7 @@ Address every one with the repo's /address-mr-reviews skill: fix the code, keep 
                 if [ -n "$PTN" ] && command -v docker >/dev/null 2>&1; then
                   for c in $(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -iE "(^|[^0-9])pt-?${PTN}([^0-9]|$)"); do docker rm -f "$c" >/dev/null 2>&1 || true; done
                   for v in $(docker volume ls -q --filter dangling=true 2>/dev/null | grep -iE "(^|[^0-9])pt-?${PTN}([^0-9]|$)"); do docker volume rm "$v" >/dev/null 2>&1 || true; done
+                  docker network prune -f >/dev/null 2>&1 || true
                 fi
                 announce "$PT merged and closed."
                 # a child finished → start the next ticket, or close the umbrella after the last
