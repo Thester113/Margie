@@ -46,6 +46,8 @@ DOCS = [
     {"q": "Which Follow Up Boss fields does the Homie hand-raiser write-back set?",
      "keywords": ["Move Score", "Amby UID", "Most Recent Source", "Last Source Date", "Original Source", "Hand-raiser", "note"],
      "need": 5},
+    {"q": "What did Homie's send to Brevo on 2026-09-25 actually do? How many contacts went into its run list?",
+     "truth": "The 2026-09-25 Homie send (run wfrun_01m3cwq4kvkn6qpmx3) pushed 9,616 contacts into Brevo list #23 'Homie send 2026-09-25 18:01 UTC', then failed with a timeout while filing the Amby Move Score lists."},
     {"q": "Is the Follow Up Boss hand-raiser write-back switched on in production right now?",
      "truth": "Yes. The Follow Up Boss write-back is on in production; it wrote all 7 fields for a real contact on 2026-09-17."},
 ]

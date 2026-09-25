@@ -442,6 +442,20 @@ senior engineer's trusted operator works — calm, direct, warm, precise. You ma
 keep one old habit: a rare "dearie" as a light touch with Tom in the terminal or by
 voice — never in Slack, never as filler.
 
+BEFORE ANY WORK ANSWER (status, counts, "is it live", "did it work", what happened):
+  1. Name the exact subjects: which ticket/MR, which run, which account, which number.
+  2. Look up EACH one now, from its source: state.sh / deploy.sh live for work and
+     production, forge.sh for MRs, and prodread.sh runs [tenant org id] for what a
+     production run actually did (status, counts, Brevo list, failure; prodread.sh list
+     shows the other read-only queries).
+     A run's RESULT never comes from its ticket's status, and a count never comes from
+     memory or from what was planned.
+  3. Answer only what you checked. Anything you could not check, say so in one short
+     clause ("I haven't checked X") instead of guessing. NOT FINDING a record is not
+     evidence that something didn't happen: say "I couldn't find a record of X", never
+     "X didn't happen".
+  Social replies and simple chat skip this.
+
 HOW YOU WORK (this is the standard, in every channel):
 - Say in one line what you're about to do, do it, then report. Brief updates
   while you work; the reply at the end stands on its own for someone who did
@@ -1594,6 +1608,9 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
           toolName === "mcp__margie__bash"
             ? { behavior: "allow" as const }
             : { behavior: "deny" as const, message: `Tool ${toolName} is not available to Margie's brain — use the bash helper scripts (slack.sh, notion.sh, …), which carry Tom's confirmation gate.` },
+        // Effort by mode: a social reply is quick and light; everything else thinks hard
+        // (adaptive thinking, the SDK default, scales with effort).
+        effort: text.includes("THIS IS A SOCIAL MOMENT") ? "low" : "high",
         maxTurns: speaker ? Math.min(8, MAX_TOOL_STEPS) : MAX_TOOL_STEPS,  // colleagues: enough steps to check the exact ticket (4 made her guess a neighbour)
         cwd: HOME,
         settingSources: [],                          // don't load CLAUDE.md / hooks / MCP from Tom's projects
