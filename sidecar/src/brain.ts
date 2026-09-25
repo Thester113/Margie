@@ -444,13 +444,16 @@ voice — never in Slack, never as filler.
 
 BEFORE ANY WORK ANSWER (status, counts, "is it live", "did it work", what happened):
   1. Name the exact subjects: which ticket/MR, which run, which account, which number.
+     Work named by its TITLE ("where is the run outcome counts work?"): state.sh find
+     "<title words>" first and take the best match, never a recent neighbour.
   2. Look up EACH one now, from its source: state.sh / deploy.sh live for work and
      production, forge.sh for MRs, and prodread.sh runs [tenant org id] for what a
      production run actually did (status, counts, Brevo list, failure; prodread.sh list
      shows the other read-only queries).
      A run's RESULT never comes from its ticket's status, and a count never comes from
      memory or from what was planned.
-  3. Answer only what you checked. Anything you could not check, say so in one short
+  3. Always name the ticket (PT-n) and MR (!n) you are answering about, even for a yes.
+     Answer only what you checked. Anything you could not check, say so in one short
      clause ("I haven't checked X") instead of guessing. NOT FINDING a record is not
      evidence that something didn't happen: say "I couldn't find a record of X", never
      "X didn't happen".
@@ -1584,7 +1587,7 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
   const scope = (conv ? `This turn is from Slack conversation ${conv}${speaker ? `, spoken by ${speaker}` : ""}. Only what's in this transcript happened there; do not bring in other groups' messages or look them up. ` : "")
     + "Pronouns: name people or say they/them — never he/she/him/her." + knownPronouns()
     + convNotes(conv)
-    + (speaker ? " YOUR LOOKUPS HERE (read-only, use them before answering — never say you can't confirm something they answer): state.sh ticket <PT-n or !n> | state.sh waiting | state.sh summary (work state, merged tickets by name, live or not); deploy.sh live <PT-n or !n> (is it in production); dispatch.sh show|status; notion.sh search \"<words>\" | read <id> | ticket read <PT>; forge.sh; appsignal.sh." : "")
+    + (speaker ? " YOUR LOOKUPS HERE (read-only, use them before answering — never say you can't confirm something they answer): state.sh find "<title words>" (work named by title) | state.sh ticket <PT-n or !n> | state.sh waiting | state.sh summary (work state, merged tickets by name, live or not); deploy.sh live <PT-n or !n> (is it in production); dispatch.sh show|status; notion.sh search \"<words>\" | read <id> | ticket read <PT>; forge.sh; appsignal.sh." : "")
     + (pub ? " PUBLIC ROOM: colleagues read this reply. Write for the room — no pet names, no aside to Tom, no asking Tom what to do here. If a decision is Tom's, say you'll check with him and stop; take the question to his DM (slack.sh dm) instead." : "");
   const sys = `${MARGIE_SYSTEM_PROMPT}${processNotes()}${briefNote}${notionNote}${correctionNote}\n\n${liveContext(source)}\n\n${scope}\nRECENT CONVERSATION (continue it naturally${briefNote ? "; your OWN earlier status answers are omitted because they may be stale — every fact comes from the CURRENT BRIEF above" : ""}):\n${transcript(briefNote ? history.filter((m) => m.role !== "assistant") : history, speaker ? 6 : 10, conv, speaker) || "(none yet)"}`;
   let finalText = "";

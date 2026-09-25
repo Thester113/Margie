@@ -16,6 +16,7 @@ is how "7/11 merged" hid PT-1461 and how "is it live?" got read off the wrong pi
 Read-only. Deterministic: every field is read from a file, GitLab, or git — nothing is
 inferred from wording. Merged tickets older than 14 days are left out.
 """
+import re
 import json, os, subprocess, sys, time, glob, re
 
 HOME = os.path.expanduser("~")
@@ -255,6 +256,38 @@ def main():
                 if (r.get("pt") or "").upper() == q:
                     print(json.dumps(r, indent=1)); return
         print(f"{q}: not among the tickets Margie is tracking (in flight, or merged in the last {RECENT_DAYS} days).")
+        return
+    if cmd == "find":
+        # "Where is the <title words> work?" — match by title across EVERY ticket Margie has
+        # filed (no recency cut-off), so she names the right ticket instead of a neighbour
+        # (2026-09-25 evals: PT-1441 and PT-1680 answered for PT-1094). Word overlap, best 5.
+        q = " ".join(sys.argv[2:]).lower()
+        words = [w for w in re.findall(r"[a-z0-9]+", q) if len(w) > 2]
+        if not words:
+            print('usage: state.sh find "<words from the title>"', file=sys.stderr); sys.exit(1)
+        seen, cands = set(), []
+        for d in sorted(glob.glob(os.path.join(MDIR, "d-*"))):
+            tj = rj(os.path.join(d, "ticket.json")) or {}
+            title = (rj(os.path.join(d, "spec.json")) or {}).get("title") or tj.get("title") or ""
+            pt = tj.get("pt")
+            if pt and pt not in seen and title:
+                seen.add(pt); cands.append((pt, title, d))
+            for c in (rj(os.path.join(d, "tickets.json")) or []):
+                if isinstance(c, dict) and c.get("pt") and c["pt"] not in seen and c.get("title"):
+                    seen.add(c["pt"]); cands.append((c["pt"], c["title"], None))
+        def score(t):
+            tw = set(re.findall(r"[a-z0-9]+", t.lower()))
+            return sum(1 for w in words if w in tw) / len(words)
+        best = sorted(((score(t), pt, t, d) for pt, t, d in cands), key=lambda x: -x[0])[:5]
+        best = [b for b in best if b[0] > 0]
+        if not best:
+            print(f"No ticket title matches '{q}'."); return
+        for sc, pt, t, d in best:
+            extra = ""
+            if d:
+                r = ticket_record(d)
+                extra = " — " + line(r).split(" — ", 1)[-1] if r else ""
+            print(f"{int(sc*100)}% {pt} {t[:90]}{extra}")
         return
     if cmd == "summary":
         s = build()
