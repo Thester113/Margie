@@ -177,10 +177,20 @@ dm_context() { # dm_context <cid> — a DM's last messages as "Name: text", olde
       done
 }
 thread_context() { # thread_context <cid> <thread_ts>
-  local R; R="$(sapi conversations.replies --get --data-urlencode "channel=$1" --data-urlencode "ts=$2" -d "limit=12")"
-  echo "$R" | jq -e '.ok==true' >/dev/null 2>&1 || R="$(sapi conversations.history --get --data-urlencode "channel=$1" -d "limit=8")"
-  echo "$R" | jq -r '.messages[]? | select(.subtype==null) | (.user // "?") + "\t" + ((.text // "") | gsub("\n";" ") | .[0:300])' \
-    | while IFS=$'\t' read -r u t; do echo "$(uname_of "$u"): $t"; done | tail -12
+  # Replies come back OLDEST first: limit=12 showed a long thread's first 12 messages and
+  # hid the newest ones (2026-09-25 — she answered where the thread had been, not where it
+  # was). Fetch the whole thread; keep its opening message plus the latest 25.
+  local R L; R="$(sapi conversations.replies --get --data-urlencode "channel=$1" --data-urlencode "ts=$2" -d "limit=200")"
+  echo "$R" | jq -e '.ok==true' >/dev/null 2>&1 || R="$(sapi conversations.history --get --data-urlencode "channel=$1" -d "limit=15")"
+  # Label who spoke: her own messages as "Margie (you)" so she knows what she already said,
+  # other bots/apps by their own name, people by name.
+  L="$(echo "$R" | jq -r --arg me "$BOTID" '.messages[]? | select(.subtype==null or .subtype=="bot_message")
+        | (if (.user // "") == $me then "@ME@" elif .bot_profile.name then ("@BOT@" + .bot_profile.name) else (.user // "?") end)
+          + "\t" + ((.text // "") | gsub("\n";" ") | .[0:400])' \
+    | while IFS=$'\t' read -r u t; do if [ "$u" = "@ME@" ]; then n="Margie (you)"; elif [ "${u#@BOT@}" != "$u" ]; then n="${u#@BOT@}"; else n="$(uname_of "$u")"; fi; echo "$n: $t"; done)"
+  if [ "$(printf '%s\n' "$L" | wc -l)" -gt 26 ]; then
+    printf '%s\n' "$L" | head -1; echo "… ($(( $(printf '%s\n' "$L" | wc -l) - 26 )) earlier messages) …"; printf '%s\n' "$L" | tail -25
+  else printf '%s\n' "$L"; fi
 }
 owner_replied_after() { # owner_replied_after <cid> <thread_ts> <mention_ts>
   local R; R="$(sapi conversations.replies --get --data-urlencode "channel=$1" --data-urlencode "ts=$2" -d "limit=50")"
