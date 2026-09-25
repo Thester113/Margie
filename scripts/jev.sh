@@ -42,6 +42,8 @@
 #                                           → grounded | unsupported | not_an_answer<TAB>confidence
 #                                             (may a colleague see this reply? only when every
 #                                             fact in it is in the evidence)
+#   jev.sh tone                             stdin = a Slack thread, newest line last
+#                                           → social | request | status_question | fyi<TAB>confidence
 #   jev.sh notion                           stdin = a question to Margie
 #                                           → docs | none<TAB>confidence  (read Amby's Notion first?)
 #   jev.sh outcome <decision> <what>        log what the CALLER did with an answer
@@ -138,6 +140,21 @@ case "$cmd" in
       '{addressed: {type: "choice", instructions: $ins, criteria: {reply: $reply, no_reply: $no_reply}}}')"
     R="$(ask "$QS" "$MSG")" || exit $?
     printf '%s\n' "$R" | jq -r '.answers.addressed | "\(.choice)\t\(.confidence)"' ;;
+
+  # What kind of message is Margie about to answer in a Slack thread? (Tom, 2026-09-25:
+  # she answered a joking thread with a status report.) stdin = the thread's recent lines,
+  # the LAST line is the message. social -> a short warm reply in her voice (or none);
+  # fyi -> no reply; request / status_question -> the normal work answer.
+  tone)
+    MSG="$(cat)"; [ -z "$MSG" ] && exit 2
+    R="$(ask '{"kind":{"type":"choice",
+      "instructions":"The state is a Slack thread, oldest first; the LAST line is the newest message, which Margie (an AI assistant on the team) might answer. What kind of message is that last line, read in the context of the thread?",
+      "criteria":{
+        "social":"Banter, jokes, celebration, thanks, compliments, or someone talking TO Margie playfully; it wants a friendly human reaction, not information",
+        "request":"Asks Margie (or the team) to do something: build, check, send, fix, look up, change",
+        "status_question":"Asks where some work, ticket, data or system stands, or asks for facts",
+        "fyi":"A story, update or quote shared with the team that expects no answer from Margie, including messages that only quote or mention her"}}}' "$MSG")" || exit $?
+    printf '%s\n' "$R" | jq -r '.answers.kind | "\(.choice)\t\(.confidence)"' ;;
 
   # A permission prompt from a session: is answering "yes" for the owner risky?
   # session.sh has a regex list; this is a second opinion that can only ADD escalations.
@@ -287,6 +304,12 @@ case "$cmd" in
       local out got conf; out="$("$0" $1 2>/dev/null)"; got="$(printf '%s' "$out" | cut -f1)"; conf="$(printf '%s' "$out" | cut -f2)"; N=$((N+1))
       if [ "$got" = "$2" ]; then printf 'ok   %-28s %-16s %s\n' "$1" "$2" "${conf:+@$conf}"; else printf 'FAIL %-28s want %s got %s\n' "$1" "$2" "${got:-<none>}"; FAIL=$((FAIL+1)); fi
     }
+    expect tone social <<< 'Tom: Whoah... So i gave Margie a picture a few days ago.
+Cody: Oh yeah, I saw that this morning. Do not worry Margie - we will give you the glow-up you deserve!
+Cody: There you go, @Margie - how do you like the look?'
+    expect tone fyi <<< 'Tom: Whoah... So i gave Margie a picture a few days ago. She waited until after the big crunch i was in to ask Athena and Cody if they would update her picture. This is what she said to Athena: "Hi Athena! It is Margie. Agent to agent: Tom picked a photo for me..."'
+    expect tone status_question <<< 'Mike: @Margie is PT-1669 live in production yet, and did the Homie contacts land in Brevo?'
+    expect tone request <<< 'Tom: @Margie can you have Cody add the Brevo webhook for Homie and send me the list id when it is done'
     expect session question <<< '⏺ I found two candidate table names for the audit log: enrichment_events and enrichment_audit. Which one should I use'
     expect session question <<< '⏺ The rest of the ticket is not blocked by this: enqueueing through start_homie_run/2 and the 60-second wait for the run id. Reply A, B or C and I will build it.
 ✻ Worked for 5m 55s · done 7:23 PM'

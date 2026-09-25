@@ -400,6 +400,11 @@ async function callModel(messages: ChatMsg[], withTools = true): Promise<any> {
 /** How Margie writes in Slack (Tom, 2026-09-22): like a sharp colleague typing, not a bot —
  *  specific, informational, plain words. Injected as the channel line of CONTEXT NOW. */
 const SLACK_STYLE = `SLACK. Write the way a sharp colleague types in Slack, not like an assistant:
+  - THREAD MANNERS first. Read the whole thread and answer where it is NOW, not an earlier
+    message (someone may already have done or answered it). Match the room: a joke or a
+    thank-you gets a short warm human line, not a status report. Talk TO the person you are
+    answering ("you"), never about them in the third person, and never tell Tom you'll
+    "flag it to Tom" when Tom is in the conversation.
   - Lead with the answer in the first line. Then the specifics that make it useful: the
     ticket (PT-1461) and MR (!1227) by number, the real state ("in QA", "pipeline green,
     waiting on your merge", "deployed 16:58"), a number or time when there is one, and
@@ -1625,7 +1630,9 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
     // Jev question (typed, from text), fails closed to Tom's DM.
     const bare = finalText.trim().replace(/[\s.]/g, "");
     if (!finalText) finalText = `FOR TOM: I couldn't put together a reliable answer for ${speaker} — it needs you.`;
-    else if (bare !== "NO_REPLY" && bare !== "NOREPLY" && !finalText.trimStart().startsWith("FOR TOM:")) {
+    // A social reply (Jev `tone` = social, flagged in the prompt by slack-watch) makes no
+    // factual claim to ground — a warm "thank you" would otherwise read as not_an_answer.
+    else if (bare !== "NO_REPLY" && bare !== "NOREPLY" && !finalText.trimStart().startsWith("FOR TOM:") && !text.includes("THIS IS A SOCIAL MOMENT")) {
       const verdict = await groundedReply(text, found, finalText);
       jevOutcome("grounded", `${verdict === "grounded" ? "post" : "tom"} speaker=${speaker} jev=${verdict ?? "unsure-or-unavailable"}`);
       if (verdict !== "grounded") finalText = `FOR TOM: I didn't send ${speaker} this because I couldn't confirm all of it — ${finalText}`;

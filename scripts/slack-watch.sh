@@ -193,6 +193,19 @@ dm_owner() { # dm_owner "<text>"
 
 MARGIE_CLI="$(cd "$(dirname "$0")/.." && pwd)/bin/margie"
 
+# tone_of "<thread lines, newest last>" → social | request | status_question | fyi (or "")
+# Jev question (typed, from text), Tom 2026-09-25: she answered a joking thread with a
+# status report. Confident fyi → the caller stays quiet (unless she was @-tagged);
+# social → SOCIAL_MODE is added to her prompt. Below the gate: the old path.
+tone_of() {
+  local J; J="$(printf '%s' "$1" | tail -12 | "$(dirname "$0")/jev.sh" tone 2>/dev/null)"
+  case "$(printf '%s' "$J" | cut -f1)" in
+    fyi)    awk -v c="$(printf '%s' "$J" | cut -f2)" 'BEGIN{exit !(c >= 0.7)}' && echo fyi ;;
+    social) awk -v c="$(printf '%s' "$J" | cut -f2)" 'BEGIN{exit !(c >= 0.6)}' && echo social ;;
+  esac
+  "$(dirname "$0")/jev.sh" outcome tone "jev=$(printf '%s' "${J:-unavailable}" | tr '\t' '@')" >/dev/null 2>&1
+}
+SOCIAL_MODE="THIS IS A SOCIAL MOMENT in the thread (banter, thanks, a joke, a celebration, someone talking to you playfully). Reply in one or two warm, natural lines in your own voice, reacting to the NEWEST message in the light of the WHOLE thread. No status report, no ticket numbers, no 'I'll flag it' or 'I'll follow up', and never refer to the person you are answering in the third person (say 'you'). If a reply would add nothing, reply with exactly NO_REPLY."
 # brain_reply <cid> <thread_ts|""> <msg_ts> <label> <speaker|""> <public 0/1|""> <prompt> <kind|"">
 # One brain turn, answered like a person: if it takes more than a few seconds, a short
 # "on it" line goes up first and is then EDITED into the real answer (no 30–80 s of silence).
@@ -331,12 +344,22 @@ while IFS=$'\t' read -r kind cid label ts thread user text; do
     # topic (2026-09-16). thread_context uses the bot token (a member of the channel).
     if [ "$kind" = "ownerask" ] || { [ -n "$thread" ] && [ "$thread" != "$ts" ]; }; then
       CTX="$(thread_context "$cid" "$thread" 2>/dev/null)"
+      if [ -n "$CTX" ]; then
+        TONE="$(tone_of "$CTX
+Tom: $(printf '%s' "$text" | sed "s/<@$BOTID>/@Margie/g")")"
+        if [ "$TONE" = fyi ] && ! printf '%s' "$text" | grep -q "<@$BOTID>"; then
+          echo "${NOW}|${ts}" >> "$HANDLED"; logl "skip owner thread message, an FYI to the room per jev tone ($label ts=$ts)"; continue
+        fi
+      fi
       [ -n "$CTX" ] && ASK="You were tagged in this Slack thread — THIS is the context for the request below; ground your answer in it and do NOT substitute your own recent work or claim the thread is about something else.
 --- thread ---
 $CTX
 --- end thread ---
 Tom's request in that thread: $ASK
 If there is nothing for you to say or do here (it's addressed to someone else, or already answered), reply with exactly NO_REPLY and nothing else."
+      [ "${TONE:-}" = social ] && ASK="$ASK
+$SOCIAL_MODE"
+      TONE=""
     fi
     # In a channel, answer in the thread; in a DM / group DM, answer inline.
     if [ "$thread" != "$ts" ]; then TT="$thread"; else case "$label" in \#*) TT="$thread" ;; *) TT="" ;; esac; fi
@@ -378,6 +401,14 @@ $LINK}"
   CTX=""
   if [ "$kind" = "im" ] && [ "$thread" = "$ts" ]; then CTX="$(dm_context "$cid" 2>/dev/null)"
   elif [ "$kind" != "colleague" ] || [ "$thread" != "$ts" ]; then CTX="$(thread_context "$cid" "$thread" 2>/dev/null)"; fi
+  TONE=""
+  if [ -n "$CTX" ] || [ "$thread" != "$ts" ]; then
+    TONE="$(tone_of "${CTX}
+$who: $clean")"
+    if [ "$TONE" = fyi ] && ! printf '%s' "$text" | grep -q "<@$BOTID>" && [ "$kind" != im ]; then
+      echo "${NOW}|${ts}" >> "$HANDLED"; logl "skip ($kind, an FYI to the room per jev tone) $label ts=$ts"; continue
+    fi
+  fi
   case "$kind" in
     owner)     SITUATION="$who mentioned $OWNER_NAME in $label and $OWNER_NAME hasn't answered yet. You reply in the thread as $OWNER_NAME's assistant — openly, never as him. Answer what you can from what you can look up; if it needs $OWNER_NAME himself (a decision, an approval, something only he knows), say plainly that you've passed it to him." ;;
     im)        SITUATION="$who sent you (Margie) a direct message. You relay DMs to $OWNER_NAME, so if it is for him, say you'll pass it on." ;;
@@ -389,7 +420,7 @@ ${CTX:+--- conversation so far (oldest first; lines from Margie were sent on beh
 $CTX
 --- end ---
 }$who wrote: <<<$clean>>>
-Reply to $who in that chat. If there is nothing for you to say (it isn't for you, or it's already answered), reply with exactly NO_REPLY. If your reply is really a note for $OWNER_NAME rather than for $who (a read-back awaiting his yes, a question only he can answer, a report about $who), start it with \"FOR TOM:\" and it will go to him privately instead."
+$( [ "$TONE" = social ] && printf '%s\n' "$SOCIAL_MODE" )Reply to $who in that chat. If there is nothing for you to say (it isn't for you, or it's already answered), reply with exactly NO_REPLY. If your reply is really a note for $OWNER_NAME rather than for $who (a read-back awaiting his yes, a question only he can answer, a report about $who), start it with \"FOR TOM:\" and it will go to him privately instead."
   echo "${NOW}|${ts}" >> "$HANDLED"
   if [ "$thread" != "$ts" ]; then TT="$thread"; else case "$label" in \#*) TT="$thread" ;; *) TT="" ;; esac; fi
   logl "$kind ($who, $label) → brain: $(printf '%s' "$clean" | cut -c1-80)"
