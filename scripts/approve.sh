@@ -64,6 +64,9 @@ case "${1:-}" in
           mv "$f" "$f.stale"; echo "!$IID changed since your ✅ — sending a new screenshot instead of merging."; continue
         fi
         OUT="$("$DIR/dispatch.sh" merge "$D" 2>&1 | tail -1)"
+        # Remember WHAT Tom approved (the UI patch his screenshot showed), so a rebase that
+        # leaves the UI byte-identical re-queues this merge instead of stranding it (!1428).
+        [ -s "$MDIR/$D/ui-verified-patch" ] && cp "$MDIR/$D/ui-verified-patch" "$MDIR/$D/tom-approved-patch"
         reply "$OUT"; mv "$f" "$f.done"
         echo "You ✅'d !$IID${PT:+ ($PT)} — $OUT"
       elif printf '%s' " $RX " | grep -qE ' (x|no_entry|no_entry_sign|raised_hand) '; then

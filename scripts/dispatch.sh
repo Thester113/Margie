@@ -1388,6 +1388,11 @@ case "$cmd" in
                   if [ -n "$NEWPATCH" ] && [ "$NEWPATCH" = "$(cat "$D/ui-verified-patch")" ]; then
                     echo "$SHA" > "$D/ui-verified-sha"
                     announce "MR !$IID for $PT was rebased with the UI unchanged — keeping your screenshot approval for the new commit."
+                    # Tom had already ✅'d this exact UI: the new commit dropped GitLab's queued
+                    # merge, so queue it again (the review gate still applies to the new sha).
+                    if [ "$(cat "$D/tom-approved-patch" 2>/dev/null)" = "$NEWPATCH" ] && [ ! -f "$D/hold-merge" ]; then
+                      announce "Re-queued your ✅ merge of !$IID ($PT): $("$0" merge "$(basename "$D")" 2>&1 | tail -1)"
+                    fi
                   fi
                 fi
                 # A fix that isn't a commit (replying to and resolving review threads, editing the
