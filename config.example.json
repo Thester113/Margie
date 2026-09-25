@@ -196,5 +196,11 @@
   "epic_parallel": 2,
   "max_coding_sessions": 4,
   "evals": "on",
-  "_parallel_and_evals": "epic_parallel: how many tickets of one epic may code at once (disjoint files, dependencies merged); max_coding_sessions: overall cap on live coding sessions. evals on|off: nightly answer evals (evals.sh auto)."
+  "_parallel_and_evals": "epic_parallel: how many tickets of one epic may code at once (disjoint files, dependencies merged); max_coding_sessions: overall cap on live coding sessions. evals on|off: nightly answer evals (evals.sh auto).",
+  "deploy_paths": {
+    "<repo>": [
+      "backend/"
+    ]
+  },
+  "_deploy_paths": "Per repo, path prefixes whose changes actually deploy. An MR touching none of them is announced as 'nothing in it deploys' instead of 'it deploys to production'. Unset = always say it deploys (old behaviour)."
 }

@@ -293,7 +293,19 @@ case "$cmd" in
       # MR — those merge but wait for Tom to add the label / play the deploy.
       # Config-gated (auto_deploy_label; empty = feature off) to stay repo-agnostic.
       ADLABEL="$(cfg auto_deploy_label)"; AD_MSG=""
-      if [ -n "$ADLABEL" ]; then
+      # Only say "deploys" when it does: an MR that touches none of the repo's
+      # deploy_paths (config, e.g. the backend) ships nothing — !1419 (a mobile version
+      # bump) and !1425 (a skill doc) were both told "It deploys to production". Unset
+      # deploy_paths keeps the old behaviour. Deterministic.
+      DPATHS="$(jq -r --arg r "$(basename "$REPO")" '.deploy_paths[$r][]? // empty' "$CFG" 2>/dev/null)"
+      DEPLOYS=1
+      if [ -n "$DPATHS" ]; then
+        CHANGED="$(glab api "projects/:id/merge_requests/$NUM/changes" 2>/dev/null | jq -r '.changes[]? | .new_path, .old_path' | sort -u)"
+        if [ -n "$CHANGED" ] && ! printf '%s\n' "$CHANGED" | while read -r f; do printf '%s\n' "$DPATHS" | while read -r pfx; do case "$f" in "$pfx"*) echo y;; esac; done; done | grep -q y; then DEPLOYS=0; fi
+      fi
+      if [ "$DEPLOYS" = 0 ]; then
+        AD_MSG=" Nothing in it deploys: it doesn't touch the deployed code."
+      elif [ -n "$ADLABEL" ]; then
         LBLS="$(printf '%s' "$MV" | jq -r '.labels[]? // empty' 2>/dev/null)"
         if printf '%s\n' "$LBLS" | grep -qx "High Risk"; then
           AD_MSG=" It's High Risk, so it will not deploy on its own — add the $ADLABEL label to ship it."
