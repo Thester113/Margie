@@ -1661,6 +1661,31 @@ async function claudeTurn(rawText: string, history: ChatMsg[], source: string, c
       logBrain(`CLAUDE out of steps — answered from ${found.length} findings${finalText ? "" : " (empty)"}`);
     } catch (e) { logBrain(`CLAUDE finish error: ${(e as Error).message}`); }
   }
+  // Tom's work answers get the same grounding check, but as a self-correction rather than a
+  // diversion (Tom, 2026-09-25: "as close to flawless"): when Jev reads the draft as stating
+  // facts her lookups this turn don't support, one more Claude pass re-checks exactly those
+  // and rewrites, marking anything still unverified "(not checked)". Social turns and turns
+  // with no draft skip it. Jev question (grounded), fails closed to the draft as written.
+  if (!speaker && finalText && ["cli", "slack", "stdio"].includes(source) && !text.includes("THIS IS A SOCIAL MOMENT")
+      && !/^(SESSION QUESTION|\[Slack — .*(colleague|COLLEAGUE))/.test(text)
+      && !/^\s*(NO_REPLY|FOR TOM:)/.test(finalText)) {
+    const verdict = await groundedReply(text, found, finalText);
+    jevOutcome("grounded", `${verdict === "unsupported" ? "recheck" : "keep"} owner jev=${verdict ?? "unsure-or-unavailable"}`);
+    if (verdict === "unsupported") {
+      try {
+        const fix = query({
+          prompt: `${text}\n\nREAD-ONLY PASS — run lookups only; do not send, create, merge, steer a session or change anything.\nYOUR DRAFT ANSWER (below) states facts your lookups this turn do not support. Re-check each ticket, number, status, date and "live"/"done" claim with lookups now, then write the final answer: keep what you verified, correct what was wrong, and mark anything you still cannot verify "(not checked)". Output only the final answer.\n\nDRAFT:\n${finalText}\n\nWHAT YOU LOOKED UP:\n${found.slice(-10).join("\n---\n").slice(-8000) || "(nothing)"}`,
+          options: { systemPrompt: { type: "custom", prompt: sys }, model: BRAIN_CLAUDE_MODEL, tools: [], mcpServers: { margie: margieTools }, strictMcpConfig: true,
+                     allowedTools: ["mcp__margie__bash"], permissionMode: "default",
+                     canUseTool: async (t: string) => t === "mcp__margie__bash" ? { behavior: "allow" as const } : { behavior: "deny" as const, message: "only bash" },
+                     maxTurns: 6, cwd: HOME, settingSources: [], persistSession: false, includePartialMessages: false },
+        });
+        let fixed = "";
+        for await (const m of fix) if (m.type === "result") { const r = m as any; fixed = r.is_error ? "" : String(r.result || ""); logUsage(source, BRAIN_CLAUDE_MODEL, r); }
+        if (fixed.trim()) { logBrain(`GROUNDED recheck rewrote an owner answer (${finalText.length} → ${fixed.length} chars)`); finalText = fixed; }
+      } catch (e) { logBrain(`GROUNDED recheck error: ${(e as Error).message}`); }
+    }
+  }
   if (speaker) {
     // A colleague only ever gets a clear, confirmed answer (Tom, 2026-09-24: "only respond if
     // she has a clear answer, no hallucinated responses"). No fallback brain for them — grok's
