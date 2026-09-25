@@ -1121,6 +1121,19 @@ case "$cmd" in
         announce "Docker volumes had reached ${VGB} GB — cleared merged tickets' leftovers (now $(docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null | awk '/^Local Volumes/ {print $3}'))."
       fi
     fi
+    # (b2) A hold must stop a merge already queued on the forge: `mr.sh merge` on a running
+    #     pipeline sets GitLab's merge-when-pipeline-succeeds, and a hold-merge written after
+    #     that did nothing — PT-1564 merged and deployed mid Homie send (2026-09-25). Cancel
+    #     the queued merge for every held dispatch with an open MR. Deterministic.
+    for hm in "$MDIR"/d-*/hold-merge; do
+      [ -s "$hm" ] || continue
+      HD="$(dirname "$hm")"; HIID="$(jq -r '.iid // empty' "$HD/mr.json" 2>/dev/null)"; [ -n "$HIID" ] || continue
+      HR="$(dmeta "$HD" repo)"; [ -d "$HR" ] || continue
+      if [ "$(cd "$HR" && glab mr view "$HIID" -F json 2>/dev/null | jq -r '.merge_when_pipeline_succeeds // false')" = true ]; then
+        ( cd "$HR" && glab api -X POST "projects/:id/merge_requests/$HIID/cancel_merge_when_pipeline_succeeds" >/dev/null 2>&1 ) \
+          && announce "Cancelled the queued merge of MR !$HIID — it's held: $(head -1 "$hm" | cut -c1-120)"
+      fi
+    done
     # (c) Stall alarm: an epic Tom said go on, with ready tickets, that hasn't started or
     #     finished anything for 2 h gets one Slack to Tom (then at most every 2 h).
     for E in "$MDIR"/d-*; do
