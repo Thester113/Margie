@@ -228,6 +228,14 @@ case "$cmd" in
           fi
         fi
       fi
+      # Backstop (2026-09-25): PT-1758 sat 5½ h on a finished turn asking for an API key —
+      # neither the regex nor Jev flagged it. A finished turn idle for an hour always wakes
+      # the brain once per screen, whatever its wording. Deterministic (a clock).
+      if [ -z "$WHY" ] && [ "$WORKING" = 0 ] && [ "$IDLE" -ge 3600 ] && printf '%s' "$PANE" | tail -12 | grep -qE '· done [0-9]' \
+         && [ "$(cat "$ST/$S.idlewake" 2>/dev/null)" != "$H" ]; then
+        printf '%s' "$H" > "$ST/$S.idlewake"
+        WHY="has been idle $((IDLE/60)) min with its turn finished — read its last lines: it may be waiting on something"
+      fi
       [ -z "$WHY" ] && continue
       # Tom's explicit instruction (2026-09-03): Margie answers the session's permission
       # prompts as him (config session_autoanswer, default true). Only prompts that look
