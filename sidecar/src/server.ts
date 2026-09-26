@@ -208,7 +208,7 @@ function startPollers() {
     ["integrations-guard", "integrations-guard.sh auto", 600000, 300000],   // teammates' MRs touching the integrations flow → impact check
     ["scoreboard", "scoreboard.sh auto", 3600000],   // Monday: Margie's week (evals, corrections, gate catches) → one DM
     ["evals", "evals.sh auto", 600000, 3600000],   // a full run is ~20 brain turns; the default timeout killed it before it saved, so it re-ran every 10 min             // nightly answer evals (runs once a day after 02:00); Slacks Tom only on a regression       // notices worth Tom's attention → one Slack DM (Jev decides which)             // Jev fixture self-test: nightly and when jev-latest moves; Slacks Tom only on FAIL
-    ["status-sync", "status-sync.sh push", 600000],   // back Margie's state up to Notion every 10 min        // watch a production deploy Tom triggers     // a coding session waiting on a human
+    ["status-sync", "status-sync.sh push", 600000, 300000],   // takes ~2 min; the default timeout killed every run mid-push (2026-09-26)   // back Margie's state up to Notion every 10 min        // watch a production deploy Tom triggers     // a coding session waiting on a human
   ];
   let extra: Array<{ name?: string; cmd?: string; every?: unknown }> = [];
   try {
