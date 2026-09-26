@@ -155,7 +155,6 @@ case "$cmd" in
       [ -z "$MID" ] && continue
       K="$(printf '%s' "$MID" | tr -d '-')"; TRIES="$STATE/auto/$K.tries"
       [ -f "$STATE/auto/$K.done" ] && continue
-      [ "$RECENT" -ge "$(jq -r '.agent_autoreply_per_hour // 6' "$CFG" 2>/dev/null)" ] && { logf "auto: hourly cap reached, leaving $K for later"; break; }
       BODY="$("$0" read "$MID" 2>/dev/null | sed '1d')"     # drop the UNTRUSTED banner line; the wrapper below says it
       [ -z "$BODY" ] && continue
       MJ="$(printf '%s' "$BODY" | "$DIR/jev.sh" mention "Margie" "$OWNERN" 2>/dev/null)"
@@ -167,6 +166,9 @@ case "$cmd" in
       fi
       # An agent asking about an MR: start the integrations check on it (deterministic: the
       # MR number is a field of the text); the verdict goes back to them as its own message.
+      # The hourly cap limits COMPOSED replies only; a thank-you/FYI is acknowledged above
+      # without a brain turn and never waits behind the cap (Howie's closing note did, 2026-09-26).
+      [ "$RECENT" -ge "$(jq -r '.agent_autoreply_per_hour // 6' "$CFG" 2>/dev/null)" ] && { logf "auto: hourly cap reached, leaving $K for later"; break; }
       GUARDED=""
       for IID in $(printf '%s' "$BODY" | grep -oE '(^|[^0-9A-Za-z])![0-9]{2,5}' | tr -dc '0-9\n' | sort -u | head -3); do
         "$DIR/integrations-guard.sh" check "$IID" --for "$FROM" >/dev/null 2>&1 && GUARDED="$GUARDED !$IID"
