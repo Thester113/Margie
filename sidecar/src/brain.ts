@@ -1552,7 +1552,9 @@ async function groundedReply(question: string, found: string[], answer: string, 
   // brief): a correct answer from her process notes was being held back as "unconfirmed".
   const a = await jev("grounded", {
     question: question.slice(-4000),
-    evidence: ([found.join("\n---\n"), known].filter(Boolean).join("\n---\n").slice(-12000)) || "(no lookups this turn)",
+    // Bound each part separately: joined-then-sliced, the long process notes pushed this
+    // turn's lookups out of the window and correct GitLab-sourced answers read as unsupported.
+    evidence: [known.slice(-4000), found.join("\n---\n").slice(-9000)].filter(Boolean).join("\n---\n") || "(no lookups this turn)",
     answer: answer.slice(0, 2000),
   }, {
     verdict: {

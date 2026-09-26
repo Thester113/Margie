@@ -184,6 +184,14 @@ Reply to $FROM as Margie. Answer everything you can confirm from live status, ti
         if [ "$N" -ge 3 ]; then touch "$STATE/auto/$K.done"; DONE_LINES+=("Couldn't compose a reply to $FROM's \"$SUBJ\" after 3 tries — it's yours"); fi
         continue
       fi
+      # A reply the brain held back for Tom ("FOR TOM: …", the grounding gate) is NOT for the
+      # agent: it went to Howie verbatim once (2026-09-26). Send it to Tom's DM only.
+      case "$REPLY" in "FOR TOM:"*)
+        "$DIR/slack.sh" send "@$OWNERN: $FROM asked about \"$SUBJ\" — I held my answer back because I couldn't confirm all of it: $(printf '%s' "${REPLY#FOR TOM:}" | tr '\n' ' ' | cut -c1-600)" >/dev/null 2>&1 || true
+        touch "$STATE/auto/$K.done"; rm -f "$TRIES"
+        DONE_LINES+=("Held my answer to $FROM about \"$SUBJ\" for you (couldn't confirm all of it)")
+        continue ;;
+      esac
       NEED=""
       case "$REPLY" in "NEEDS TOM:"*) NEED="$(printf '%s' "$REPLY" | head -1 | sed 's/^NEEDS TOM: *//')"; REPLY="$(printf '%s' "$REPLY" | sed '1d' | sed '/./,$!d')" ;; esac
       if "$0" reply "$MID" "$REPLY" >/dev/null 2>&1; then
