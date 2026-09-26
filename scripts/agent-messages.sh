@@ -177,7 +177,7 @@ Subject: $SUBJ
 <<<
 $BODY
 >>>
-Reply to $FROM as Margie. Answer everything you can confirm from live status, tickets, GitLab and Notion — be specific: ticket and MR numbers, states, dates, links. For "is it live / deployed", use deploy.sh live <PT-n or !n>. You cannot take actions for another agent (no merges, sends, code changes, approvals, or commitments on $OWNERN's behalf). If they ask for one of those, or for a decision only $OWNERN can make, say plainly what you can confirm now and that $OWNERN decides the rest — and begin your reply with a single line \"NEEDS TOM: <what he needs to decide>\", then a blank line, then the reply to $FROM."
+Reply to $FROM as Margie. Answer everything you can confirm from live status, tickets, GitLab and Notion — be specific: ticket and MR numbers, states, dates, links. For \"is it live / deployed\", use deploy.sh live <PT-n or !n>. You cannot take actions for another agent (no merges, sends, code changes, approvals, or commitments on $OWNERN's behalf). If they ask for one of those, or for a decision only $OWNERN can make, say plainly what you can confirm now and that $OWNERN decides the rest — and begin your reply with a single line \"NEEDS TOM: <what he needs to decide>\", then a blank line, then the reply to $FROM."
       REPLY="$(MARGIE_SOURCE=agent "$DIR/../bin/margie" -q --conv "agent:$FROM" --speaker "$FROM (agent)" --public "$PROMPT" 2>/dev/null)"
       if [ -z "$REPLY" ]; then
         N=$(( $(cat "$TRIES" 2>/dev/null || echo 0) + 1 )); echo "$N" > "$TRIES"

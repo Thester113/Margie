@@ -1565,7 +1565,12 @@ async function groundedReply(question: string, found: string[], answer: string, 
       },
     },
   }, 8000);
-  return confident(a?.verdict, 0.7);
+  // Hold back only on a CONFIDENT "unsupported" or "not an answer" (>=0.7). An unsure
+  // reading used to count as not grounded, and correct answers (PT-1776 is live, deploy
+  // b7b57494) went to Tom instead of the colleague. Unsure → treat as grounded.
+  const v = a?.verdict;
+  if (v && v.type === "choice" && v.choice !== "grounded" && v.confidence >= 0.7) return v.choice;
+  return v ? "grounded" : null;
 }
 function shq(s: string): string { return `'${s.replace(/'/g, `'\\''`)}'`; }
 

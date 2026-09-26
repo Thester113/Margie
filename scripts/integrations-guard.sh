@@ -46,7 +46,10 @@ case "${1:-auto}" in
     for p in "$ST"/*.pending; do
       [ -f "$p" ] || continue
       IFS=$'\t' read -r iid sha task who < "$p"
-      "$DIR/claude-task.sh" status 2>/dev/null | grep -F "$task" | grep -qiE 'done|finished|complete' || continue
+      # Read status into a variable first: under pipefail, grep -q closing the pipe early
+      # made the status command die of SIGPIPE, so a finished review never counted as done.
+      TS="$("$DIR/claude-task.sh" status 2>/dev/null | grep -F "$task")"
+      printf '%s' "$TS" | grep -qiE 'done|finished|complete' || continue
       R="$("$DIR/claude-task.sh" result "$task" 2>/dev/null)"
       V="$(printf '%s' "$R" | grep -m1 -oE 'VERDICT: (OK|CONCERN)' | cut -d' ' -f2)"
       # A review that could not read the MR is no verdict: retry once on the next poll.
